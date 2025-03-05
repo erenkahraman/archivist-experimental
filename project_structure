@@ -1,0 +1,15 @@
+image_retrieval/
+├── requirements.txt
+├── config.py
+├── src/
+│   ├── __init__.py
+│   ├── image_processor.py
+│   ├── embedding_extractor.py
+│   ├── vector_store.py
+│   ├── search_engine.py
+│   └── api.py
+├── ui/
+│   ├── index.html
+│   ├── style.css
+│   └── app.js
+└── main.py 
