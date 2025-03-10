@@ -7,7 +7,7 @@
     
     <div v-else-if="images.length === 0" class="gallery-empty">
       <p v-if="searchActive">No images found for your search.</p>
-      <p v-else>Upload bi seyler</p>
+      <p v-else>Upload pattern images to get started</p>
     </div>
     
     <div v-else class="gallery-grid">
@@ -23,7 +23,16 @@
         <template v-if="image.isUploading">
           <div class="upload-placeholder">
             <div class="upload-spinner"></div>
-            <p>Uploading...</p>
+            <div class="upload-progress">
+              <div class="progress-bar">
+                <div 
+                  class="progress-fill"
+                  :style="{ width: `${image.uploadProgress || 0}%` }"
+                ></div>
+              </div>
+              <p class="progress-text">{{ image.uploadProgress || 0 }}%</p>
+              <p class="upload-status">{{ image.uploadStatus || 'Uploading...' }}</p>
+            </div>
           </div>
         </template>
         <template v-else>
@@ -48,6 +57,14 @@
             <div class="pattern-prompt">
               {{ truncatePrompt(image.patterns?.prompt?.final_prompt) }}
             </div>
+            <!-- Display search score when in search mode -->
+            <div v-if="searchActive && image.searchScore !== undefined" class="search-score">
+              <div class="score-bar" :style="{ width: `${image.searchScore * 100}%` }"></div>
+              <span class="score-label">Match: {{ (image.searchScore * 100).toFixed(0) }}%</span>
+              <span v-if="image.matchedTerms" class="terms-matched">
+                {{ image.matchedTerms }} term{{ image.matchedTerms !== 1 ? 's' : '' }} matched
+              </span>
+            </div>
           </div>
         </template>
       </div>
@@ -63,7 +80,7 @@
 
         <div class="modal-body">
           <div class="modal-grid">
-            <!-- Sol taraf: Görsel ve temel bilgiler -->
+            <!-- Left side: Image and basic information -->
             <div class="modal-left">
               <div class="image-preview">
                 <img 
@@ -83,7 +100,7 @@
               </div>
             </div>
 
-            <!-- Sağ taraf: Detaylı analiz -->
+            <!-- Right side: Detailed analysis -->
             <div class="modal-right">
               <div class="analysis-tabs">
                 <button 
@@ -320,7 +337,7 @@ onMounted(() => {
 
 const getThumbnailUrl = (path) => {
   if (!path) return ''
-  return `http://localhost:5001/thumbnails/${path.split('/').pop()}`
+  return `http://localhost:5000/thumbnails/${path.split('/').pop()}`
 }
 
 const getImageName = (path) => {
@@ -663,14 +680,15 @@ const calculateAspectRatio = (dimensions) => {
 }
 
 .upload-placeholder {
+  width: 100%;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 200px;
-  background: #f5f5f5;
+  background-color: rgba(76, 175, 80, 0.05);
   border-radius: 8px;
-  border: 2px dashed #ddd;
+  padding: 1rem;
 }
 
 .upload-spinner {
@@ -679,8 +697,45 @@ const calculateAspectRatio = (dimensions) => {
   border: 3px solid #f3f3f3;
   border-top: 3px solid #4CAF50;
   border-radius: 50%;
-  animation: spin 1s linear infinite;
   margin-bottom: 1rem;
+  animation: spin 1s linear infinite;
+}
+
+.upload-progress {
+  width: 100%;
+  text-align: center;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 4px;
+  background-color: #eee;
+  border-radius: 2px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+}
+
+.progress-fill {
+  height: 100%;
+  background-color: #4CAF50;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.9rem;
+  color: #666;
+  margin: 0.25rem 0;
+}
+
+.upload-status {
+  font-size: 0.8rem;
+  color: #666;
+  margin: 0;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
 }
 
 .is-searching {
@@ -988,5 +1043,30 @@ h5 {
   color: #2c3e50;
   margin-bottom: 1rem;
   font-size: 1rem;
+}
+
+.search-score {
+  margin-top: 0.5rem;
+  font-size: 0.8rem;
+  color: #555;
+  position: relative;
+}
+
+.score-bar {
+  height: 4px;
+  background-color: #4CAF50;
+  border-radius: 2px;
+  margin-bottom: 4px;
+}
+
+.score-label {
+  font-weight: 500;
+  color: #4CAF50;
+}
+
+.terms-matched {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  color: #777;
 }
 </style> 

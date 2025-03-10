@@ -1,8 +1,11 @@
 <template>
   <div class="app-container">
     <div class="top-bar">
-      <ImageUpload />
-      <SearchBar />
+      <h1 class="app-title">Pattern Archivist</h1>
+      <div class="controls">
+        <ImageUpload />
+        <SearchBar />
+      </div>
     </div>
     <Gallery />
   </div>
@@ -23,9 +26,29 @@ import Gallery from './components/Gallery.vue'
 
 .top-bar {
   display: flex;
+  flex-direction: column;
+  margin-bottom: 2rem;
+}
+
+.app-title {
+  font-size: 1.8rem;
+  font-weight: 600;
+  margin-bottom: 1rem;
+  color: #2c3e50;
+}
+
+.controls {
+  display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 2rem;
+  gap: 1rem;
+}
+
+@media (max-width: 768px) {
+  .controls {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 
 header {

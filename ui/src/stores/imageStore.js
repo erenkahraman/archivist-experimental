@@ -3,17 +3,19 @@ import { ref, onMounted } from 'vue'
 import { useStorage } from '@vueuse/core'
 
 export const useImageStore = defineStore('images', () => {
-  // useStorage ile local storage'da persist ediyoruz
+  // Persist in local storage using useStorage
   const images = useStorage('gallery-images', [])
   const loading = ref(false)
-  const uploadingFiles = ref([])
+  const error = ref(null)
   const searchResults = ref([])
   const searchQuery = ref('')
+  const searchFilters = ref({})
+  const searchSort = ref('relevance')
+  const searchTotalResults = ref(0)
   const isSearching = ref(false)
-  const error = ref(null)
-  const API_URL = 'http://localhost:5001/api'
+  const API_URL = 'http://localhost:5000/api'
 
-  // Uploading durumlarını temizleyen metod
+  // Method to clear uploading states
   const clearUploadingStates = () => {
     images.value = images.value.filter(img => !img.isUploading)
   }
@@ -21,93 +23,84 @@ export const useImageStore = defineStore('images', () => {
   const fetchImages = async () => {
     try {
       loading.value = true
-      // Uploading durumlarını temizle ve mevcut resimleri getir
-      clearUploadingStates()
-      loading.value = false
-    } catch (error) {
-      console.error('Fetch error:', error)
-      loading.value = false
-    }
-  }
-
-  const uploadImages = async (files) => {
-    try {
-      const uploadedImages = []
+      error.value = null
       
-      for (const file of files) {
-        // Create temporary object with upload status
-        const tempImage = {
-          original_path: file.name,
-          isUploading: true
-        }
-        images.value.unshift(tempImage)
-
-        const formData = new FormData()
-        formData.append('file', file)
-
-        const response = await fetch(`${API_URL}/upload`, {
-          method: 'POST',
-          body: formData
-        })
-
-        if (!response.ok) {
-          // Upload başarısız olursa temp image'ı kaldır
-          images.value = images.value.filter(img => img !== tempImage)
-          throw new Error('Upload failed')
-        }
-
-        const metadata = await response.json()
-        uploadedImages.push(metadata)
-
-        // Replace temp image with actual metadata
-        const index = images.value.findIndex(img => img.original_path === file.name)
-        if (index !== -1) {
-          images.value[index] = { ...metadata, isUploading: false }
-        }
-      }
-
-      return uploadedImages
-    } catch (error) {
-      console.error('Upload error:', error)
-      // Hata durumunda tüm uploading durumlarını temizle
+      // Clear any uploading states
       clearUploadingStates()
-      throw error
+      
+      // Fetch all images from the API
+      const response = await fetch(`${API_URL}/images`)
+      
+      if (!response.ok) {
+        throw new Error(`Failed to fetch images: ${response.statusText}`)
+      }
+      
+      const data = await response.json()
+      
+      // Update images with the fetched data
+      if (Array.isArray(data)) {
+        // Keep any uploading images
+        const uploadingImages = images.value.filter(img => img.isUploading)
+        images.value = [...uploadingImages, ...data]
+      } else {
+        console.error('Invalid image data format:', data)
+        images.value = []
+      }
+    } catch (err) {
+      console.error('Fetch error:', err)
+      error.value = err.message
+    } finally {
+      loading.value = false
     }
   }
 
   const deleteImage = async (filepath) => {
     try {
-      const response = await fetch(`${API_URL}/delete/${encodeURIComponent(filepath)}`, {
+      error.value = null
+      
+      // Extract just the filename from the path
+      const filename = filepath.split('/').pop()
+      const response = await fetch(`${API_URL}/delete/${encodeURIComponent(filename)}`, {
         method: 'DELETE'
       })
       
-      if (!response.ok) throw new Error('Delete failed')
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || 'Delete failed')
+      }
       
+      // Remove the deleted image from the store
       images.value = images.value.filter(img => img.original_path !== filepath)
-    } catch (error) {
-      console.error('Delete error:', error)
-      throw error
+      
+      return true
+    } catch (err) {
+      console.error('Delete error:', err)
+      error.value = err.message
+      throw err
     }
   }
 
-  const searchImages = async (query) => {
+  const searchImages = async (query, filters = {}, sort = 'relevance', limit = 50) => {
     // If query is empty, just clear the search
-    if (!query.trim()) {
+    if (!query.trim() && Object.keys(filters).length === 0) {
       clearSearch()
-      return
+      return []
     }
 
-    // Don't search for very short queries
-    if (query.trim().length < 2) {
-      return
+    // Don't search for very short queries unless filters are provided
+    if (query.trim().length < 2 && Object.keys(filters).length === 0) {
+      return []
     }
 
     // Set searching state without affecting loading state
     isSearching.value = true
     searchQuery.value = query
+    searchFilters.value = filters
+    searchSort.value = sort
+    error.value = null
 
     try {
-      console.log('Searching for:', query)
+      console.log(`Searching for: "${query}" with filters:`, filters, `sort: ${sort}`)
       
       const response = await fetch(`${API_URL}/search`, {
         method: 'POST',
@@ -115,23 +108,59 @@ export const useImageStore = defineStore('images', () => {
           'Content-Type': 'application/json',
           'Accept': 'application/json'
         },
-        body: JSON.stringify({ query }),
+        body: JSON.stringify({ 
+          query,
+          filters,
+          sort,
+          limit
+        }),
       })
 
-      const data = await response.json()
-
       if (!response.ok) {
-        throw new Error(`Search failed: ${data.error || response.statusText}`)
+        const errorData = await response.json().catch(() => ({}))
+        throw new Error(errorData.error || `Search failed: ${response.statusText}`)
       }
 
-      searchResults.value = data.results || []
+      // Get the search results from the response
+      const searchData = await response.json()
+      
+      // Update the search metadata
+      searchTotalResults.value = searchData.total_results || 0
+      
+      // Keep any uploading images
+      const uploadingImages = images.value.filter(img => img.isUploading)
+      
+      // Process the search results
+      if (searchData.results && Array.isArray(searchData.results)) {
+        console.log(`Found ${searchData.total_results} results for "${query}"`)
+        
+        // Add similarity score information to display in UI
+        const processedResults = searchData.results.map(result => ({
+          ...result,
+          searchScore: result.similarity || 0,
+          matchedTerms: result.matched_terms || 0
+        }))
+        
+        // Combine uploading images with search results
+        images.value = [...uploadingImages, ...processedResults]
+        searchResults.value = processedResults
+      } else {
+        console.error('Invalid search results format:', searchData)
+        images.value = uploadingImages
+        searchResults.value = []
+      }
+      
       return searchResults.value
-
-    } catch (error) {
-      console.error('Search error:', error)
-      error.value = error.message
+    } catch (err) {
+      console.error('Search error:', err)
+      error.value = err.message
+      
+      // Keep uploading images on error
+      const uploadingImages = images.value.filter(img => img.isUploading)
+      images.value = uploadingImages
       searchResults.value = []
-      throw error
+      
+      throw err
     } finally {
       isSearching.value = false
     }
@@ -140,28 +169,50 @@ export const useImageStore = defineStore('images', () => {
   const clearSearch = () => {
     searchResults.value = []
     searchQuery.value = ''
+    searchFilters.value = {}
+    searchSort.value = 'relevance'
+    searchTotalResults.value = 0
     isSearching.value = false
+    
+    // Fetch all images and reset search-related properties
+    fetchImages().then(() => {
+      // Clear any search-related properties from the images
+      images.value = images.value.map(img => {
+        const newImg = { ...img }
+        // Remove search-specific properties
+        delete newImg.searchScore
+        delete newImg.matchedTerms
+        delete newImg.similarity
+        delete newImg.matched_terms
+        return newImg
+      })
+    })
   }
 
   const clearAllImages = () => {
     images.value = []
     searchResults.value = []
     searchQuery.value = ''
+    searchFilters.value = {}
+    searchSort.value = 'relevance'
+    searchTotalResults.value = 0
+    error.value = null
   }
 
   // Initialize store
-  clearUploadingStates() // Store oluşturulduğunda uploading durumlarını temizle
+  clearUploadingStates() // Clear uploading states when store is created
 
   return {
     images,
     loading,
-    uploadingFiles,
+    error,
     searchResults,
     searchQuery,
+    searchFilters,
+    searchSort,
+    searchTotalResults,
     isSearching,
-    error,
     fetchImages,
-    uploadImages,
     deleteImage,
     searchImages,
     clearSearch,
