@@ -337,7 +337,7 @@ onMounted(() => {
 
 const getThumbnailUrl = (path) => {
   if (!path) return ''
-  return `http://localhost:5000/thumbnails/${path.split('/').pop()}`
+  return `http://localhost:8000/api/thumbnails/${path.split('/').pop()}`
 }
 
 const getImageName = (path) => {

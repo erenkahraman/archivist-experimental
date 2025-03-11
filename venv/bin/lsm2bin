@@ -1,4 +1,4 @@
-#!/Users/ait/Downloads/code/archivist-experimental/venv/bin/python3.11
+#!/Users/erenkahraman/Desktop/code/archivist-experimental/venv/bin/python3.13
 # -*- coding: utf-8 -*-
 import re
 import sys

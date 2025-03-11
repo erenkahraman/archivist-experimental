@@ -18,17 +18,13 @@ def home():
 def test():
     return jsonify({'status': 'ok'})
 
-# Configure CORS properly
+# Simplify CORS configuration
 CORS(app, resources={
-    r"/api/*": {
+    r"/*": {  # This will apply to all routes
         "origins": ["http://localhost:3000"],
-        "methods": ["GET", "POST", "DELETE", "OPTIONS"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type"],
         "supports_credentials": True
-    },
-    r"/thumbnails/*": {
-        "origins": ["http://localhost:3000"],
-        "methods": ["GET"],
     }
 })
 
@@ -43,9 +39,9 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/thumbnails/<path:filename>')
+@app.route('/api/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
-    """Serve thumbnail images."""
+    """Serve thumbnail images"""
     return send_from_directory(config.THUMBNAIL_DIR, filename)
 
 @app.route('/api/upload', methods=['POST'])
@@ -248,18 +244,19 @@ def ensure_directories():
     """Ensure required directories exist."""
     directories = [
         UPLOAD_FOLDER,
-        config.THUMBNAIL_DIR,
+        config.THUMBNAIL_DIR,  # Make sure this exists
         config.INDEX_PATH
     ]
     for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
+        # Add debug logging
         print(f"Ensured directory exists: {directory}")
 
 def start_api():
     """Start the Flask API server."""
     ensure_directories()
     app.run(
-        host=config.API_HOST,
-        port=config.API_PORT,
+        host='0.0.0.0',  # Allow external connections
+        port=8000,
         debug=True
     ) 

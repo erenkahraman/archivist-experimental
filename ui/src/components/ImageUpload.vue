@@ -55,6 +55,8 @@ const currentFileIndex = ref(0)
 const totalFiles = ref(0)
 const uploadStatus = ref('')
 
+const uploadUrl = 'http://localhost:8000/api/upload'
+
 const handleDrop = async (e) => {
   isDragging.value = false
   const files = [...e.dataTransfer.files]
@@ -169,7 +171,7 @@ const uploadSingleFile = async (file) => {
       
       xhr.onerror = () => reject(new Error('Network error during upload'))
       
-      xhr.open('POST', 'http://localhost:5000/api/upload', true)
+      xhr.open('POST', uploadUrl, true)
       xhr.send(formData)
     })
   } catch (error) {

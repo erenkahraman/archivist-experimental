@@ -13,7 +13,7 @@ export const useImageStore = defineStore('images', () => {
   const searchSort = ref('relevance')
   const searchTotalResults = ref(0)
   const isSearching = ref(false)
-  const API_URL = 'http://localhost:5000/api'
+  const API_BASE_URL = 'http://localhost:8000/api'
 
   // Method to clear uploading states
   const clearUploadingStates = () => {
@@ -29,7 +29,7 @@ export const useImageStore = defineStore('images', () => {
       clearUploadingStates()
       
       // Fetch all images from the API
-      const response = await fetch(`${API_URL}/images`)
+      const response = await fetch(`${API_BASE_URL}/images`)
       
       if (!response.ok) {
         throw new Error(`Failed to fetch images: ${response.statusText}`)
@@ -60,7 +60,7 @@ export const useImageStore = defineStore('images', () => {
       
       // Extract just the filename from the path
       const filename = filepath.split('/').pop()
-      const response = await fetch(`${API_URL}/delete/${encodeURIComponent(filename)}`, {
+      const response = await fetch(`${API_BASE_URL}/delete/${encodeURIComponent(filename)}`, {
         method: 'DELETE'
       })
       
@@ -102,7 +102,7 @@ export const useImageStore = defineStore('images', () => {
     try {
       console.log(`Searching for: "${query}" with filters:`, filters, `sort: ${sort}`)
       
-      const response = await fetch(`${API_URL}/search`, {
+      const response = await fetch(`${API_BASE_URL}/search`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',

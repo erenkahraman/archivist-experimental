@@ -14,9 +14,10 @@ class SearchEngine:
     def __init__(self):
         print("Initializing SearchEngine...")
         try:
-            # Load models
+            # Load models and move to GPU if available
             print(f"Loading CLIP model from: {config.CLIP_MODEL_NAME}")
-            self.model = CLIPModel.from_pretrained(config.CLIP_MODEL_NAME)
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            self.model = CLIPModel.from_pretrained(config.CLIP_MODEL_NAME).to(self.device)
             print("CLIP model loaded successfully")
             self.processor = CLIPProcessor.from_pretrained(config.CLIP_MODEL_NAME)
             print("CLIP processor loaded successfully")
@@ -59,28 +60,34 @@ class SearchEngine:
             # Process image through CLIP - optimized for batch processing
             print("Processing image through CLIP...")
             try:
-                inputs = self.processor(images=image, return_tensors="pt", padding=True)
+                # Convert PIL Image to appropriate format before passing to processor
+                inputs = self.processor(
+                    images=image,
+                    return_tensors="pt",
+                    padding=True
+                )
                 print("Image processed successfully")
                 print(f"Input shape: {inputs['pixel_values'].shape}")
             except Exception as e:
                 print(f"Error processing image: {str(e)}")
                 raise
             
-            with torch.no_grad():  # Optimize memory usage
+            with torch.no_grad():
                 print("Getting image features...")
                 try:
-                    image_features = self.model.get_image_features(**inputs)
+                    image_features = self.model.get_image_features(pixel_values=inputs['pixel_values'].to(self.device))
                     print(f"Image features shape: {image_features.shape}")
-                    image_features = image_features.cpu()  # GPU memory'i hemen boşalt
+                    # Analyze patterns before moving to CPU
+                    print("\nAnalyzing patterns...")
+                    pattern_info = self._analyze_patterns(image_features)
+                    
+                    # Now we can move to CPU
+                    image_features = image_features.cpu()
                     print("Image features extracted successfully")
                 except Exception as e:
                     print(f"Error extracting image features: {str(e)}")
                     raise
 
-            # Process all patterns in a single batch for efficiency
-            print("\nAnalyzing patterns...")
-            pattern_info = self._analyze_patterns(image_features)
-            
             # Style analysis can be done asynchronously or in a lighter way
             print("\nStarting detailed style analysis...")
             style_info = self._analyze_detailed_style(image_features, pattern_info)
@@ -130,6 +137,67 @@ class SearchEngine:
                     'components': {},
                     'completeness_score': 0
                 }
+            }
+
+    def _analyze_patterns(self, image_features) -> Dict:
+        """Analyze patterns in the image features."""
+        try:
+            print("Starting pattern analysis...")
+            
+            # Basic pattern categories
+            pattern_categories = [
+                "geometric", "floral", "abstract", "stripes", "polka dots", 
+                "chevron", "paisley", "plaid", "animal print", "tribal",
+                "damask", "herringbone", "houndstooth", "ikat", "lattice",
+                "medallion", "moroccan", "ogee", "quatrefoil", "trellis"
+            ]
+            
+            # Analyze pattern categories
+            scores = {}
+            with torch.no_grad():
+                for category in pattern_categories:
+                    text_inputs = self.processor(
+                        text=[f"this is a {category} pattern"],
+                        return_tensors="pt",
+                        padding=True
+                    ).to(self.device)
+                    
+                    text_features = self.model.get_text_features(**text_inputs)
+                    similarity = torch.nn.functional.cosine_similarity(
+                        image_features.to(self.device),
+                        text_features,
+                        dim=1
+                    )
+                    scores[category] = float(similarity[0].cpu())
+
+            # Find highest scoring category
+            primary_pattern = max(scores.items(), key=lambda x: x[1])
+            
+            # Find secondary patterns (above threshold)
+            threshold = 0.2
+            secondary_patterns = [
+                {"name": pattern, "confidence": score}
+                for pattern, score in scores.items()
+                if score > threshold and pattern != primary_pattern[0]
+            ]
+            
+            # Return results
+            return {
+                "category": primary_pattern[0],
+                "category_confidence": float(primary_pattern[1]),
+                "secondary_patterns": sorted(secondary_patterns, 
+                                          key=lambda x: x["confidence"], 
+                                          reverse=True)[:3]  # Top 3 secondary patterns
+            }
+
+        except Exception as e:
+            print(f"Error in pattern analysis: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return {
+                "category": "Unknown",
+                "category_confidence": 0.0,
+                "secondary_patterns": []
             }
 
     def _analyze_detailed_style(self, image_features, pattern_info):
@@ -871,14 +939,16 @@ class SearchEngine:
                     text=[f"this pattern is {attr}", f"this pattern is not {attr}"],
                     return_tensors="pt",
                     padding=True
-                )
+                ).to(self.device)  # Text inputs'u GPU'ya taşı
                 
                 with torch.no_grad():
                     text_features = self.model.get_text_features(**text_inputs)
                     similarity = torch.nn.functional.cosine_similarity(
-                        features, text_features, dim=1
+                        features.to(self.device),  # Features'ı GPU'ya taşı
+                        text_features,
+                        dim=1
                     )
-                    scores[attr] = float(similarity[0])
+                    scores[attr] = float(similarity[0].cpu())  # Sonucu CPU'ya taşı
 
             # Get the most likely attribute
             top_attr = max(scores.items(), key=lambda x: x[1])
