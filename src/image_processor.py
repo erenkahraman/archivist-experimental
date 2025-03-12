@@ -1,9 +1,12 @@
-from PIL import Image
+from PIL import Image, ImageOps
 import torch
 from torchvision import transforms
 from pathlib import Path
 import io
 import config
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ImageProcessor:
     def __init__(self):
@@ -44,4 +47,21 @@ class ImageProcessor:
             thumbnails.append(thumb_path)
             tensors.append(self.preprocess_image(thumb_path))
         
-        return thumbnails, torch.cat(tensors) 
+        return thumbnails, torch.cat(tensors)
+
+    def validate_image(self, image: Image.Image) -> bool:
+        """
+        Validate image before processing.
+        
+        Args:
+            image (PIL.Image): Image to validate
+            
+        Returns:
+            bool: True if image is valid
+        """
+        try:
+            image.verify()
+            return True
+        except Exception as e:
+            logger.error(f"Invalid image: {e}")
+            return False 

@@ -1,38 +1,59 @@
 from pathlib import Path
 from typing import List, Dict, Any
-import numpy as np
 import torch
 from transformers import CLIPProcessor, CLIPModel
-import faiss
 import json
-import config
-import colorsys
-from sklearn.cluster import KMeans
 from PIL import Image
+import numpy as np
+import logging
+from sklearn.cluster import KMeans
+import colorsys
+
+# Relative imports from the same package
+from .analyzers.pattern_analyzer import PatternAnalyzer
+from .analyzers.color_analyzer import ColorAnalyzer
+from .search.searcher import ImageSearcher
+import config
+
+# Sadece önemli logları göster
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
+
+# Werkzeug loglarını kapat
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.setLevel(logging.ERROR)
 
 class SearchEngine:
     def __init__(self):
-        print("Initializing SearchEngine...")
+        logger.info("Initializing SearchEngine...")
         try:
             # Load models and move to GPU if available
-            print(f"Loading CLIP model from: {config.CLIP_MODEL_NAME}")
+            logger.info("Loading CLIP model: openai/clip-vit-large-patch14")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.model = CLIPModel.from_pretrained(config.CLIP_MODEL_NAME).to(self.device)
-            print("CLIP model loaded successfully")
-            self.processor = CLIPProcessor.from_pretrained(config.CLIP_MODEL_NAME)
-            print("CLIP processor loaded successfully")
+            self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
+            logger.info("CLIP model loaded successfully")
+            self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
+            logger.info("CLIP processor loaded successfully")
+            
+            # Initialize analyzers
+            self.pattern_analyzer = PatternAnalyzer(self.model, self.processor, self.device)
+            self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS)
+            self.searcher = ImageSearcher(self.model, self.processor, self.device)
             
             # Initialize other components
-            self.min_clusters = 3
-            self.max_clusters = config.N_CLUSTERS
-            self.kmeans = None
-            self.index = None
             self.metadata_file = config.BASE_DIR / "metadata.json"
             self.metadata = self.load_metadata()
-            print("SearchEngine initialization completed")
+            
+            # Add max_clusters attribute
+            self.max_clusters = config.N_CLUSTERS
+            
+            logger.info("SearchEngine initialization completed")
         except Exception as e:
-            print(f"Error initializing SearchEngine: {str(e)}")
-            print("Stack trace:")
+            logger.error(f"Error initializing SearchEngine: {str(e)}")
+            logger.error("Stack trace:")
             import traceback
             traceback.print_exc()
             raise
@@ -52,97 +73,67 @@ class SearchEngine:
     def detect_patterns(self, image) -> Dict:
         """Detect patterns in the image."""
         try:
-            print("\n=== Starting pattern detection ===")
-            print("Checking model and processor...")
-            if not self.model or not self.processor:
-                raise Exception("CLIP model or processor not initialized properly")
+            logger.info("\n=== Starting pattern detection ===")
             
-            # Process image through CLIP - optimized for batch processing
-            print("Processing image through CLIP...")
-            try:
-                # Convert PIL Image to appropriate format before passing to processor
-                inputs = self.processor(
-                    images=image,
-                    return_tensors="pt",
-                    padding=True
-                )
-                print("Image processed successfully")
-                print(f"Input shape: {inputs['pixel_values'].shape}")
-            except Exception as e:
-                print(f"Error processing image: {str(e)}")
-                raise
+            # Process image through CLIP
+            inputs = self.processor(
+                images=image,
+                return_tensors="pt",
+                padding=True
+            )
             
             with torch.no_grad():
-                print("Getting image features...")
-                try:
-                    image_features = self.model.get_image_features(pixel_values=inputs['pixel_values'].to(self.device))
-                    print(f"Image features shape: {image_features.shape}")
-                    # Analyze patterns before moving to CPU
-                    print("\nAnalyzing patterns...")
-                    pattern_info = self._analyze_patterns(image_features)
-                    
-                    # Now we can move to CPU
-                    image_features = image_features.cpu()
-                    print("Image features extracted successfully")
-                except Exception as e:
-                    print(f"Error extracting image features: {str(e)}")
-                    raise
-
-            # Style analysis can be done asynchronously or in a lighter way
-            print("\nStarting detailed style analysis...")
-            style_info = self._analyze_detailed_style(image_features, pattern_info)
-            if style_info:  # Null check
-                pattern_info.update(style_info)
-                print("Style analysis completed and updated")
-            else:
-                print("Style analysis returned no results")
-
-            # Generate prompt
-            print("\nAnalyzing colors...")
-            color_info = self.analyze_colors(np.array(image))
-            if color_info:
-                print("Color analysis completed")
-            else:
-                print("Color analysis failed")
+                image_features = self.model.get_image_features(
+                    pixel_values=inputs['pixel_values'].to(self.device)
+                )
                 
-            print("\nGenerating detailed prompt...")
-            prompt_data = self.generate_detailed_prompt(image_features, pattern_info, color_info)
-            pattern_info['prompt'] = prompt_data
-            print("=== Pattern analysis completed successfully ===\n")
-
+                # Analyze patterns using pattern_analyzer
+                pattern_info = self.pattern_analyzer._analyze_patterns(image_features)
+                
+                # Analyze colors using color_analyzer
+                color_info = self.color_analyzer.analyze_colors(np.array(image))
+                
+                # Generate prompt using generate_detailed_prompt instead of _generate_detailed_prompt
+                prompt_data = self.generate_detailed_prompt(image_features, pattern_info, color_info)
+                pattern_info['prompt'] = prompt_data
+                
             return pattern_info
 
         except Exception as e:
-            print(f"\nError in detect_patterns: {str(e)}")
-            print("Stack trace:")
-            import traceback
-            traceback.print_exc()
-            print("\nReturning default pattern info")
-            return {
-                'category': 'Unknown',
-                'category_confidence': 0.0,
-                'primary_pattern': 'Unknown',
-                'pattern_confidence': 0.0,
-                'secondary_patterns': [],
-                'layout': {'type': 'balanced', 'confidence': 0.0},
-                'repeat_type': {'type': 'regular', 'confidence': 0.0},
-                'scale': {'type': 'medium', 'confidence': 0.0},
-                'texture_type': {'type': 'smooth', 'confidence': 0.0},
-                'cultural_influence': {'type': 'contemporary', 'confidence': 0.0},
-                'historical_period': {'type': 'modern', 'confidence': 0.0},
-                'mood': {'type': 'balanced', 'confidence': 0.0},
-                'style_keywords': ['balanced'],
-                'prompt': {
-                    'final_prompt': 'Unable to analyze pattern',
-                    'components': {},
-                    'completeness_score': 0
-                }
+            logger.error(f"\nError in detect_patterns: {str(e)}")
+            return self._get_default_pattern_info()
+
+    def search(self, query: str, k: int = 10) -> List[Dict]:
+        """Search for images based on query."""
+        return self.searcher.search(query, list(self.metadata.values()), k)
+
+    def _get_default_pattern_info(self) -> Dict:
+        """Return default pattern info when analysis fails."""
+        return {
+            'category': 'Unknown',
+            'category_confidence': 0.0,
+            'primary_pattern': 'Unknown',
+            'pattern_confidence': 0.0,
+            'secondary_patterns': [],
+            'layout': {'type': 'balanced', 'confidence': 0.0},
+            'repeat_type': {'type': 'regular', 'confidence': 0.0},
+            'scale': {'type': 'medium', 'confidence': 0.0},
+            'texture_type': {'type': 'smooth', 'confidence': 0.0},
+            'cultural_influence': {'type': 'contemporary', 'confidence': 0.0},
+            'historical_period': {'type': 'modern', 'confidence': 0.0},
+            'mood': {'type': 'balanced', 'confidence': 0.0},
+            'style_keywords': ['balanced'],
+            'prompt': {
+                'final_prompt': 'Unable to analyze pattern',
+                'components': {},
+                'completeness_score': 0
             }
+        }
 
     def _analyze_patterns(self, image_features) -> Dict:
         """Analyze patterns in the image features."""
         try:
-            print("Starting pattern analysis...")
+            logger.info("Starting pattern analysis...")
             
             # Basic pattern categories
             pattern_categories = [
@@ -191,7 +182,7 @@ class SearchEngine:
             }
 
         except Exception as e:
-            print(f"Error in pattern analysis: {str(e)}")
+            logger.error(f"Error in pattern analysis: {str(e)}")
             import traceback
             traceback.print_exc()
             return {
@@ -204,7 +195,7 @@ class SearchEngine:
         """Analyze style with context-aware prompts."""
         try:
             pattern_type = pattern_info['primary_pattern']
-            print(f"\nAnalyzing detailed style for pattern type: {pattern_type}")
+            logger.info(f"\nAnalyzing detailed style for pattern type: {pattern_type}")
             
             style_queries = {
                 'layout': [
@@ -226,12 +217,12 @@ class SearchEngine:
 
             results = {}
             for aspect, queries in style_queries.items():
-                print(f"\nAnalyzing {aspect}...")
+                logger.info(f"\nAnalyzing {aspect}...")
                 best_score = 0
                 best_attribute = None
                 
                 attributes = self._get_attributes_for_aspect(aspect)
-                print(f"Testing {len(attributes)} possible {aspect} attributes")
+                logger.info(f"Testing {len(attributes)} possible {aspect} attributes")
                 
                 for attr in attributes:
                     attr_score = 0
@@ -240,7 +231,7 @@ class SearchEngine:
                     for query in queries:
                         # First {} for pattern type, second {} for attribute
                         formatted_query = query.format(pattern_type, attr)
-                        print(f"Testing query: {formatted_query}")
+                        logger.info(f"Testing query: {formatted_query}")
                         
                         text_inputs = self.processor(
                             text=[formatted_query],
@@ -254,7 +245,7 @@ class SearchEngine:
                                 image_features, text_features, dim=1
                             )
                             score = float(similarity[0])
-                            print(f"Similarity score: {score:.4f}")
+                            logger.info(f"Similarity score: {score:.4f}")
                             
                             if score > 0.2:
                                 attr_score += score
@@ -262,23 +253,23 @@ class SearchEngine:
                     
                     if valid_checks > 0:
                         avg_score = attr_score / valid_checks
-                        print(f"Average score for {attr}: {avg_score:.4f}")
+                        logger.info(f"Average score for {attr}: {avg_score:.4f}")
                         if avg_score > best_score:
                             best_score = avg_score
                             best_attribute = attr
-                            print(f"New best attribute for {aspect}: {attr} (score: {avg_score:.4f})")
+                            logger.info(f"New best attribute for {aspect}: {attr} (score: {avg_score:.4f})")
 
                 results[aspect] = {
                     'type': best_attribute or 'balanced',
                     'confidence': best_score
                 }
-                print(f"Final {aspect} result: {best_attribute or 'balanced'} (confidence: {best_score:.4f})")
+                logger.info(f"Final {aspect} result: {best_attribute or 'balanced'} (confidence: {best_score:.4f})")
 
             return results
 
         except Exception as e:
-            print(f"Error in _analyze_detailed_style: {str(e)}")
-            print("Stack trace:")
+            logger.error(f"Error in _analyze_detailed_style: {str(e)}")
+            logger.error("Stack trace:")
             import traceback
             traceback.print_exc()
             return {}
@@ -366,7 +357,7 @@ class SearchEngine:
             }
 
         except Exception as e:
-            print(f"Error generating detailed prompt: {str(e)}")
+            logger.error(f"Error generating detailed prompt: {str(e)}")
             return {
                 "final_prompt": "Unable to generate detailed prompt",
                 "components": {},
@@ -510,7 +501,7 @@ class SearchEngine:
             }
 
         except Exception as e:
-            print(f"Error in analyze_colors: {str(e)}")
+            logger.error(f"Error in analyze_colors: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
@@ -538,7 +529,7 @@ class SearchEngine:
             return thumbnail_path
             
         except Exception as e:
-            print(f"Error creating thumbnail: {str(e)}")
+            logger.error(f"Error creating thumbnail: {str(e)}")
             return None
 
     def process_images(self, image_paths: List[Path]) -> List[Dict]:
@@ -550,24 +541,32 @@ class SearchEngine:
                 if metadata:
                     results.append(metadata)
             except Exception as e:
-                print(f"Error processing {path}: {str(e)}")
+                logger.error(f"Error processing {path}: {str(e)}")
                 continue
         return results
 
-    def process_image(self, image_path: Path) -> Dict:
-        """Process a single image and extract its patterns and metadata."""
+    def process_image(self, image_path: Path) -> Dict[str, Any]:
+        """
+        Process a single image and extract its patterns and metadata.
+        
+        Args:
+            image_path (Path): Path to the image file
+            
+        Returns:
+            Dict[str, Any]: Processed image metadata including patterns and colors
+        """
         try:
-            print(f"\n=== Processing image: {image_path} ===")
+            logger.info(f"\n=== Processing image: {image_path} ===")
             
             # Check if image exists
             if not image_path.exists():
-                print(f"Error: Image file not found at {image_path}")
+                logger.error(f"Error: Image file not found at {image_path}")
                 return None
                 
             # Create thumbnail
             thumbnail_path = self.create_thumbnail(image_path)
             if not thumbnail_path:
-                print(f"Error: Failed to create thumbnail for {image_path}")
+                logger.error(f"Error: Failed to create thumbnail for {image_path}")
                 return None
                 
             # Open and process the image
@@ -577,13 +576,13 @@ class SearchEngine:
                 if image.mode != 'RGB':
                     image = image.convert('RGB')
             except Exception as e:
-                print(f"Error opening image: {str(e)}")
+                logger.error(f"Error opening image: {str(e)}")
                 return None
                 
             # Extract patterns
             patterns = self.detect_patterns(image)
             if not patterns:
-                print(f"Warning: No patterns detected in {image_path}")
+                logger.warning(f"Warning: No patterns detected in {image_path}")
                 patterns = {
                     "category": "Unknown",
                     "category_confidence": 0.0,
@@ -607,261 +606,14 @@ class SearchEngine:
             self.metadata[str(image_path)] = metadata
             self.save_metadata()
             
-            print(f"Successfully processed image: {image_path}")
+            logger.info(f"Successfully processed image: {image_path}")
             return metadata
             
         except Exception as e:
-            print(f"Error processing image {image_path}: {str(e)}")
+            logger.error(f"Error processing image {image_path}: {str(e)}")
             import traceback
             traceback.print_exc()
             return None
-
-    def search(self, query: str, k: int = 10) -> List[Dict]:
-        """
-        Enhanced search for images based on query with hierarchical ranking.
-        
-        This search algorithm uses a multi-tier approach:
-        1. Exact pattern matches (highest priority)
-        2. Semantic similarity
-        3. Color matches
-        4. Attribute matches (style, layout, etc.)
-        
-        Results are normalized to provide realistic match percentages.
-        """
-        try:
-            if not query.strip():
-                # Return all images if query is empty
-                metadata_list = list(self.metadata.values())
-                return metadata_list[:k]
-                
-            # Split query into terms and normalize
-            query_terms = [term.lower().strip() for term in query.lower().split() if term.strip()]
-            
-            # Get all metadata as a list for processing
-            metadata_list = []
-            for path, metadata in self.metadata.items():
-                metadata_list.append(metadata)
-
-            if not metadata_list:
-                print("No images in database")
-                return []
-
-            # Process the query with CLIP to get semantic features
-            with torch.no_grad():
-                text_inputs = self.processor(
-                    text=[query],
-                    return_tensors="pt",
-                    padding=True,
-                    truncation=True
-                )
-                query_features = self.model.get_text_features(**text_inputs).cpu()
-
-            # Calculate scores for each image
-            results = []
-            max_scores = {
-                'exact_match': 0.0,
-                'semantic': 0.0,
-                'pattern': 0.0,
-                'color': 0.0,
-                'attribute': 0.0,
-                'term_matches': 0
-            }
-            
-            for metadata in metadata_list:
-                # Initialize score components with hierarchical weighting
-                scores = {
-                    'exact_match': 0.0,  # Exact pattern match (highest priority)
-                    'semantic': 0.0,     # Semantic similarity score
-                    'pattern': 0.0,      # Pattern match score
-                    'color': 0.0,        # Color match score
-                    'attribute': 0.0,    # Attribute match score
-                    'term_matches': 0,   # Number of query terms matched
-                    'term_coverage': 0.0 # Percentage of query terms matched
-                }
-                
-                # 1. EXACT PATTERN MATCHING (highest priority)
-                if 'patterns' in metadata:
-                    patterns = metadata['patterns']
-                    
-                    # Check for exact category match (highest priority)
-                    if 'category' in patterns:
-                        category = patterns['category'].lower()
-                        category_confidence = patterns.get('category_confidence', 0.8)
-                        
-                        # Check for exact match with full query
-                        if query.lower() == category:
-                            scores['exact_match'] = 10.0 * category_confidence  # Very high weight for exact matches
-                        
-                        # Check for exact matches with individual terms
-                        for term in query_terms:
-                            if term == category:
-                                scores['exact_match'] += 5.0 * category_confidence
-                                scores['term_matches'] += 1
-                            elif term in category:
-                                scores['exact_match'] += 2.0 * category_confidence
-                                scores['term_matches'] += 1
-                
-                # 2. SEMANTIC MATCHING using prompt
-                if 'patterns' in metadata and 'prompt' in metadata['patterns']:
-                    prompt_text = metadata['patterns']['prompt'].get('final_prompt', '')
-                    if prompt_text:
-                        # Calculate semantic similarity between query and prompt
-                        with torch.no_grad():
-                            prompt_inputs = self.processor(
-                                text=[prompt_text],
-                                return_tensors="pt",
-                                padding=True,
-                                truncation=True
-                            )
-                            prompt_features = self.model.get_text_features(**prompt_inputs).cpu()
-                            
-                            # Compute cosine similarity
-                            similarity = torch.nn.functional.cosine_similarity(
-                                query_features, prompt_features
-                            ).item()
-                            
-                            scores['semantic'] = similarity * 3.0  # Scale semantic similarity
-                        
-                        # Also check for term matches in prompt
-                        prompt_lower = prompt_text.lower()
-                        for term in query_terms:
-                            if f" {term} " in f" {prompt_lower} ":  # Match whole words
-                                scores['term_matches'] += 1
-                
-                # 3. PATTERN TYPE MATCHING with term weighting
-                if 'patterns' in metadata:
-                    patterns = metadata['patterns']
-                    
-                    # Primary pattern matching
-                    if 'category' in patterns:
-                        primary_pattern = patterns['category'].lower()
-                        primary_confidence = patterns.get('category_confidence', 0.8)
-                        
-                        # Check for partial matches with primary pattern
-                        for term in query_terms:
-                            if term in primary_pattern and term != primary_pattern:
-                                # Higher weight for primary pattern matches
-                                scores['pattern'] += primary_confidence * 2.0
-                                scores['term_matches'] += 1
-                    
-                    # Secondary patterns matching
-                    if 'secondary_patterns' in patterns:
-                        for pattern in patterns['secondary_patterns']:
-                            pattern_name = pattern['name'].lower()
-                            pattern_conf = pattern['confidence']
-                            
-                            for term in query_terms:
-                                if term == pattern_name:
-                                    scores['pattern'] += pattern_conf * 1.5
-                                    scores['term_matches'] += 1
-                                elif term in pattern_name:
-                                    scores['pattern'] += pattern_conf
-                                    scores['term_matches'] += 1
-                    
-                    # Style keywords matching
-                    if 'style_keywords' in patterns:
-                        for keyword in patterns['style_keywords']:
-                            keyword_lower = keyword.lower()
-                            for term in query_terms:
-                                if term == keyword_lower:
-                                    scores['attribute'] += 0.8  # Higher weight for exact keyword match
-                                    scores['term_matches'] += 1
-                                elif term in keyword_lower:
-                                    scores['attribute'] += 0.4  # Lower weight for partial keyword match
-                                    scores['term_matches'] += 1
-                    
-                    # Match other attributes (layout, scale, texture, etc.)
-                    for attr_type in ['layout', 'scale', 'texture_type', 'cultural_influence', 'historical_period', 'mood']:
-                        if attr_type in patterns:
-                            attr = patterns[attr_type]
-                            if 'type' in attr:
-                                attr_type_value = attr['type'].lower()
-                                attr_conf = attr.get('confidence', 0.5)
-                                
-                                for term in query_terms:
-                                    if term == attr_type_value:
-                                        scores['attribute'] += attr_conf * 0.8
-                                        scores['term_matches'] += 1
-                                    elif term in attr_type_value:
-                                        scores['attribute'] += attr_conf * 0.4
-                                        scores['term_matches'] += 1
-
-                # 4. COLOR MATCHING with term weighting
-                if 'colors' in metadata:
-                    colors = metadata['colors']
-                    if 'dominant_colors' in colors:
-                        for color in colors['dominant_colors']:
-                            color_name = color['name'].lower()
-                            proportion = color['proportion']
-                            
-                            for term in query_terms:
-                                if term == color_name:
-                                    scores['color'] += proportion * 2.0  # Higher weight for exact color match
-                                    scores['term_matches'] += 1
-                                elif term in color_name:
-                                    scores['color'] += proportion * 1.0  # Weight by color proportion
-                                    scores['term_matches'] += 1
-                
-                # Calculate term coverage - what percentage of query terms were matched
-                scores['term_coverage'] = scores['term_matches'] / len(query_terms) if query_terms else 0
-                
-                # Calculate final score with hierarchical weighting
-                # The weights establish a clear hierarchy of matching criteria
-                final_score = (
-                    (scores['exact_match'] * 0.40) +  # Exact matches are highest priority
-                    (scores['semantic'] * 0.25) +     # Semantic similarity is second priority
-                    (scores['pattern'] * 0.15) +      # Pattern matches are third priority
-                    (scores['color'] * 0.10) +        # Color matches are fourth priority
-                    (scores['attribute'] * 0.05) +    # Attribute matches are fifth priority
-                    (scores['term_coverage'] * 0.05)  # Reward matching more query terms
-                )
-                
-                # Track maximum scores for normalization
-                for key in max_scores:
-                    if key in scores and scores[key] > max_scores[key]:
-                        max_scores[key] = scores[key]
-                
-                # Only include results with a match
-                if final_score > 0:
-                    results.append({
-                        **metadata,
-                        'raw_score': final_score,
-                        'scores': scores,
-                        'matched_terms': scores['term_matches']
-                    })
-            
-            # Normalize scores to provide realistic match percentages
-            # This prevents inflated 100% matches
-            if results:
-                # Find the maximum raw score
-                max_raw_score = max(result['raw_score'] for result in results)
-                
-                # Normalize scores to a realistic range (max 95%)
-                for result in results:
-                    # Calculate normalized similarity as a percentage
-                    # Cap at 95% to avoid misleading 100% matches
-                    normalized_score = (result['raw_score'] / max_raw_score) * 0.95
-                    result['similarity'] = normalized_score
-                    
-                    # Remove raw scores and detailed scores from final results
-                    del result['raw_score']
-                    del result['scores']
-            
-            # Sort by similarity score
-            results.sort(key=lambda x: x['similarity'], reverse=True)
-            
-            # Debug information
-            if results:
-                print(f"Search for '{query}' found {len(results)} results")
-                print(f"Top match: {results[0]['patterns']['category']} with score {results[0]['similarity']:.2f}")
-            
-            return results[:k]
-
-        except Exception as e:
-            print(f"Error in search: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return []
 
     def _analyze_style(self, image_features) -> Dict:
         """Analyze style attributes of the pattern."""
@@ -939,16 +691,16 @@ class SearchEngine:
                     text=[f"this pattern is {attr}", f"this pattern is not {attr}"],
                     return_tensors="pt",
                     padding=True
-                ).to(self.device)  # Text inputs'u GPU'ya taşı
+                ).to(self.device)  # Move text inputs to GPU
                 
                 with torch.no_grad():
                     text_features = self.model.get_text_features(**text_inputs)
                     similarity = torch.nn.functional.cosine_similarity(
-                        features.to(self.device),  # Features'ı GPU'ya taşı
+                        features.to(self.device),  # Move features to GPU
                         text_features,
                         dim=1
                     )
-                    scores[attr] = float(similarity[0].cpu())  # Sonucu CPU'ya taşı
+                    scores[attr] = float(similarity[0].cpu())  # Move result back to CPU
 
             # Get the most likely attribute
             top_attr = max(scores.items(), key=lambda x: x[1])
@@ -958,7 +710,7 @@ class SearchEngine:
             }
 
         except Exception as e:
-            print(f"Error in _analyze_attributes: {str(e)}")
+            logger.error(f"Error in _analyze_attributes: {str(e)}")
             return {
                 'type': 'unknown',
                 'confidence': 0.0
@@ -966,12 +718,12 @@ class SearchEngine:
 
     def _get_attributes_for_aspect(self, aspect):
         """Get possible attributes for a given aspect."""
-        print(f"\nGetting attributes for aspect: {aspect}")
+        logger.info(f"\nGetting attributes for aspect: {aspect}")
         attributes = {
             'layout': ["balanced", "asymmetric", "radial", "linear", "scattered", "grid-like", "concentric"],
             'scale': ["small", "medium", "large", "varied", "proportional", "intricate", "bold"],
             'texture': ["smooth", "rough", "layered", "flat", "dimensional", "textured", "embossed"]
         }
         result = attributes.get(aspect, ["balanced"])
-        print(f"Available attributes: {result}")
+        logger.info(f"Available attributes: {result}")
         return result 

@@ -336,7 +336,11 @@ onMounted(() => {
 })
 
 const getThumbnailUrl = (path) => {
-  if (!path) return ''
+  if (!path) {
+    console.log('Warning: Empty thumbnail path');
+    return '';
+  }
+  console.log('Getting thumbnail for path:', path);
   return `http://localhost:8000/api/thumbnails/${path.split('/').pop()}`
 }
 
@@ -346,6 +350,9 @@ const getImageName = (path) => {
 }
 
 const selectImage = (image) => {
+  console.log('Selected image data:', image);
+  console.log('Pattern analysis:', image.patterns);
+  console.log('Color analysis:', image.colors);
   selectedImage.value = image
   activeTab.value = 'Pattern'
 }
@@ -628,6 +635,28 @@ const calculateAspectRatio = (dimensions) => {
   padding: 0.5rem;
   background: #f8f9fa;
   border-radius: 8px;
+  position: relative;
+}
+
+.color-info {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  justify-content: space-between;
+  padding-right: 10px;
+}
+
+.color-name {
+  margin-right: 40px;
+}
+
+.color-percentage {
+  color: #000000;
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
 }
 
 .color-preview {
@@ -981,13 +1010,11 @@ const calculateAspectRatio = (dimensions) => {
 }
 
 .color-percentage {
+  color: #000000;
   position: absolute;
-  right: 8px;
+  right: 0;
   top: 50%;
   transform: translateY(-50%);
-  font-size: 0.8rem;
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0,0,0,0.3);
 }
 
 .rgb-grid {

@@ -5,6 +5,7 @@ import os
 from werkzeug.utils import secure_filename
 from .search_engine import SearchEngine
 import config
+from werkzeug.exceptions import BadRequest
 
 app = Flask(__name__)
 
@@ -18,9 +19,9 @@ def home():
 def test():
     return jsonify({'status': 'ok'})
 
-# Simplify CORS configuration
+# Configure CORS for development
 CORS(app, resources={
-    r"/*": {  # This will apply to all routes
+    r"/*": {  # Apply to all routes
         "origins": ["http://localhost:3000"],
         "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
         "allow_headers": ["Content-Type"],
@@ -44,18 +45,28 @@ def serve_thumbnail(filename):
     """Serve thumbnail images"""
     return send_from_directory(config.THUMBNAIL_DIR, filename)
 
+@app.errorhandler(BadRequest)
+def handle_bad_request(e):
+    return jsonify({'error': str(e)}), 400
+
 @app.route('/api/upload', methods=['POST'])
 def upload_file():
+    """
+    Handle file upload with proper validation and error handling.
+    
+    Returns:
+        JSON response with metadata or error
+    """
     try:
         if 'file' not in request.files:
-            return jsonify({'error': 'No file part'}), 400
-        
+            raise BadRequest('No file part')
+            
         file = request.files['file']
-        if file.filename == '':
-            return jsonify({'error': 'No selected file'}), 400
-
+        if not file or not file.filename:
+            raise BadRequest('No selected file')
+            
         if not allowed_file(file.filename):
-            return jsonify({'error': 'File type not allowed'}), 400
+            raise BadRequest('File type not allowed')
 
         # Create a secure filename
         filename = secure_filename(file.filename)

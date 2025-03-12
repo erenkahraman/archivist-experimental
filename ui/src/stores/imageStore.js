@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useStorage } from '@vueuse/core'
 
 export const useImageStore = defineStore('images', () => {
@@ -14,6 +14,23 @@ export const useImageStore = defineStore('images', () => {
   const searchTotalResults = ref(0)
   const isSearching = ref(false)
   const API_BASE_URL = 'http://localhost:8000/api'
+
+  // Add state management
+  const state = ref({
+    loading: false,
+    error: null,
+    images: [],
+    searchResults: [],
+    searchQuery: '',
+    searchFilters: {},
+    searchSort: 'relevance',
+    searchTotalResults: 0,
+    isSearching: false
+  })
+
+  // Add computed properties
+  const hasError = computed(() => state.value.error !== null)
+  const isLoading = computed(() => state.value.loading)
 
   // Method to clear uploading states
   const clearUploadingStates = () => {
@@ -217,6 +234,9 @@ export const useImageStore = defineStore('images', () => {
     searchImages,
     clearSearch,
     clearAllImages,
-    clearUploadingStates
+    clearUploadingStates,
+    state,
+    hasError,
+    isLoading
   }
 }) 

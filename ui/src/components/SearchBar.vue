@@ -4,7 +4,7 @@
       <input
         type="text"
         v-model="searchQuery"
-        @input="handleInput"
+        @input="handleSearch"
         placeholder="Search patterns, colors, styles..."
         :disabled="loading"
         class="search-input"
@@ -15,7 +15,7 @@
         @click="clearSearch" 
         class="clear-button"
         title="Clear search"
-      >×</button>
+      >Clear</button>
     </div>
     
     <!-- Advanced search filters -->
@@ -98,8 +98,17 @@
 </template>
 
 <script setup>
-import { ref, watch, computed, reactive } from 'vue'
+import { ref, computed, reactive } from 'vue'
 import { useImageStore } from '../stores/imageStore'
+
+// Custom debounce function for search optimization
+function debounce(fn, delay) {
+  let timeoutId
+  return (...args) => {
+    clearTimeout(timeoutId)
+    timeoutId = setTimeout(() => fn(...args), delay)
+  }
+}
 
 const imageStore = useImageStore()
 const searchQuery = ref('')
@@ -109,9 +118,8 @@ const filters = reactive({
   style: ''
 })
 const sortMethod = ref('relevance')
-let debounceTimeout = null
 
-// Computed properties for search state
+// Computed properties
 const loading = computed(() => imageStore.isSearching)
 const searchActive = computed(() => imageStore.searchQuery !== '' || hasActiveFilters.value)
 const displayedQuery = computed(() => imageStore.searchQuery || 'All Patterns')
@@ -122,41 +130,10 @@ const hasActiveFilters = computed(() =>
   filters.style !== ''
 )
 
-// Initialize from store
-searchQuery.value = imageStore.searchQuery
-if (imageStore.searchFilters) {
-  filters.pattern_type = imageStore.searchFilters.pattern_type || ''
-  filters.color = imageStore.searchFilters.color || ''
-  filters.style = imageStore.searchFilters.style || ''
-}
-sortMethod.value = imageStore.searchSort || 'relevance'
-
-const handleInput = (e) => {
-  const value = e.target.value.trim()
+// Debounced search function
+const performSearch = debounce(async (query) => {
+  if (query.length < 2 && !hasActiveFilters.value) return
   
-  // Clear previous timeout
-  if (debounceTimeout) {
-    clearTimeout(debounceTimeout)
-  }
-
-  // If query is empty and no filters, clear search immediately
-  if (!value && !hasActiveFilters.value) {
-    clearSearch()
-    return
-  }
-
-  // If query is less than 2 characters and no filters, don't search
-  if (value.length < 2 && !hasActiveFilters.value) {
-    return
-  }
-
-  // Debounce search for longer queries
-  debounceTimeout = setTimeout(() => {
-    performSearch(value)
-  }, 300)  // 300ms debounce
-}
-
-const performSearch = async (query) => {
   try {
     await imageStore.searchImages(
       query, 
@@ -170,20 +147,38 @@ const performSearch = async (query) => {
   } catch (error) {
     console.error('Search failed:', error)
   }
+}, 300)
+
+// Methods
+const handleSearch = (e) => {
+  const value = e.target.value.trim()
+  searchQuery.value = value
+  
+  if (!value && !hasActiveFilters.value) {
+    clearSearch()
+    return
+  }
+  
+  performSearch(value)
+}
+
+const clearSearch = () => {
+  searchQuery.value = ''
+  imageStore.clearSearch()
 }
 
 const applyFilters = () => {
   performSearch(searchQuery.value)
 }
 
-const clearSearch = () => {
-  searchQuery.value = ''
-  filters.pattern_type = ''
-  filters.color = ''
-  filters.style = ''
-  sortMethod.value = 'relevance'
-  imageStore.clearSearch()
+// Initialize from store
+searchQuery.value = imageStore.searchQuery
+if (imageStore.searchFilters) {
+  filters.pattern_type = imageStore.searchFilters.pattern_type || ''
+  filters.color = imageStore.searchFilters.color || ''
+  filters.style = imageStore.searchFilters.style || ''
 }
+sortMethod.value = imageStore.searchSort || 'relevance'
 </script>
 
 <style scoped>
