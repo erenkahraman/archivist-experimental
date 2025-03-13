@@ -1,16 +1,11 @@
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from pathlib import Path
-import uuid
 import os
 from search_engine import SearchEngine
 import config
 
-# Werkzeug loglarını tamamen kapat
-werkzeug_logger = logging.getLogger('werkzeug')
-werkzeug_logger.disabled = True
-
-# Ana uygulama loglarını ayarla
+# Set up logging configuration
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -21,9 +16,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Diğer loglayıcıları sustur
+# Suppress verbose logs from other libraries
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('transformers').setLevel(logging.WARNING)
 
-# ... geri kalan app.py kodu ... 
+# Optionally disable Werkzeug logs for cleaner output
+werkzeug_logger = logging.getLogger('werkzeug')
+werkzeug_logger.disabled = True
+
+# ... rest of app.py code ... 

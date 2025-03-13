@@ -15,14 +15,14 @@ from .analyzers.color_analyzer import ColorAnalyzer
 from .search.searcher import ImageSearcher
 import config
 
-# Sadece önemli logları göster
+# Only show important logs
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Werkzeug loglarını kapat
+# Disable Werkzeug logs
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.ERROR)
 
@@ -277,83 +277,130 @@ class SearchEngine:
     def generate_detailed_prompt(self, image_features, pattern_info, color_info):
         """Generate a comprehensive prompt based on pattern analysis components."""
         try:
-            prompt_parts = []
-
-            # 1. Textile Design Pattern
-            if pattern_info.get('category'):
-                prompt_parts.append(
-                    f"A {pattern_info['category'].lower()} textile design"
-                )
-
-            # 2. Color Harmony
+            # Get the key information we need
+            pattern_category = pattern_info.get('category', 'unknown').lower()
+            
+            # Get colors
+            colors = []
             if color_info and 'dominant_colors' in color_info:
                 colors = [c['name'].lower() for c in color_info['dominant_colors'][:3]]
-                prompt_parts.append(
-                    f"featuring a harmonious blend of {', '.join(colors)}"
-                )
-
-            # 3. Motifs and Themes
+            
+            # Get specific elements
+            elements = []
+            if 'elements' in pattern_info and pattern_info['elements']:
+                elements = [e['name'] for e in pattern_info['elements'][:5]]
+            
+            # Get secondary patterns
+            secondary_patterns = []
             if pattern_info.get('secondary_patterns'):
-                motifs = [p['name'].lower() for p in pattern_info['secondary_patterns'][:2]]
-                prompt_parts.append(
-                    f"with {' and '.join(motifs)} motifs"
-                )
-
-            # 4. Pattern Repetition and Layout
+                secondary_patterns = [p['name'].lower() for p in pattern_info['secondary_patterns'][:2]]
+            
+            # Build a more natural description
+            description_parts = []
+            
+            # Start with "This image appears to be a..."
+            opening_phrases = [
+                f"This image appears to be a {pattern_category} pattern",
+                f"This is a {pattern_category} design",
+                f"The image shows a {pattern_category} pattern"
+            ]
+            description_parts.append(opening_phrases[0])  # Use the first option by default
+            
+            # Add elements with more natural language
+            if elements:
+                # Check if any elements contain descriptive adjectives
+                descriptive_elements = [e for e in elements if " " in e]
+                regular_elements = [e for e in elements if " " not in e]
+                
+                # Prioritize descriptive elements
+                featured_elements = descriptive_elements + regular_elements
+                
+                if len(featured_elements) == 1:
+                    description_parts.append(f"featuring {featured_elements[0]}")
+                elif len(featured_elements) == 2:
+                    description_parts.append(f"featuring {featured_elements[0]} and {featured_elements[1]}")
+                else:
+                    elements_text = ", ".join(featured_elements[:-1]) + f", and {featured_elements[-1]}"
+                    description_parts.append(f"featuring {elements_text}")
+            
+            # Add color description with more natural language
+            if colors:
+                # Add adjectives to colors based on brightness/saturation
+                brightness = color_info.get('overall_brightness', 0.5)
+                contrast = color_info.get('color_contrast', 0.5)
+                
+                color_adjective = "rich" if contrast > 0.4 else "subtle"
+                if brightness > 0.7:
+                    color_adjective = "bright" if contrast > 0.4 else "light"
+                elif brightness < 0.3:
+                    color_adjective = "deep" if contrast > 0.4 else "dark"
+                
+                if len(colors) == 1:
+                    description_parts.append(f"with a prominent {color_adjective} {colors[0]} color palette")
+                elif len(colors) == 2:
+                    description_parts.append(f"with a {color_adjective} color palette of {colors[0]} and {colors[1]} tones")
+                else:
+                    colors_text = ", ".join(colors[:-1]) + f", and {colors[-1]}"
+                    description_parts.append(f"with a {color_adjective} color palette of {colors_text} tones")
+            
+            # Add texture and detail information
+            texture = pattern_info.get('texture_type', {}).get('type', 'detailed')
+            texture_confidence = pattern_info.get('texture_type', {}).get('confidence', 0)
+            
+            # Only include texture if we have reasonable confidence
+            if texture_confidence > 0.2:
+                description_parts.append(f"The {pattern_category} elements have {texture} textures")
+            
+            # Add layout information in natural language
             layout = pattern_info.get('layout', {}).get('type', 'balanced')
-            repeat = pattern_info.get('repeat_type', {}).get('type', 'regular')
-            prompt_parts.append(
-                f"arranged in {layout} layout with {repeat} repetition"
-            )
-
-            # 5. Scale and Proportion
             scale = pattern_info.get('scale', {}).get('type', 'medium')
-            prompt_parts.append(
-                f"designed at {scale} scale"
-            )
-
-            # 6. Texture and Detailing
-            texture = pattern_info.get('texture_type', {}).get('type', 'smooth')
-            prompt_parts.append(
-                f"with {texture} textural details"
-            )
-
-            # 7. Cultural/Historical Context
-            cultural = pattern_info.get('cultural_influence', {}).get('type', 'contemporary')
-            historical = pattern_info.get('historical_period', {}).get('type', 'modern')
-            prompt_parts.append(
-                f"inspired by {cultural} {historical} traditions"
-            )
-
-            # 8. Emotional Appeal
-            mood = pattern_info.get('mood', {}).get('type', 'balanced')
-            prompt_parts.append(
-                f"conveying a {mood} aesthetic"
-            )
-
-            # 9. Originality
-            style = pattern_info.get('style_keywords', ['unique'])[0]
-            prompt_parts.append(
-                f"with {style} interpretation"
-            )
-
-            # Combine all parts into final prompt
-            final_prompt = " ".join(prompt_parts)
-
+            layout_confidence = pattern_info.get('layout', {}).get('confidence', 0)
+            
+            # Only include layout if we have reasonable confidence
+            if layout_confidence > 0.2:
+                description_parts.append(f"arranged in a {layout} composition at {scale} scale")
+            
+            # Add style influence if relevant
+            if secondary_patterns:
+                patterns_text = " and ".join(secondary_patterns)
+                description_parts.append(f"with influences of {patterns_text} style")
+            
+            # Add mood/feeling
+            mood = pattern_info.get('mood', {}).get('type', 'vibrant')
+            mood_confidence = pattern_info.get('mood', {}).get('confidence', 0)
+            
+            # Only include mood if we have reasonable confidence
+            if mood_confidence > 0.2:
+                description_parts.append(f"creating a {mood} visual effect")
+            
+            # Combine into a natural paragraph
+            final_prompt = ". ".join(description_parts) + "."
+            
+            # Replace multiple spaces with single space
+            final_prompt = " ".join(final_prompt.split())
+            
+            # Fix any awkward phrasings
+            final_prompt = final_prompt.replace(" .", ".")
+            final_prompt = final_prompt.replace("..", ".")
+            
+            # Add more natural language variations
+            final_prompt = final_prompt.replace("featuring", "showcasing")
+            final_prompt = final_prompt.replace("with a", "having a")
+            final_prompt = final_prompt.replace("arranged in", "organized in")
+            
             return {
                 "final_prompt": final_prompt,
                 "components": {
-                    "textile_design": prompt_parts[0] if prompt_parts else None,
-                    "color_harmony": prompt_parts[1] if len(prompt_parts) > 1 else None,
-                    "motifs_themes": prompt_parts[2] if len(prompt_parts) > 2 else None,
-                    "pattern_layout": prompt_parts[3] if len(prompt_parts) > 3 else None,
-                    "scale_proportion": prompt_parts[4] if len(prompt_parts) > 4 else None,
-                    "texture_details": prompt_parts[5] if len(prompt_parts) > 5 else None,
-                    "cultural_context": prompt_parts[6] if len(prompt_parts) > 6 else None,
-                    "emotional_appeal": prompt_parts[7] if len(prompt_parts) > 7 else None,
-                    "originality": prompt_parts[8] if len(prompt_parts) > 8 else None
+                    "pattern_category": pattern_category,
+                    "elements": elements,
+                    "colors": colors,
+                    "texture": texture,
+                    "layout": layout,
+                    "scale": scale,
+                    "secondary_patterns": secondary_patterns,
+                    "mood": mood
                 },
-                "completeness_score": len(prompt_parts) / 9
+                "completeness_score": min(len(description_parts) / 7, 1.0)
             }
 
         except Exception as e:

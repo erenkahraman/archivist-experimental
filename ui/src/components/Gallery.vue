@@ -126,16 +126,12 @@
                   </section>
 
                   <section class="analysis-section">
-                    <h4>Secondary Patterns</h4>
+                    <h4>Secondary Pattern</h4>
                     <div class="pattern-chips">
-                      <div 
-                        v-for="pattern in selectedImage.patterns?.secondary_patterns" 
-                        :key="pattern.name"
-                        class="pattern-chip"
-                      >
-                        <span>{{ pattern.name }}</span>
-                        <span class="confidence-badge">
-                          {{ (pattern.confidence * 100).toFixed(0) }}%
+                      <div class="pattern-chip" v-if="selectedImage.patterns.secondary_patterns[0]">
+                        {{ selectedImage.patterns.secondary_patterns[0].name }}
+                        <span class="confidence">
+                          {{ Math.round(selectedImage.patterns.secondary_patterns[0].confidence * 100) }}%
                         </span>
                       </div>
                     </div>

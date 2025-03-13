@@ -104,9 +104,9 @@ import { useImageStore } from '../stores/imageStore'
 // Custom debounce function for search optimization
 function debounce(fn, delay) {
   let timeoutId
-  return (...args) => {
+  return function(...args) {
     clearTimeout(timeoutId)
-    timeoutId = setTimeout(() => fn(...args), delay)
+    timeoutId = setTimeout(() => fn.apply(this, args), delay)
   }
 }
 
@@ -131,21 +131,22 @@ const hasActiveFilters = computed(() =>
 )
 
 // Debounced search function
-const performSearch = debounce(async (query) => {
-  if (query.length < 2 && !hasActiveFilters.value) return
-  
+const debouncedSearch = debounce(async (query, filters, sort) => {
   try {
-    await imageStore.searchImages(
-      query, 
-      {
-        pattern_type: filters.pattern_type,
-        color: filters.color,
-        style: filters.style
-      },
-      sortMethod.value
-    )
+    // Only search if we have a query or filters
+    if (!query.trim() && !hasActiveFilters.value) {
+      imageStore.clearSearch()
+      return
+    }
+    
+    // Don't search for very short queries unless filters are provided
+    if (query.trim().length < 2 && !hasActiveFilters.value) {
+      return
+    }
+    
+    await imageStore.searchImages(query, filters, sort)
   } catch (error) {
-    console.error('Search failed:', error)
+    console.error('Search error:', error)
   }
 }, 300)
 
@@ -159,7 +160,7 @@ const handleSearch = (e) => {
     return
   }
   
-  performSearch(value)
+  debouncedSearch(value, filters, sortMethod.value)
 }
 
 const clearSearch = () => {
@@ -168,7 +169,7 @@ const clearSearch = () => {
 }
 
 const applyFilters = () => {
-  performSearch(searchQuery.value)
+  debouncedSearch(searchQuery.value, filters, sortMethod.value)
 }
 
 // Initialize from store

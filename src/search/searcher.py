@@ -75,6 +75,7 @@ class ImageSearcher:
             'pattern': 0.0,
             'color': 0.0,
             'attribute': 0.0,
+            'element': 0.0,
             'term_matches': 0
         }
         
@@ -122,6 +123,7 @@ class ImageSearcher:
             'pattern': 0.0,
             'color': 0.0,
             'attribute': 0.0,
+            'element': 0.0,
             'term_matches': 0
         }
 
@@ -156,6 +158,20 @@ class ImageSearcher:
                                 scores['term_matches'] += 1
                             elif term in pattern_name:
                                 scores['pattern'] += pattern_conf
+                                scores['term_matches'] += 1
+                
+                # NEW: Specific pattern elements matching
+                if 'elements' in patterns:
+                    for element in patterns['elements']:
+                        element_name = element['name'].lower()
+                        element_conf = element.get('confidence', 0.5)
+                        
+                        for term in query_terms:
+                            if term == element_name:
+                                scores['element'] += element_conf * 2.0
+                                scores['term_matches'] += 1
+                            elif term in element_name or element_name in term:
+                                scores['element'] += element_conf
                                 scores['term_matches'] += 1
 
             # 2. Color matching
@@ -206,11 +222,12 @@ class ImageSearcher:
     def _calculate_final_score(self, scores: Dict) -> float:
         """Calculate final score with weighted components."""
         weights = {
-            'exact_match': 0.40,  # Exact matches are highest priority
+            'exact_match': 0.35,  # Exact matches are highest priority
             'semantic': 0.25,     # Semantic similarity is second priority
-            'pattern': 0.15,      # Pattern matches are third priority
-            'color': 0.10,        # Color matches are fourth priority
-            'attribute': 0.05,    # Attribute matches are fifth priority
+            'element': 0.15,      # NEW: Element matches are high priority
+            'pattern': 0.10,      # Pattern matches are next priority
+            'color': 0.10,        # Color matches are next priority
+            'attribute': 0.05,    # Attribute matches are lowest priority
         }
         
         final_score = sum(scores[key] * weight 

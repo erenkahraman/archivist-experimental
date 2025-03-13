@@ -9,6 +9,7 @@ logger = logging.getLogger(__name__)
 class ColorAnalyzer:
     def __init__(self, max_clusters: int = 10):
         self.max_clusters = max_clusters
+        # Precompute HSV values for color references to avoid repeated conversions
         self.color_references = {
             'Red': (255, 0, 0),
             'Dark Red': (139, 0, 0),
@@ -31,6 +32,11 @@ class ColorAnalyzer:
             'Maroon': (128, 0, 0),
             'Gold': (255, 215, 0)
         }
+        
+        # Precompute HSV values for faster color matching
+        self.color_hsv_references = {
+            name: self._rgb_to_hsv(rgb) for name, rgb in self.color_references.items()
+        }
 
     def analyze_colors(self, image: np.ndarray) -> Dict:
         """Analyze colors in the image."""
@@ -46,12 +52,24 @@ class ColorAnalyzer:
             # Reshape image for clustering
             pixels = image.reshape(-1, 3)
             
-            # Determine optimal number of clusters
-            n_colors = min(max(3, len(np.unique(pixels, axis=0)) // 100), self.max_clusters)
+            # Determine optimal number of clusters - use unique colors to estimate
+            unique_pixels = np.unique(pixels, axis=0)
+            n_unique = len(unique_pixels)
+            
+            # Use a more efficient approach for large images
+            if n_unique > 10000:
+                # Sample pixels for faster processing
+                sample_size = min(10000, len(pixels))
+                indices = np.random.choice(len(pixels), sample_size, replace=False)
+                pixels_sample = pixels[indices]
+                n_colors = min(max(3, len(np.unique(pixels_sample, axis=0)) // 100), self.max_clusters)
+            else:
+                n_colors = min(max(3, n_unique // 100), self.max_clusters)
+                
             logger.info(f"Using {n_colors} clusters for color analysis")
             
             # Perform k-means clustering
-            kmeans = KMeans(n_clusters=n_colors, random_state=42)
+            kmeans = KMeans(n_clusters=n_colors, random_state=42, n_init=10)
             kmeans.fit(pixels)
             
             # Get cluster centers and proportions
@@ -81,10 +99,14 @@ class ColorAnalyzer:
             for color in dominant_colors:
                 logger.info(f"Color: {color['name']}, Proportion: {color['proportion']:.2%}")
 
+            # Calculate overall brightness and contrast more efficiently
+            brightness = np.mean(image) / 255.0
+            contrast = np.std(image) / 255.0
+
             return {
                 'dominant_colors': dominant_colors,
-                'overall_brightness': float(np.mean(image) / 255.0),
-                'color_contrast': float(np.std(image) / 255.0)
+                'overall_brightness': float(brightness),
+                'color_contrast': float(contrast)
             }
 
         except Exception as e:
@@ -94,15 +116,13 @@ class ColorAnalyzer:
             return None
 
     def _get_color_name(self, rgb):
-        """Find closest color name."""
+        """Find closest color name using precomputed HSV values."""
         min_distance = float('inf')
         closest_color = 'Unknown'
         
         hsv = self._rgb_to_hsv(rgb)
         
-        for name, ref_rgb in self.color_references.items():
-            ref_hsv = self._rgb_to_hsv(ref_rgb)
-            
+        for name, ref_hsv in self.color_hsv_references.items():
             h_diff = min(abs(hsv[0] - ref_hsv[0]), 1 - abs(hsv[0] - ref_hsv[0])) * 2.0
             s_diff = abs(hsv[1] - ref_hsv[1])
             v_diff = abs(hsv[2] - ref_hsv[2])
