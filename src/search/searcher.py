@@ -74,8 +74,8 @@ class ImageSearcher:
             'semantic': 0.0,
             'pattern': 0.0,
             'color': 0.0,
-            'attribute': 0.0,
             'element': 0.0,
+            'attribute': 0.0,
             'term_matches': 0
         }
         
@@ -122,8 +122,8 @@ class ImageSearcher:
             'semantic': 0.0,
             'pattern': 0.0,
             'color': 0.0,
-            'attribute': 0.0,
             'element': 0.0,
+            'attribute': 0.0,
             'term_matches': 0
         }
 
@@ -160,7 +160,7 @@ class ImageSearcher:
                                 scores['pattern'] += pattern_conf
                                 scores['term_matches'] += 1
                 
-                # NEW: Specific pattern elements matching
+                # NEW: Specific elements matching
                 if 'elements' in patterns:
                     for element in patterns['elements']:
                         element_name = element['name'].lower()
@@ -171,7 +171,7 @@ class ImageSearcher:
                                 scores['element'] += element_conf * 2.0
                                 scores['term_matches'] += 1
                             elif term in element_name or element_name in term:
-                                scores['element'] += element_conf
+                                scores['element'] += element_conf * 1.0
                                 scores['term_matches'] += 1
 
             # 2. Color matching
@@ -224,7 +224,7 @@ class ImageSearcher:
         weights = {
             'exact_match': 0.35,  # Exact matches are highest priority
             'semantic': 0.25,     # Semantic similarity is second priority
-            'element': 0.15,      # NEW: Element matches are high priority
+            'element': 0.15,      # NEW: Element matches are important
             'pattern': 0.10,      # Pattern matches are next priority
             'color': 0.10,        # Color matches are next priority
             'attribute': 0.05,    # Attribute matches are lowest priority

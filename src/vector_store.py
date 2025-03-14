@@ -12,9 +12,6 @@ class VectorStore:
 
     def build_index(self, embeddings: np.ndarray):
         """Build FAISS index from embeddings."""
-        if embeddings.size == 0:
-            raise ValueError("Empty embeddings array")
-            
         self.index = faiss.IndexFlatIP(self.dimension)
         
         # Normalize vectors for cosine similarity
@@ -22,8 +19,7 @@ class VectorStore:
         self.index.add(embeddings)
 
         # Perform clustering
-        n_clusters = min(config.N_CLUSTERS, embeddings.shape[0])  # Ensure we don't have more clusters than samples
-        self.kmeans = KMeans(n_clusters=n_clusters, random_state=42)
+        self.kmeans = KMeans(n_clusters=config.N_CLUSTERS, random_state=42)
         cluster_assignments = self.kmeans.fit_predict(embeddings)
         self.cluster_centers = self.kmeans.cluster_centers_
         

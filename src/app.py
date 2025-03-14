@@ -1,11 +1,12 @@
 import logging
 from flask import Flask, request, jsonify, send_from_directory
 from pathlib import Path
+import uuid
 import os
 from search_engine import SearchEngine
 import config
 
-# Set up logging configuration
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -16,13 +17,27 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Suppress verbose logs from other libraries
+# Suppress less important logs
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
 logging.getLogger('transformers').setLevel(logging.WARNING)
-
-# Optionally disable Werkzeug logs for cleaner output
 werkzeug_logger = logging.getLogger('werkzeug')
-werkzeug_logger.disabled = True
+werkzeug_logger.setLevel(logging.WARNING)
 
-# ... rest of app.py code ... 
+# ... geri kalan app.py kodu ... 
+
+@app.route('/api/debug/metadata', methods=['GET'])
+def debug_metadata():
+    """Debug endpoint to check metadata structure"""
+    try:
+        # Get the first few items from metadata
+        sample_metadata = list(search_engine.metadata.values())[:3]
+        return jsonify({
+            "success": True,
+            "metadata_sample": sample_metadata
+        })
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": str(e)
+        }) 

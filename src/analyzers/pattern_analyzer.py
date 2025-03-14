@@ -12,44 +12,75 @@ class PatternAnalyzer:
         self.processor = processor
         self.device = device
         
-        # Enhanced pattern elements for detection
-        self.pattern_elements = {
-            "floral": ["roses", "tulips", "daisies", "sunflowers", "peonies", "lilies", "orchids", 
-                      "wildflowers", "lotus", "cherry blossoms", "hibiscus", "poppies"],
-            "botanical": ["leaves", "ferns", "palm leaves", "vines", "branches", "trees", 
-                         "foliage", "tropical leaves", "monstera leaves", "ivy"],
-            "geometric": ["circles", "squares", "triangles", "hexagons", "diamonds", "stars", 
-                         "spirals", "chevrons", "zigzags", "stripes", "dots", "grid"],
-            "animal": ["leopard spots", "zebra stripes", "tiger stripes", "peacock feathers", 
-                      "butterflies", "birds", "fish", "insects", "snakeskin"],
-            "celestial": ["stars", "moons", "planets", "constellations", "galaxies", "suns"],
-            "cultural": ["paisley", "mandala", "arabesque", "celtic knots", "greek key", 
-                        "ikat", "batik", "tribal motifs", "folk art", "oriental designs"]
+        # Expanded pattern categories with more specific types
+        self.pattern_categories = [
+            "geometric", "floral", "abstract", "striped", "polka dot", 
+            "chevron", "paisley", "plaid", "animal print", "tribal",
+            "damask", "herringbone", "houndstooth", "ikat", "lattice",
+            "medallion", "moroccan", "ogee", "quatrefoil", "trellis",
+            "leopard print", "zebra print", "tiger print", "giraffe print", "snake print",
+            "checkered", "tartan", "argyle", "pinstripe", "harlequin",
+            "toile", "chintz", "batik", "shibori", "tie-dye"
+        ]
+        
+        # Specific elements with more descriptive options
+        self.pattern_elements = [
+            # Floral elements
+            "roses", "tulips", "daisies", "sunflowers", "orchids", "peonies", "lilies",
+            "cherry blossoms", "lotus flowers", "hibiscus", "lavender", "poppies",
+            
+            # Leaf/plant elements
+            "palm leaves", "fern leaves", "maple leaves", "oak leaves", "ivy", "vines",
+            "tropical leaves", "bamboo", "pine needles", "succulent plants",
+            
+            # Geometric elements
+            "circles", "squares", "triangles", "diamonds", "hexagons", "octagons",
+            "stars", "crescents", "hearts", "crosses", "spirals", "zigzags",
+            
+            # Animal elements
+            "leopard spots", "zebra stripes", "tiger stripes", "giraffe patches",
+            "snake scales", "peacock feathers", "butterfly wings", "dragonflies",
+            
+            # Texture elements
+            "dots", "dashes", "swirls", "waves", "ripples", "crosshatch", "grid",
+            "honeycomb", "basketweave", "herringbone pattern", "chevron pattern"
+        ]
+        
+        # Specific animal print types for better identification
+        self.animal_prints = {
+            "leopard print": ["spotted pattern", "rosettes", "brown and black spots", "beige background"],
+            "zebra print": ["black and white stripes", "parallel lines", "high contrast"],
+            "tiger print": ["orange and black stripes", "vertical stripes"],
+            "giraffe print": ["irregular patches", "tan and brown patches", "geometric patches"],
+            "snake print": ["scales", "diamond pattern", "reptile skin"]
+        }
+        
+        # Specific floral types
+        self.floral_types = {
+            "roses": ["rose petals", "rose buds", "thorny stems"],
+            "tulips": ["tulip blooms", "tulip stems", "bulbous flowers"],
+            "daisies": ["daisy petals", "round centers", "white petals"],
+            "sunflowers": ["large centers", "yellow petals", "circular flowers"],
+            "tropical": ["hibiscus", "bird of paradise", "exotic flowers"]
         }
 
     def _analyze_patterns(self, image_features) -> Dict:
         """
-        Analyze patterns in the image features.
+        Analyze patterns in the image features with enhanced element detection.
         
         Args:
             image_features (torch.Tensor): Image features from CLIP model
             
         Returns:
-            Dict: Pattern analysis results
+            Dict: Pattern analysis results with detailed elements
         """
         try:
             logger.info("Starting pattern analysis...")
             
-            pattern_categories = [
-                "geometric", "floral", "abstract", "stripes", "polka dots", 
-                "chevron", "paisley", "plaid", "animal print", "tribal",
-                "damask", "herringbone", "houndstooth", "ikat", "lattice",
-                "medallion", "moroccan", "ogee", "quatrefoil", "trellis"
-            ]
-            
-            scores = {}
+            # Analyze basic pattern categories
+            category_scores = {}
             with torch.no_grad():
-                for category in pattern_categories:
+                for category in self.pattern_categories:
                     text_inputs = self.processor(
                         text=[f"this is a {category} pattern"],
                         return_tensors="pt",
@@ -62,19 +93,47 @@ class PatternAnalyzer:
                         text_features,
                         dim=1
                     )
-                    scores[category] = float(similarity[0].cpu())
+                    category_scores[category] = float(similarity[0].cpu())
 
-            primary_pattern = max(scores.items(), key=lambda x: x[1])
+            # Find primary pattern category
+            primary_pattern = max(category_scores.items(), key=lambda x: x[1])
             
+            # Find secondary patterns (above threshold)
             threshold = 0.2
             secondary_patterns = [
                 {"name": pattern, "confidence": score}
-                for pattern, score in scores.items()
+                for pattern, score in category_scores.items()
                 if score > threshold and pattern != primary_pattern[0]
             ]
             
-            # Analyze specific pattern elements
-            pattern_elements = self._detect_pattern_elements(image_features)
+            # Get specific elements based on the primary pattern
+            detected_elements = self._analyze_specific_elements(image_features, primary_pattern[0])
+            
+            # Analyze pattern density
+            density_info = self._analyze_pattern_density(image_features)
+            
+            # Get specific details for animal prints
+            specific_details = []
+            if "animal print" in primary_pattern[0] or any("print" in p["name"] for p in secondary_patterns):
+                # Check for specific animal print types
+                for animal_print, descriptors in self.animal_prints.items():
+                    if animal_print in primary_pattern[0] or any(animal_print in p["name"] for p in secondary_patterns):
+                        specific_details.extend(descriptors)
+                        break
+            
+            # Get specific details for floral patterns
+            if "floral" in primary_pattern[0] or any("floral" in p["name"] for p in secondary_patterns):
+                # Check for specific floral types
+                for floral_type, descriptors in self.floral_types.items():
+                    if any(floral_type in e["name"] for e in detected_elements):
+                        specific_details.extend(descriptors)
+                        break
+            
+            # Log detected elements
+            if detected_elements:
+                logger.info(f"Detected elements: {', '.join([e['name'] for e in detected_elements[:5]])}")
+            else:
+                logger.info("No specific elements detected with high confidence")
             
             return {
                 "category": primary_pattern[0],
@@ -82,7 +141,9 @@ class PatternAnalyzer:
                 "secondary_patterns": sorted(secondary_patterns, 
                                           key=lambda x: x["confidence"], 
                                           reverse=True)[:3],
-                "elements": pattern_elements
+                "elements": detected_elements[:10],  # Top 10 elements
+                "specific_details": specific_details,  # Specific details for the pattern type
+                "density": density_info  # Add density information
             }
 
         except Exception as e:
@@ -91,138 +152,155 @@ class PatternAnalyzer:
                 "category": "Unknown",
                 "category_confidence": 0.0,
                 "secondary_patterns": [],
-                "elements": []
-            }
-            
-    def _detect_pattern_elements(self, image_features) -> List[Dict]:
-        """
-        Detect specific elements within the pattern (flowers, leaves, stars, etc.)
-        
-        Args:
-            image_features (torch.Tensor): Image features from CLIP model
-            
-        Returns:
-            List[Dict]: Detected elements with confidence scores
-        """
+                "elements": [],
+                "specific_details": [],
+                "density": {
+                    "type": "regular",
+                    "confidence": 0.0
+                }
+            } 
+
+    def _analyze_pattern_density(self, image_features) -> Dict:
+        """Analyze the density and distribution of the pattern."""
         try:
-            logger.info("Detecting specific pattern elements...")
+            density_types = ["dense", "scattered", "sparse", "regular", "irregular", "clustered"]
             
-            # Flatten our element categories for detection
-            all_elements = []
-            for category, elements in self.pattern_elements.items():
-                all_elements.extend(elements)
-            
-            # Add descriptive adjectives for common elements - precompute these
-            descriptive_queries = [
-                # Floral descriptors
-                "a pattern with vibrant flowers", "a pattern with delicate flowers",
-                "a pattern with bold floral elements", "a pattern with intricate floral details",
-                
-                # Leaf descriptors
-                "a pattern with lush green leaves", "a pattern with tropical palm leaves",
-                "a pattern with detailed leaf textures", "a pattern with overlapping foliage",
-                
-                # Geometric descriptors
-                "a pattern with bold geometric shapes", "a pattern with intricate geometric details",
-                "a pattern with precise geometric elements", "a pattern with layered geometric forms",
-                
-                # Texture descriptors
-                "a pattern with rich textural details", "a pattern with subtle texture variations",
-                "a pattern with dimensional textures", "a pattern with contrasting textures"
-            ]
-            
-            # Process all queries in batches for better performance
-            element_scores = {}
-            descriptive_element_scores = {}
-            
+            scores = {}
             with torch.no_grad():
-                # Process regular elements in batches
-                batch_size = 16  # Adjust based on your GPU memory
-                for i in range(0, len(all_elements), batch_size):
-                    batch_elements = all_elements[i:i+batch_size]
-                    
-                    # Positive prompts
-                    pos_texts = [f"a pattern containing {element}" for element in batch_elements]
-                    pos_inputs = self.processor(
-                        text=pos_texts,
+                for density in density_types:
+                    text_inputs = self.processor(
+                        text=[f"this is a {density} pattern"],
                         return_tensors="pt",
-                        padding=True,
-                        truncation=True
+                        padding=True
                     ).to(self.device)
                     
-                    pos_features = self.model.get_text_features(**pos_inputs)
-                    
-                    # Negative prompts
-                    neg_texts = [f"a pattern without {element}" for element in batch_elements]
-                    neg_inputs = self.processor(
-                        text=neg_texts,
-                        return_tensors="pt",
-                        padding=True,
-                        truncation=True
-                    ).to(self.device)
-                    
-                    neg_features = self.model.get_text_features(**neg_inputs)
-                    
-                    # Calculate similarities
-                    for j, element in enumerate(batch_elements):
-                        pos_similarity = torch.nn.functional.cosine_similarity(
-                            image_features.to(self.device),
-                            pos_features[j:j+1],
-                            dim=1
-                        )
-                        
-                        neg_similarity = torch.nn.functional.cosine_similarity(
-                            image_features.to(self.device),
-                            neg_features[j:j+1],
-                            dim=1
-                        )
-                        
-                        # Calculate differential score
-                        differential = float(pos_similarity[0].cpu()) - float(neg_similarity[0].cpu())
-                        element_scores[element] = differential
-                
-                # Process descriptive queries in batches
-                for i in range(0, len(descriptive_queries), batch_size):
-                    batch_queries = descriptive_queries[i:i+batch_size]
-                    
-                    inputs = self.processor(
-                        text=batch_queries,
-                        return_tensors="pt",
-                        padding=True,
-                        truncation=True
-                    ).to(self.device)
-                    
-                    features = self.model.get_text_features(**inputs)
-                    
-                    # Calculate similarities
-                    similarities = torch.nn.functional.cosine_similarity(
+                    text_features = self.model.get_text_features(**text_inputs)
+                    similarity = torch.nn.functional.cosine_similarity(
                         image_features.to(self.device),
-                        features,
+                        text_features,
                         dim=1
                     )
-                    
-                    # Store scores
-                    for j, query in enumerate(batch_queries):
-                        descriptor = query.replace("a pattern with ", "")
-                        descriptive_element_scores[descriptor] = float(similarities[j].cpu())
+                    scores[density] = float(similarity[0].cpu())
             
-            # Filter elements with significant positive scores
-            threshold = 0.05
-            detected_elements = [
-                {"name": element, "confidence": score}
+            # Get the most likely density type
+            top_density = max(scores.items(), key=lambda x: x[1])
+            
+            return {
+                'type': top_density[0],
+                'confidence': top_density[1]
+            }
+        
+        except Exception as e:
+            logger.error(f"Error analyzing pattern density: {e}")
+            return {
+                'type': 'regular',
+                'confidence': 0.0
+            } 
+
+    def _analyze_specific_elements(self, image_features, primary_pattern):
+        """Analyze for specific elements based on the primary pattern category with improved relevance."""
+        try:
+            # Determine which specific elements to check based on primary pattern
+            pattern_category = primary_pattern.lower()
+            specific_elements = []
+            
+            # Only check for relevant elements based on pattern category
+            if any(floral in pattern_category for floral in ["floral", "flower"]):
+                # Only check for floral elements if it's a floral pattern
+                specific_elements.extend([
+                    "roses", "tulips", "daisies", "sunflowers", "peonies", "lilies", 
+                    "orchids", "cherry blossoms", "poppies", "hibiscus", "lotus flowers"
+                ])
+                # Add some leaf elements that might accompany flowers
+                specific_elements.extend(["leaves", "vines", "stems", "foliage"])
+                
+            elif any(botanical in pattern_category for botanical in ["leaf", "botanical", "tropical", "plant"]):
+                # Only check for botanical elements if it's a leaf/botanical pattern
+                specific_elements.extend([
+                    "palm leaves", "fern leaves", "maple leaves", "oak leaves", 
+                    "tropical leaves", "ivy", "monstera leaves", "banana leaves",
+                    "succulent plants", "bamboo"
+                ])
+                
+            elif any(animal in pattern_category for animal in ["animal", "leopard", "zebra", "tiger", "giraffe"]):
+                # Only check for animal print elements if it's an animal pattern
+                specific_elements.extend([
+                    "leopard spots", "zebra stripes", "tiger stripes", "giraffe patches",
+                    "snake scales", "crocodile texture", "animal skin"
+                ])
+                
+            elif any(geo in pattern_category for geo in ["geometric", "abstract"]):
+                # Only check for geometric elements if it's a geometric pattern
+                specific_elements.extend([
+                    "circles", "squares", "triangles", "diamonds", "hexagons",
+                    "stars", "spirals", "zigzags", "stripes", "dots"
+                ])
+            
+            else:
+                # For unknown patterns, check common elements
+                specific_elements.extend([
+                    "stripes", "dots", "checks", "swirls", "waves", "grid", "lattice",
+                    "flowers", "leaves", "geometric shapes"
+                ])
+            
+            # Remove duplicates
+            specific_elements = list(set(specific_elements))
+            
+            # Analyze for each specific element
+            element_scores = {}
+            with torch.no_grad():
+                for element in specific_elements:
+                    # Try multiple phrasings for better detection
+                    phrasings = [
+                        f"a pattern with {element}",
+                        f"textile with {element}",
+                        f"design containing {element}",
+                        f"{element} pattern"
+                    ]
+                    
+                    max_score = 0
+                    for phrase in phrasings:
+                        text_inputs = self.processor(
+                            text=[phrase],
+                            return_tensors="pt",
+                            padding=True
+                        ).to(self.device)
+                        
+                        text_features = self.model.get_text_features(**text_inputs)
+                        similarity = torch.nn.functional.cosine_similarity(
+                            image_features.to(self.device),
+                            text_features,
+                            dim=1
+                        )
+                        score = float(similarity[0].cpu())
+                        max_score = max(max_score, score)
+                    
+                    element_scores[element] = max_score
+            
+            # Use tiered confidence levels
+            high_confidence_threshold = 0.28  # Higher threshold for primary elements
+            medium_confidence_threshold = 0.24  # Medium threshold for secondary elements
+            
+            # Get elements with high confidence
+            high_confidence_elements = [
+                {"name": element, "confidence": score, "confidence_level": "high"}
                 for element, score in element_scores.items()
-                if score > threshold
+                if score > high_confidence_threshold
             ]
             
-            # Add descriptive elements that scored well
-            desc_threshold = 0.25  # Higher threshold for descriptive elements
-            for descriptor, score in descriptive_element_scores.items():
-                if score > desc_threshold:
-                    detected_elements.append({"name": descriptor, "confidence": score})
+            # Get elements with medium confidence
+            medium_confidence_elements = [
+                {"name": element, "confidence": score, "confidence_level": "medium"}
+                for element, score in element_scores.items()
+                if medium_confidence_threshold < score <= high_confidence_threshold
+            ]
             
-            # Sort by confidence and return top elements
-            return sorted(detected_elements, key=lambda x: x["confidence"], reverse=True)[:6]
+            # Combine and sort by confidence
+            detected_elements = high_confidence_elements + medium_confidence_elements
+            detected_elements.sort(key=lambda x: x["confidence"], reverse=True)
             
+            return detected_elements
+        
         except Exception as e:
-            logger.error(f"Error detecting pattern elements: {e}", exc_info=True)
+            logger.error(f"Error analyzing specific elements: {e}")
             return [] 

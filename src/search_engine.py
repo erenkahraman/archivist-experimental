@@ -14,15 +14,17 @@ from .analyzers.pattern_analyzer import PatternAnalyzer
 from .analyzers.color_analyzer import ColorAnalyzer
 from .search.searcher import ImageSearcher
 import config
+from .prompt_builder import PromptBuilder
+from .embedding_extractor import EmbeddingExtractor
 
-# Only show important logs
+# Sadece önemli logları göster
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Disable Werkzeug logs
+# Werkzeug loglarını kapat
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.ERROR)
 
@@ -42,6 +44,9 @@ class SearchEngine:
             self.pattern_analyzer = PatternAnalyzer(self.model, self.processor, self.device)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS)
             self.searcher = ImageSearcher(self.model, self.processor, self.device)
+            
+            # Initialize embedding extractor
+            self.embedding_extractor = EmbeddingExtractor(self.model, self.processor, self.device)
             
             # Initialize other components
             self.metadata_file = config.BASE_DIR / "metadata.json"
@@ -70,38 +75,39 @@ class SearchEngine:
         with open(self.metadata_file, 'w') as f:
             json.dump(self.metadata, f)
 
-    def detect_patterns(self, image) -> Dict:
-        """Detect patterns in the image."""
+    def detect_patterns(self, image_path: Path) -> Dict:
+        """Detect patterns in an image and generate a detailed description."""
         try:
-            logger.info("\n=== Starting pattern detection ===")
+            # Load and preprocess the image
+            image_features = self.embedding_extractor.extract_features(image_path)
             
-            # Process image through CLIP
-            inputs = self.processor(
-                images=image,
-                return_tensors="pt",
-                padding=True
-            )
+            # Analyze patterns
+            pattern_info = self.pattern_analyzer._analyze_patterns(image_features)
             
-            with torch.no_grad():
-                image_features = self.model.get_image_features(
-                    pixel_values=inputs['pixel_values'].to(self.device)
-                )
-                
-                # Analyze patterns using pattern_analyzer
-                pattern_info = self.pattern_analyzer._analyze_patterns(image_features)
-                
-                # Analyze colors using color_analyzer
-                color_info = self.color_analyzer.analyze_colors(np.array(image))
-                
-                # Generate prompt using generate_detailed_prompt instead of _generate_detailed_prompt
-                prompt_data = self.generate_detailed_prompt(image_features, pattern_info, color_info)
-                pattern_info['prompt'] = prompt_data
-                
-            return pattern_info
-
+            # Add detailed style analysis
+            style_info = self._analyze_detailed_style(image_features, pattern_info)
+            pattern_info['style'] = style_info  # Add style results to pattern_info
+            
+            # Load image for color analysis
+            image = Image.open(image_path)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            image_array = np.array(image)
+            
+            # Analyze colors with the image array
+            color_info = self.color_analyzer.analyze_colors(image_array)
+            
+            # Generate detailed prompt
+            prompt_data = self.generate_detailed_prompt(image_features, pattern_info, color_info)
+            
+            return {
+                "pattern_info": pattern_info,
+                "color_info": color_info,
+                "prompt": prompt_data
+            }
         except Exception as e:
-            logger.error(f"\nError in detect_patterns: {str(e)}")
-            return self._get_default_pattern_info()
+            logger.error(f"Error detecting patterns: {str(e)}")
+            return {"error": str(e)}
 
     def search(self, query: str, k: int = 10) -> List[Dict]:
         """Search for images based on query."""
@@ -192,62 +198,66 @@ class SearchEngine:
             }
 
     def _analyze_detailed_style(self, image_features, pattern_info):
-        """Analyze style with context-aware prompts."""
+        """Analyze detailed style aspects of the pattern."""
         try:
-            pattern_type = pattern_info['primary_pattern']
-            logger.info(f"\nAnalyzing detailed style for pattern type: {pattern_type}")
+            # Get pattern type - use 'category' instead of 'primary_pattern'
+            pattern_type = pattern_info.get('category', 'unknown')
             
-            style_queries = {
+            # Define style aspects to analyze
+            aspects = {
                 'layout': [
-                    "This {} pattern has a {} layout",
-                    "The arrangement of {} elements is {}",
-                    "The {} motifs are organized in a {} way"
+                    'scattered', 'aligned', 'symmetrical', 'repeating', 
+                    'random', 'clustered', 'all-over', 'border', 'trailing'
                 ],
                 'scale': [
-                    "The {} elements are {} in scale",
-                    "This is a {} scale {} pattern",
-                    "The size of {} motifs is {}"
+                    'large', 'medium', 'small', 'varied', 'proportional', 
+                    'oversized', 'miniature', 'mixed'
                 ],
-                'texture': [
-                    "The texture of this {} pattern is {}",
-                    "This {} design has a {} surface quality",
-                    "The {} elements create a {} texture"
+                'texture_type': [
+                    'smooth', 'textured', 'raised', 'flat', 'embossed', 
+                    'dimensional', 'woven', 'printed'
                 ]
             }
-
+            
+            # Results dictionary
             results = {}
-            for aspect, queries in style_queries.items():
-                logger.info(f"\nAnalyzing {aspect}...")
-                best_score = 0
-                best_attribute = None
+            
+            # Analyze each aspect
+            for aspect, attributes in aspects.items():
+                logger.info(f"Analyzing {aspect} for pattern type: {pattern_type}")
                 
-                attributes = self._get_attributes_for_aspect(aspect)
-                logger.info(f"Testing {len(attributes)} possible {aspect} attributes")
+                best_attribute = None
+                best_score = 0.0
                 
                 for attr in attributes:
-                    attr_score = 0
+                    # Try multiple phrasings for better detection
+                    phrasings = [
+                        f"a {pattern_type} pattern with {attr} {aspect}",
+                        f"{attr} {aspect} in a {pattern_type} pattern",
+                        f"textile with {attr} {aspect}",
+                        f"{pattern_type} design with {attr} {aspect}"
+                    ]
+                    
+                    attr_score = 0.0
                     valid_checks = 0
                     
-                    for query in queries:
-                        # First {} for pattern type, second {} for attribute
-                        formatted_query = query.format(pattern_type, attr)
-                        logger.info(f"Testing query: {formatted_query}")
-                        
-                        text_inputs = self.processor(
-                            text=[formatted_query],
-                            return_tensors="pt",
-                            padding=True
-                        )
-                        
-                        with torch.no_grad():
+                    with torch.no_grad():
+                        for phrase in phrasings:
+                            text_inputs = self.processor(
+                                text=[phrase],
+                                return_tensors="pt",
+                                padding=True
+                            ).to(self.device)
+                            
                             text_features = self.model.get_text_features(**text_inputs)
                             similarity = torch.nn.functional.cosine_similarity(
-                                image_features, text_features, dim=1
+                                image_features.to(self.device),
+                                text_features,
+                                dim=1
                             )
-                            score = float(similarity[0])
-                            logger.info(f"Similarity score: {score:.4f}")
+                            score = float(similarity[0].cpu())
                             
-                            if score > 0.2:
+                            if score > 0:
                                 attr_score += score
                                 valid_checks += 1
                     
@@ -275,134 +285,19 @@ class SearchEngine:
             return {}
 
     def generate_detailed_prompt(self, image_features, pattern_info, color_info):
-        """Generate a comprehensive prompt based on pattern analysis components."""
+        """Generate precise, descriptive prompts using the PromptBuilder."""
         try:
-            # Get the key information we need
-            pattern_category = pattern_info.get('category', 'unknown').lower()
+            # Initialize the prompt builder
+            prompt_builder = PromptBuilder()
             
-            # Get colors
-            colors = []
-            if color_info and 'dominant_colors' in color_info:
-                colors = [c['name'].lower() for c in color_info['dominant_colors'][:3]]
+            # Extract style info if available
+            style_info = pattern_info.get('style', {})
             
-            # Get specific elements
-            elements = []
-            if 'elements' in pattern_info and pattern_info['elements']:
-                elements = [e['name'] for e in pattern_info['elements'][:5]]
+            # Build the prompt with style information
+            prompt_result = prompt_builder.build_prompt(pattern_info, color_info, style_info)
             
-            # Get secondary patterns
-            secondary_patterns = []
-            if pattern_info.get('secondary_patterns'):
-                secondary_patterns = [p['name'].lower() for p in pattern_info['secondary_patterns'][:2]]
-            
-            # Build a more natural description
-            description_parts = []
-            
-            # Start with "This image appears to be a..."
-            opening_phrases = [
-                f"This image appears to be a {pattern_category} pattern",
-                f"This is a {pattern_category} design",
-                f"The image shows a {pattern_category} pattern"
-            ]
-            description_parts.append(opening_phrases[0])  # Use the first option by default
-            
-            # Add elements with more natural language
-            if elements:
-                # Check if any elements contain descriptive adjectives
-                descriptive_elements = [e for e in elements if " " in e]
-                regular_elements = [e for e in elements if " " not in e]
-                
-                # Prioritize descriptive elements
-                featured_elements = descriptive_elements + regular_elements
-                
-                if len(featured_elements) == 1:
-                    description_parts.append(f"featuring {featured_elements[0]}")
-                elif len(featured_elements) == 2:
-                    description_parts.append(f"featuring {featured_elements[0]} and {featured_elements[1]}")
-                else:
-                    elements_text = ", ".join(featured_elements[:-1]) + f", and {featured_elements[-1]}"
-                    description_parts.append(f"featuring {elements_text}")
-            
-            # Add color description with more natural language
-            if colors:
-                # Add adjectives to colors based on brightness/saturation
-                brightness = color_info.get('overall_brightness', 0.5)
-                contrast = color_info.get('color_contrast', 0.5)
-                
-                color_adjective = "rich" if contrast > 0.4 else "subtle"
-                if brightness > 0.7:
-                    color_adjective = "bright" if contrast > 0.4 else "light"
-                elif brightness < 0.3:
-                    color_adjective = "deep" if contrast > 0.4 else "dark"
-                
-                if len(colors) == 1:
-                    description_parts.append(f"with a prominent {color_adjective} {colors[0]} color palette")
-                elif len(colors) == 2:
-                    description_parts.append(f"with a {color_adjective} color palette of {colors[0]} and {colors[1]} tones")
-                else:
-                    colors_text = ", ".join(colors[:-1]) + f", and {colors[-1]}"
-                    description_parts.append(f"with a {color_adjective} color palette of {colors_text} tones")
-            
-            # Add texture and detail information
-            texture = pattern_info.get('texture_type', {}).get('type', 'detailed')
-            texture_confidence = pattern_info.get('texture_type', {}).get('confidence', 0)
-            
-            # Only include texture if we have reasonable confidence
-            if texture_confidence > 0.2:
-                description_parts.append(f"The {pattern_category} elements have {texture} textures")
-            
-            # Add layout information in natural language
-            layout = pattern_info.get('layout', {}).get('type', 'balanced')
-            scale = pattern_info.get('scale', {}).get('type', 'medium')
-            layout_confidence = pattern_info.get('layout', {}).get('confidence', 0)
-            
-            # Only include layout if we have reasonable confidence
-            if layout_confidence > 0.2:
-                description_parts.append(f"arranged in a {layout} composition at {scale} scale")
-            
-            # Add style influence if relevant
-            if secondary_patterns:
-                patterns_text = " and ".join(secondary_patterns)
-                description_parts.append(f"with influences of {patterns_text} style")
-            
-            # Add mood/feeling
-            mood = pattern_info.get('mood', {}).get('type', 'vibrant')
-            mood_confidence = pattern_info.get('mood', {}).get('confidence', 0)
-            
-            # Only include mood if we have reasonable confidence
-            if mood_confidence > 0.2:
-                description_parts.append(f"creating a {mood} visual effect")
-            
-            # Combine into a natural paragraph
-            final_prompt = ". ".join(description_parts) + "."
-            
-            # Replace multiple spaces with single space
-            final_prompt = " ".join(final_prompt.split())
-            
-            # Fix any awkward phrasings
-            final_prompt = final_prompt.replace(" .", ".")
-            final_prompt = final_prompt.replace("..", ".")
-            
-            # Add more natural language variations
-            final_prompt = final_prompt.replace("featuring", "showcasing")
-            final_prompt = final_prompt.replace("with a", "having a")
-            final_prompt = final_prompt.replace("arranged in", "organized in")
-            
-            return {
-                "final_prompt": final_prompt,
-                "components": {
-                    "pattern_category": pattern_category,
-                    "elements": elements,
-                    "colors": colors,
-                    "texture": texture,
-                    "layout": layout,
-                    "scale": scale,
-                    "secondary_patterns": secondary_patterns,
-                    "mood": mood
-                },
-                "completeness_score": min(len(description_parts) / 7, 1.0)
-            }
-
+            return prompt_result
+        
         except Exception as e:
             logger.error(f"Error generating detailed prompt: {str(e)}")
             return {
@@ -627,27 +522,43 @@ class SearchEngine:
                 return None
                 
             # Extract patterns
-            patterns = self.detect_patterns(image)
-            if not patterns:
+            pattern_data = self.detect_patterns(image_path)
+            if not pattern_data or "error" in pattern_data:
                 logger.warning(f"Warning: No patterns detected in {image_path}")
-                patterns = {
-                    "category": "Unknown",
-                    "category_confidence": 0.0,
+                pattern_data = {
+                    "pattern_info": {
+                        "category": "Unknown",
+                        "category_confidence": 0.0
+                    },
                     "prompt": {"final_prompt": "No pattern detected"}
                 }
-                
-            # Extract colors
-            image_array = np.array(image)
-            colors = self.analyze_colors(image_array)
             
-            # Create metadata
+            # Extract the pattern info and prompt from the pattern_data
+            pattern_info = pattern_data.get("pattern_info", {})
+            prompt_data = pattern_data.get("prompt", {"final_prompt": "No pattern detected"})
+            color_info = pattern_data.get("color_info", {})
+            
+            # Get the final prompt text
+            prompt_text = prompt_data.get("final_prompt", "No pattern detected")
+            
+            # Create metadata with the structure expected by the frontend
             metadata = {
                 "original_path": str(image_path),
                 "thumbnail_path": str(thumbnail_path.name),
-                "patterns": patterns,
-                "colors": colors,
+                "patterns": {
+                    "primary_pattern": pattern_info.get("category", "Unknown"),
+                    "confidence": pattern_info.get("category_confidence", 0.0),
+                    "elements": [e["name"] for e in pattern_info.get("elements", [])[:3]],
+                    "style": pattern_info.get("style", {}),
+                    "prompt": prompt_text,
+                    "secondary_patterns": pattern_info.get("secondary_patterns", [])
+                },
+                "colors": color_info,
                 "timestamp": str(Path(image_path).stat().st_mtime)
             }
+            
+            # Log the prompt for debugging
+            logger.info(f"Generated prompt: {prompt_text}")
             
             # Save to metadata store
             self.metadata[str(image_path)] = metadata

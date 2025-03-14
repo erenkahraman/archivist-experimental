@@ -1,63 +1,73 @@
 import torch
 from transformers import CLIPProcessor, CLIPModel
 import config
+from PIL import Image
+from pathlib import Path
 import logging
 
 logger = logging.getLogger(__name__)
 
 class EmbeddingExtractor:
-    def __init__(self):
+    """Class for extracting embeddings from images using CLIP"""
+    
+    def __init__(self, model, processor, device):
+        """Initialize with CLIP model and processor"""
+        self.model = model
+        self.processor = processor
+        self.device = device
+    
+    def extract_features(self, image_path: Path) -> torch.Tensor:
+        """Extract features from an image using CLIP
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            torch.Tensor: Image features
+        """
         try:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            logger.info(f"Using device: {self.device}")
+            # Load the image
+            image = Image.open(image_path)
             
-            self.model = CLIPModel.from_pretrained(config.CLIP_MODEL_NAME).to(self.device)
-            self.processor = CLIPProcessor.from_pretrained(config.CLIP_MODEL_NAME)
+            # Convert to RGB if needed (for PNG with transparency)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
             
-            # Set model to evaluation mode for better performance
-            self.model.eval()
+            # Process image through CLIP
+            inputs = self.processor(
+                images=image,
+                return_tensors="pt",
+                padding=True
+            )
             
-            logger.info(f"Loaded CLIP model: {config.CLIP_MODEL_NAME}")
+            # Extract features
+            with torch.no_grad():
+                image_features = self.model.get_image_features(
+                    pixel_values=inputs['pixel_values'].to(self.device)
+                )
+            
+            return image_features
+            
         except Exception as e:
-            logger.error(f"Error initializing EmbeddingExtractor: {e}")
+            logger.error(f"Error extracting features: {str(e)}")
             raise
 
     @torch.no_grad()
     def extract_image_embeddings(self, images: torch.Tensor) -> torch.Tensor:
         """Extract embeddings from preprocessed images."""
-        try:
-            if images.size(0) == 0:
-                logger.warning("Empty image batch provided")
-                return torch.zeros((0, config.EMBEDDING_DIM))
-                
-            images = images.to(self.device)
-            image_features = self.model.get_image_features(images)
-            
-            # Normalize features for cosine similarity
-            image_features = image_features / image_features.norm(dim=1, keepdim=True)
-            
-            return image_features.cpu().numpy()
-        except Exception as e:
-            logger.error(f"Error extracting image embeddings: {e}")
-            return torch.zeros((images.size(0), config.EMBEDDING_DIM)).numpy()
+        images = images.to(self.device)
+        image_features = self.model.get_image_features(images)
+        return image_features.cpu().numpy()
 
     @torch.no_grad()
     def extract_text_embedding(self, text: str) -> torch.Tensor:
         """Extract embedding from text query."""
-        try:
-            inputs = self.processor(
-                text=text,
-                return_tensors="pt",
-                padding=True,
-                truncation=True
-            ).to(self.device)
-            
-            text_features = self.model.get_text_features(**inputs)
-            
-            # Normalize features for cosine similarity
-            text_features = text_features / text_features.norm(dim=1, keepdim=True)
-            
-            return text_features.cpu().numpy()
-        except Exception as e:
-            logger.error(f"Error extracting text embedding for '{text}': {e}")
-            return torch.zeros((1, config.EMBEDDING_DIM)).numpy() 
+        inputs = self.processor(
+            text=text,
+            return_tensors="pt",
+            padding=True,
+            truncation=True
+        ).to(self.device)
+        
+        text_features = self.model.get_text_features(**inputs)
+        return text_features.cpu().numpy() 

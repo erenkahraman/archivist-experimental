@@ -52,10 +52,10 @@
           <div class="image-metadata">
             <div class="pattern-type">
               <span class="type-label">Pattern:</span>
-              <span class="type-value">{{ image.patterns?.category || 'Unknown' }}</span>
+              <span class="type-value">{{ image.patterns?.primary_pattern || 'Unknown' }}</span>
             </div>
             <div class="pattern-prompt">
-              {{ truncatePrompt(image.patterns?.prompt?.final_prompt) }}
+              {{ truncatePrompt(image.patterns?.prompt) }}
             </div>
             <!-- Display search score when in search mode -->
             <div v-if="searchActive && image.searchScore !== undefined" class="search-score">
@@ -74,7 +74,7 @@
     <div v-if="selectedImage" class="modal" @click="selectedImage = null">
       <div class="modal-content" @click.stop>
         <div class="modal-header">
-          <h2>{{ selectedImage.patterns?.category || 'Unknown Pattern' }}</h2>
+          <h2>{{ selectedImage.patterns?.primary_pattern || 'Unknown Pattern' }}</h2>
           <button class="close-button" @click="selectedImage = null">×</button>
         </div>
 
@@ -85,16 +85,16 @@
               <div class="image-preview">
                 <img 
                   :src="getThumbnailUrl(selectedImage.thumbnail_path)" 
-                  :alt="selectedImage.patterns?.category"
+                  :alt="selectedImage.patterns?.primary_pattern"
                   class="modal-image"
                 >
               </div>
               
               <div class="basic-info">
                 <div class="pattern-header">
-                  <h3>{{ selectedImage.patterns?.category }}</h3>
+                  <h3>{{ selectedImage.patterns?.primary_pattern }}</h3>
                   <div class="confidence">
-                    {{ (selectedImage.patterns?.category_confidence * 100).toFixed(1) }}% confidence
+                    {{ (selectedImage.patterns?.confidence * 100).toFixed(1) }}% confidence
                   </div>
                 </div>
               </div>
@@ -120,18 +120,22 @@
                     <h4>Primary Pattern</h4>
                     <div class="pattern-chips">
                       <div class="pattern-chip primary">
-                        {{ selectedImage.patterns?.category }}
+                        {{ selectedImage.patterns?.primary_pattern }}
                       </div>
                     </div>
                   </section>
 
                   <section class="analysis-section">
-                    <h4>Secondary Pattern</h4>
+                    <h4>Secondary Patterns</h4>
                     <div class="pattern-chips">
-                      <div class="pattern-chip" v-if="selectedImage.patterns.secondary_patterns[0]">
-                        {{ selectedImage.patterns.secondary_patterns[0].name }}
-                        <span class="confidence">
-                          {{ Math.round(selectedImage.patterns.secondary_patterns[0].confidence * 100) }}%
+                      <div 
+                        v-for="pattern in selectedImage.patterns?.secondary_patterns" 
+                        :key="pattern.name"
+                        class="pattern-chip"
+                      >
+                        <span>{{ pattern.name }}</span>
+                        <span class="confidence-badge">
+                          {{ (pattern.confidence * 100).toFixed(0) }}%
                         </span>
                       </div>
                     </div>
@@ -139,9 +143,7 @@
 
                   <section class="analysis-section">
                     <h4>Pattern Description</h4>
-                    <p class="pattern-description">
-                      {{ selectedImage.patterns?.prompt?.final_prompt }}
-                    </p>
+                    <p>{{ getPromptText(selectedImage.patterns?.prompt) }}</p>
                   </section>
                 </div>
 
@@ -370,12 +372,22 @@ const handleDelete = async () => {
 }
 
 const truncatePrompt = (prompt) => {
-  if (!prompt) return ''
-  const words = prompt.split(' ')
-  if (words.length > 15) {
-    return words.slice(0, 15).join(' ') + '...'
+  return getPromptText(prompt, true);
+}
+
+const getPromptText = (prompt, truncate = false) => {
+  if (!prompt) return 'No description available';
+  
+  // Handle both string and object formats
+  const promptText = typeof prompt === 'string' 
+    ? prompt 
+    : (prompt.final_prompt || 'No description available');
+    
+  if (truncate && promptText.length > 100) {
+    return promptText.substring(0, 100) + '...';
   }
-  return prompt
+  
+  return promptText;
 }
 
 const calculateAspectRatio = (dimensions) => {
