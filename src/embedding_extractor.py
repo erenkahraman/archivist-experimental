@@ -1,12 +1,56 @@
 import torch
 from transformers import CLIPProcessor, CLIPModel
 import config
+from PIL import Image
+from pathlib import Path
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EmbeddingExtractor:
-    def __init__(self):
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.model = CLIPModel.from_pretrained(config.CLIP_MODEL_NAME).to(self.device)
-        self.processor = CLIPProcessor.from_pretrained(config.CLIP_MODEL_NAME)
+    """Class for extracting embeddings from images using CLIP"""
+    
+    def __init__(self, model, processor, device):
+        """Initialize with CLIP model and processor"""
+        self.model = model
+        self.processor = processor
+        self.device = device
+    
+    def extract_features(self, image_path: Path) -> torch.Tensor:
+        """Extract features from an image using CLIP
+        
+        Args:
+            image_path: Path to the image file
+            
+        Returns:
+            torch.Tensor: Image features
+        """
+        try:
+            # Load the image
+            image = Image.open(image_path)
+            
+            # Convert to RGB if needed (for PNG with transparency)
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Process image through CLIP
+            inputs = self.processor(
+                images=image,
+                return_tensors="pt",
+                padding=True
+            )
+            
+            # Extract features
+            with torch.no_grad():
+                image_features = self.model.get_image_features(
+                    pixel_values=inputs['pixel_values'].to(self.device)
+                )
+            
+            return image_features
+            
+        except Exception as e:
+            logger.error(f"Error extracting features: {str(e)}")
+            raise
 
     @torch.no_grad()
     def extract_image_embeddings(self, images: torch.Tensor) -> torch.Tensor:
