@@ -16,6 +16,8 @@ from .search.searcher import ImageSearcher
 import config
 from .prompt_builder import PromptBuilder
 from .embedding_extractor import EmbeddingExtractor
+from .config_prompts import THRESHOLDS
+from .text_refiner import refine_text
 
 # Sadece önemli logları göster
 logging.basicConfig(
@@ -198,12 +200,10 @@ class SearchEngine:
             }
 
     def _analyze_detailed_style(self, image_features, pattern_info):
-        """Analyze detailed style aspects of the pattern."""
+        """Analyze detailed style aspects of the pattern with improved accuracy."""
         try:
-            # Get pattern type - use 'category' instead of 'primary_pattern'
             pattern_type = pattern_info.get('category', 'unknown')
             
-            # Define style aspects to analyze
             aspects = {
                 'layout': [
                     'scattered', 'aligned', 'symmetrical', 'repeating', 
@@ -219,18 +219,16 @@ class SearchEngine:
                 ]
             }
             
-            # Results dictionary
             results = {}
             
-            # Analyze each aspect
             for aspect, attributes in aspects.items():
                 logger.info(f"Analyzing {aspect} for pattern type: {pattern_type}")
                 
                 best_attribute = None
                 best_score = 0.0
+                all_scores = {}  # Store all scores for logging
                 
                 for attr in attributes:
-                    # Try multiple phrasings for better detection
                     phrasings = [
                         f"a {pattern_type} pattern with {attr} {aspect}",
                         f"{attr} {aspect} in a {pattern_type} pattern",
@@ -240,6 +238,7 @@ class SearchEngine:
                     
                     attr_score = 0.0
                     valid_checks = 0
+                    phrase_scores = []  # Store individual phrase scores
                     
                     with torch.no_grad():
                         for phrase in phrasings:
@@ -256,22 +255,35 @@ class SearchEngine:
                                 dim=1
                             )
                             score = float(similarity[0].cpu())
+                            phrase_scores.append((phrase, score))
                             
-                            if score > 0:
+                            # Use threshold from config
+                            aspect_key = aspect.split('_')[0]  # Handle texture_type -> texture
+                            threshold = THRESHOLDS.get(aspect_key, 0.2)
+                            
+                            if score > threshold:
                                 attr_score += score
                                 valid_checks += 1
                     
+                    # Log all phrase scores for debugging
+                    logger.debug(f"Phrase scores for {attr}: {phrase_scores}")
+                    
                     if valid_checks > 0:
                         avg_score = attr_score / valid_checks
+                        all_scores[attr] = avg_score
                         logger.info(f"Average score for {attr}: {avg_score:.4f}")
                         if avg_score > best_score:
                             best_score = avg_score
                             best_attribute = attr
                             logger.info(f"New best attribute for {aspect}: {attr} (score: {avg_score:.4f})")
 
+                # Log all attribute scores for this aspect
+                logger.debug(f"All {aspect} scores: {all_scores}")
+                
                 results[aspect] = {
                     'type': best_attribute or 'balanced',
-                    'confidence': best_score
+                    'confidence': best_score,
+                    'all_scores': all_scores  # Include all scores for potential UI display
                 }
                 logger.info(f"Final {aspect} result: {best_attribute or 'balanced'} (confidence: {best_score:.4f})")
 
@@ -295,6 +307,11 @@ class SearchEngine:
             
             # Build the prompt with style information
             prompt_result = prompt_builder.build_prompt(pattern_info, color_info, style_info)
+            
+            # Refine the prompt text
+            final_prompt = prompt_result.get("final_prompt", "")
+            refined_prompt = refine_text(final_prompt)
+            prompt_result["final_prompt"] = refined_prompt
             
             return prompt_result
         
