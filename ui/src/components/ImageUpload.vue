@@ -45,7 +45,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useImageStore } from '../stores/imageStore'
+import { useImageStore } from '../store/imageStore'
 
 const imageStore = useImageStore()
 const isDragging = ref(false)

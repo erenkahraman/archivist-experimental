@@ -14,7 +14,7 @@
 <script setup>
 import ImageUpload from './components/ImageUpload.vue'
 import SearchBar from './components/SearchBar.vue'
-import Gallery from './components/Gallery.vue'
+import Gallery from './components/pattern-gallery/index.vue'
 </script>
 
 <style>

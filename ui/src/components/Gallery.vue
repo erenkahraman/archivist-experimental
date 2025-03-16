@@ -316,7 +316,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useImageStore } from '../stores/imageStore'
+import { useImageStore } from '../store/imageStore'
 
 const imageStore = useImageStore()
 const selectedImage = ref(null)
