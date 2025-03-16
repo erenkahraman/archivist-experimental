@@ -21,8 +21,8 @@
     <!-- Advanced search filters -->
     <div class="search-filters">
       <div class="filter-group">
-        <label>Pattern Type:</label>
-        <select v-model="filters.pattern_type" @change="applyFilters">
+        <label for="pattern-type">Pattern Type:</label>
+        <select id="pattern-type" v-model="filters.pattern_type" @change="applyFilters">
           <option value="">Any</option>
           <option value="paisley">Paisley</option>
           <option value="floral">Floral</option>
@@ -35,8 +35,8 @@
       </div>
       
       <div class="filter-group">
-        <label>Color:</label>
-        <select v-model="filters.color" @change="applyFilters">
+        <label for="color-filter">Color:</label>
+        <select id="color-filter" v-model="filters.color" @change="applyFilters">
           <option value="">Any</option>
           <option value="red">Red</option>
           <option value="blue">Blue</option>
@@ -53,8 +53,8 @@
       </div>
       
       <div class="filter-group">
-        <label>Style:</label>
-        <select v-model="filters.style" @change="applyFilters">
+        <label for="style-filter">Style:</label>
+        <select id="style-filter" v-model="filters.style" @change="applyFilters">
           <option value="">Any</option>
           <option value="traditional">Traditional</option>
           <option value="modern">Modern</option>
@@ -66,8 +66,8 @@
       </div>
       
       <div class="filter-group">
-        <label>Sort By:</label>
-        <select v-model="sortMethod" @change="applyFilters">
+        <label for="sort-by">Sort By:</label>
+        <select id="sort-by" v-model="sortMethod" @change="applyFilters">
           <option value="relevance">Relevance</option>
           <option value="newest">Newest</option>
           <option value="oldest">Oldest</option>
@@ -99,7 +99,7 @@
 
 <script setup>
 import { ref, computed, reactive } from 'vue'
-import { useImageStore } from '../stores/imageStore'
+import { useImageStore } from '../store/imageStore'
 
 // Custom debounce function for search optimization
 function debounce(fn, delay) {
