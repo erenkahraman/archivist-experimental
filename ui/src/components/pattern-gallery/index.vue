@@ -67,13 +67,34 @@ const confirmDelete = (image) => {
 }
 
 const handleDelete = async () => {
-  if (imageToDelete.value) {
-    await imageStore.deleteImage(imageToDelete.value.original_path)
-    showDeleteConfirm.value = false
-    imageToDelete.value = null
-    if (selectedImage.value === imageToDelete.value) {
-      selectedImage.value = null
+  try {
+    // Make sure we have an image to delete
+    if (!imageToDelete.value) {
+      console.error('No image selected for deletion');
+      showDeleteConfirm.value = false;
+      return;
     }
+    
+    // Close the modal first
+    showDeleteConfirm.value = false;
+    
+    // Get the path from imageToDelete, not selectedImage
+    const path = imageToDelete.value.original_path;
+    console.log('Deleting image with path:', path);
+    
+    // Call the store method - it will handle UI updates internally
+    await imageStore.deleteImage(path);
+    
+    // Clear the selected image if it was the one we deleted
+    if (selectedImage.value && selectedImage.value.original_path === path) {
+      selectedImage.value = null;
+    }
+    
+    // Clear the imageToDelete reference
+    imageToDelete.value = null;
+    
+  } catch (error) {
+    console.error('Failed to delete image:', error);
   }
 }
 </script>
