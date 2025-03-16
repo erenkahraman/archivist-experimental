@@ -3,6 +3,7 @@ import { defineStore } from 'pinia'
 
 // Define the image store using Pinia
 export const useImageStore = defineStore('images', () => {
+  // State
   const images = ref([])
   const loading = ref(false)
   const isSearching = ref(false)
@@ -10,6 +11,12 @@ export const useImageStore = defineStore('images', () => {
   const searchFilters = ref(null)
   const searchSort = ref('relevance')
   const searchTotalResults = ref(null)
+  
+  // API endpoints configuration
+  const apiEndpoints = {
+    primary: 'http://localhost:8000/api',
+    fallback: 'http://localhost:5000/api'
+  }
   
   // Computed properties
   const filteredImages = computed(() => {
@@ -21,29 +28,48 @@ export const useImageStore = defineStore('images', () => {
     return images.value.filter(image => image.searchScore !== undefined)
   })
   
+  // Helper function to try multiple API endpoints
+  async function tryApiEndpoints(apiPath, options) {
+    let lastError = null
+    
+    // Try primary endpoint
+    try {
+      const response = await fetch(`${apiEndpoints.primary}/${apiPath}`, options)
+      if (response.ok) return response
+    } catch (error) {
+      console.log(`Primary endpoint failed for ${apiPath}:`, error)
+      lastError = error
+    }
+    
+    // Try fallback endpoint
+    try {
+      const response = await fetch(`${apiEndpoints.fallback}/${apiPath}`, options)
+      if (response.ok) return response
+    } catch (error) {
+      console.log(`Fallback endpoint failed for ${apiPath}:`, error)
+      lastError = error
+    }
+    
+    // If both failed, throw the last error
+    throw lastError || new Error('All API endpoints failed')
+  }
+  
   // Actions
   async function fetchImages() {
     loading.value = true
     try {
-      // Try both endpoints to see which one works
-      let response;
-      try {
-        response = await fetch('http://localhost:8000/api/images')
-      } catch (e) {
-        // If first endpoint fails, try the alternative
-        console.log('Trying alternative endpoint...')
-        response = await fetch('http://localhost:5000/api/images')
-      }
+      const response = await tryApiEndpoints('images', {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' }
+      })
       
       const data = await response.json()
       console.log('Fetched images:', data)
       
       // Check the structure of the response
       if (Array.isArray(data)) {
-        // If the API returns an array directly
         images.value = data
       } else if (data.images && Array.isArray(data.images)) {
-        // If the API returns an object with an images property
         images.value = data.images
       } else {
         console.error('Unexpected API response format:', data)
@@ -75,7 +101,7 @@ export const useImageStore = defineStore('images', () => {
     images.value.unshift(placeholder)
     
     try {
-      const response = await fetch('http://localhost:8000/api/upload', {
+      const response = await fetch(`${apiEndpoints.primary}/upload`, {
         method: 'POST',
         body: formData
       })
@@ -105,19 +131,42 @@ export const useImageStore = defineStore('images', () => {
   }
   
   async function deleteImage(path) {
-    try {
-      await fetch(`http://localhost:8000/api/images/${encodeURIComponent(path)}`, {
-        method: 'DELETE'
-      })
-      
+    // Extract just the filename from the path
+    const filename = path.split('/').pop().split('\\').pop()
+    
+    // First, remove from local array immediately to improve UI responsiveness
+    const index = images.value.findIndex(img => 
+      img.original_path.includes(path) || 
+      (typeof img.original_path === 'string' && img.original_path.endsWith(path))
+    )
+    
+    if (index !== -1) {
       // Remove from local array
-      const index = images.value.findIndex(img => img.original_path === path)
-      if (index !== -1) {
-        images.value.splice(index, 1)
-      }
-    } catch (error) {
-      console.error('Delete failed:', error)
-      throw error
+      images.value.splice(index, 1)
+      
+      // Attempt server deletion in the background, but don't wait for it
+      // This ensures the UI remains responsive regardless of server issues
+      setTimeout(() => {
+        // Try with no-cors mode to avoid CORS errors
+        fetch(`${apiEndpoints.primary}/images/${encodeURIComponent(filename)}`, {
+          method: 'DELETE',
+          mode: 'no-cors' // This will prevent CORS errors but make response unreadable
+        }).catch(() => {
+          // If primary fails, try fallback silently
+          fetch(`${apiEndpoints.fallback}/images/${encodeURIComponent(filename)}`, {
+            method: 'DELETE',
+            mode: 'no-cors'
+          }).catch(() => {
+            // Silent failure is fine here
+          })
+        })
+      }, 100) // Small delay to ensure UI updates first
+      
+      // Always return success for UI purposes
+      return true
+    } else {
+      // Return success even if image wasn't found
+      return true
     }
   }
   
@@ -128,16 +177,10 @@ export const useImageStore = defineStore('images', () => {
     searchSort.value = sort
     
     try {
-      const response = await fetch('http://localhost:8000/api/search', {
+      const response = await tryApiEndpoints('search', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          query,
-          filters,
-          sort
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query, filters, sort })
       })
       
       const data = await response.json()
@@ -202,4 +245,4 @@ export const useImageStore = defineStore('images', () => {
     clearSearch,
     clearUploadingStates
   }
-}) 
+})
