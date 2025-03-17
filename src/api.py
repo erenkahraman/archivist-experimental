@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask, request, jsonify, send_from_directory, Blueprint
 from flask_cors import CORS
 from pathlib import Path
 import os
@@ -6,31 +6,22 @@ from werkzeug.utils import secure_filename
 from .search_engine import SearchEngine
 import config
 from werkzeug.exceptions import BadRequest
+import dotenv
+import logging
 
-app = Flask(__name__)
+# Load environment variables from .env file
+dotenv.load_dotenv()
 
-# Basic test route
-@app.route('/')
-def home():
-    return 'Server is running'
+# Create a Flask Blueprint
+app = Blueprint('api', __name__)
 
-# Test route that returns JSON
-@app.route('/api/test')
-def test():
-    return jsonify({'status': 'ok'})
+# Get OpenAI API key from environment variable
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    logger.warning("No OpenAI API key found in environment variables")
 
-# Configure CORS for development
-CORS(app, resources={
-    r"/*": {  # Apply to all routes
-        "origins": ["http://localhost:3000"],
-        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        "allow_headers": ["Content-Type"],
-        "supports_credentials": True
-    }
-})
-
-# Initialize search engine
-search_engine = SearchEngine()
+# Initialize search engine with OpenAI API key
+search_engine = SearchEngine(openai_api_key=OPENAI_API_KEY)
 
 # Configure upload folder
 UPLOAD_FOLDER = Path(__file__).parent.parent / "uploads"
@@ -40,7 +31,7 @@ ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/api/thumbnails/<path:filename>')
+@app.route('/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
     """Serve thumbnail images"""
     return send_from_directory(config.THUMBNAIL_DIR, filename)
@@ -49,7 +40,35 @@ def serve_thumbnail(filename):
 def handle_bad_request(e):
     return jsonify({'error': str(e)}), 400
 
-@app.route('/api/upload', methods=['POST'])
+# Add a new endpoint to set the OpenAI API key
+@app.route('/set-openai-key', methods=['POST'])
+def set_openai_key():
+    """
+    Set or update the OpenAI API key
+    
+    Expects:
+        - api_key: The OpenAI API key
+        
+    Returns:
+        - JSON response with success or error message
+    """
+    try:
+        data = request.json
+        if not data or 'api_key' not in data:
+            return jsonify({'error': 'API key is required'}), 400
+            
+        api_key = data['api_key']
+        if not api_key.startswith('sk-'):
+            return jsonify({'error': 'Invalid OpenAI API key format'}), 400
+            
+        # Update the API key in the search engine
+        search_engine.set_openai_api_key(api_key)
+        
+        return jsonify({'status': 'success', 'message': 'OpenAI API key updated successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/upload', methods=['POST'])
 def upload_file():
     """
     Handle file upload with proper validation and error handling.
@@ -103,7 +122,7 @@ def upload_file():
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/images', methods=['GET'])
+@app.route('/images', methods=['GET'])
 def get_images():
     try:
         # Sadece geçerli metadata'yı döndür
@@ -115,7 +134,7 @@ def get_images():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/search', methods=['POST'])
+@app.route('/search', methods=['POST'])
 def search():
     """
     Enhanced search endpoint with advanced filtering options.
@@ -175,24 +194,15 @@ def search():
                 # Style filter
                 if 'style' in filters and filters['style']:
                     style = filters['style'].lower()
-                    style_match = False
-                    
-                    # Check in style keywords
-                    if 'patterns' in result and 'style_keywords' in result['patterns']:
-                        for keyword in result['patterns']['style_keywords']:
-                            if style in keyword.lower():
-                                style_match = True
-                                break
-                    
-                    # Check in layout, texture, etc.
-                    for attr in ['layout', 'texture_type', 'cultural_influence', 'historical_period']:
-                        if 'patterns' in result and attr in result['patterns']:
-                            if 'type' in result['patterns'][attr] and style in result['patterns'][attr]['type'].lower():
-                                style_match = True
-                                break
-                    
-                    if not style_match:
-                        matches_all_filters = False
+                    if 'patterns' in result and 'style' in result['patterns']:
+                        style_match = False
+                        for style_key, style_data in result['patterns']['style'].items():
+                            if isinstance(style_data, dict) and 'type' in style_data:
+                                if style in style_data['type'].lower():
+                                    style_match = True
+                                    break
+                        if not style_match:
+                            matches_all_filters = False
                 
                 # Add to filtered results if it matches all filters
                 if matches_all_filters:
@@ -203,71 +213,54 @@ def search():
         
         # Apply sorting
         if sort_method == 'newest':
-            # Sort by timestamp (newest first)
-            results.sort(key=lambda x: x.get('timestamp', '0'), reverse=True)
+            results.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
         elif sort_method == 'oldest':
-            # Sort by timestamp (oldest first)
-            results.sort(key=lambda x: x.get('timestamp', '0'))
-        # Default is 'relevance' which is already sorted by similarity
+            results.sort(key=lambda x: x.get('timestamp', 0))
         
-        # Add metadata about search results
-        response = {
-            'query': query,
-            'filters': filters,
-            'sort': sort_method,
-            'total_results': len(results),
-            'results': results
-        }
+        return jsonify(results)
         
-        return jsonify(response)
     except Exception as e:
         print(f"Search error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/delete/<filename>', methods=['DELETE'])
-def delete_image(filename):
+@app.route('/generate-prompt', methods=['POST'])
+def generate_prompt():
+    """
+    Generate a prompt for an image
+    
+    Expects:
+        - image_path: Path to the image
+        
+    Returns:
+        - JSON response with prompt
+    """
     try:
-        # Delete original file
-        original_path = config.UPLOAD_DIR / filename
-        if original_path.exists():
-            original_path.unlink()
-
-        # Delete thumbnail
-        thumbnail_path = config.THUMBNAIL_DIR / filename
-        if thumbnail_path.exists():
-            thumbnail_path.unlink()
-
-        # Remove from metadata - search by filename in metadata
-        for path in list(search_engine.metadata.keys()):
-            if Path(path).name == filename:
-                del search_engine.metadata[path]
-                search_engine.save_metadata()
-                break
-
-        return jsonify({'success': True})
+        data = request.json
+        if not data or 'image_path' not in data:
+            return jsonify({'error': 'Image path is required'}), 400
+            
+        image_path = data['image_path']
+        
+        # Get the metadata for the image
+        metadata = search_engine.metadata.get(image_path)
+        if not metadata:
+            return jsonify({'error': 'Image not found'}), 404
+            
+        # Get the prompt from the metadata
+        prompt = metadata.get('patterns', {}).get('prompt', {}).get('final_prompt', '')
+        if not prompt:
+            prompt = "Unable to generate prompt for this image"
+            
+        return jsonify({
+            'prompt': prompt,
+            'image_path': image_path
+        }), 200
     except Exception as e:
-        print(f"Delete error: {str(e)}")  # Add debug logging
         return jsonify({'error': str(e)}), 500
 
-def ensure_directories():
-    """Ensure required directories exist."""
-    directories = [
-        UPLOAD_FOLDER,
-        config.THUMBNAIL_DIR,  # Make sure this exists
-        config.INDEX_PATH
-    ]
-    for directory in directories:
-        directory.mkdir(parents=True, exist_ok=True)
-        # Add debug logging
-        print(f"Ensured directory exists: {directory}")
-
-def start_api():
-    """Start the Flask API server."""
-    ensure_directories()
-    app.run(
-        host='0.0.0.0',  # Allow external connections
-        port=8000,
-        debug=True
-    ) 
+# Basic test route
+@app.route('/')
+def home():
+    return 'API is running' 

@@ -5,10 +5,12 @@ from pathlib import Path
 BASE_DIR = Path(__file__).parent
 UPLOAD_DIR = BASE_DIR / "uploads"
 THUMBNAIL_DIR = BASE_DIR / "thumbnails"
+METADATA_DIR = BASE_DIR / "metadata"
 
 # Create directories if they don't exist
 UPLOAD_DIR.mkdir(exist_ok=True)
 THUMBNAIL_DIR.mkdir(exist_ok=True)
+METADATA_DIR.mkdir(exist_ok=True)
 
 # Model settings
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"

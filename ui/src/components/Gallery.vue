@@ -94,7 +94,7 @@
                 <div class="pattern-header">
                   <h3>{{ selectedImage.patterns?.primary_pattern }}</h3>
                   <div class="confidence">
-                    {{ (selectedImage.patterns?.confidence * 100).toFixed(1) }}% confidence
+                    {{ (selectedImage.patterns?.pattern_confidence * 100).toFixed(1) }}% confidence
                   </div>
                 </div>
               </div>

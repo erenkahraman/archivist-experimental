@@ -1,39 +1,11 @@
-"""Configuration settings for pattern analysis and prompt generation."""
+"""Configuration settings for OpenAI integration."""
 
-# Similarity thresholds for attribute detection
-THRESHOLDS = {
-    'layout': 0.25,
-    'scale': 0.25,
-    'texture': 0.25,
+# OpenAI API configuration
+OPENAI_CONFIG = {
+    'model': 'gpt-4o',
+    'max_tokens': 1000,
+    'temperature': 0.7
 }
 
-# Template options for different pattern types
-TEMPLATE_OPTIONS = {
-    'floral': {
-        'adjectives': ["Elegant", "Delicate", "Lush", "Vibrant", "Intricate"],
-        'arrangements': ["scattered", "clustered", "symmetrical"],
-    },
-    'botanical': {
-        'adjectives': ["Natural", "Organic", "Verdant"],
-        'arrangements': ["layered", "overlapping", "directional"],
-    },
-    'geometric': {
-        'adjectives': ["Bold", "Precise", "Structured", "Modern"],
-        'arrangements': ["repeating", "aligned", "symmetrical"],
-    },
-    'animal_print': {
-        'adjectives': ["Wild", "Exotic", "Natural", "Textured"],
-        'arrangements': ["organic", "random", "all-over"],
-    },
-    # Default options for unknown pattern types
-    'default': {
-        'adjectives': ["Interesting", "Distinctive", "Detailed"],
-        'arrangements': ["balanced", "composed", "arranged"],
-    }
-}
-
-# Other global parameters
-MAX_EMBEDDING_CLUSTERS = 10
-IMAGE_SIZE = 512
-MIN_CONFIDENCE_THRESHOLD = 0.2
-HIGH_CONFIDENCE_THRESHOLD = 0.3 
+# Image size for thumbnails
+IMAGE_SIZE = 512 
