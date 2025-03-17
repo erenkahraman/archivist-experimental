@@ -46,40 +46,104 @@ class GeminiAnalyzer:
             # Load the image
             image = Image.open(image_path)
             
+            # Get image dimensions
+            width, height = image.size
+            
+            # Get file name from path
+            file_name = os.path.basename(image_path)
+            
             # Prepare the prompt for pattern analysis
             prompt = """
-            Analyze this image and provide detailed information about any patterns present.
-            Focus on the following aspects:
-            1. Primary pattern category (geometric, floral, abstract, etc.)
-            2. Secondary pattern types if present
-            3. Specific elements in the pattern (e.g., roses, triangles)
-            4. Pattern layout and distribution
-            5. Pattern density and scale
-            
+            Analyze this image and provide a detailed analysis of any patterns present. Focus on the following aspects:
+
+            1. **Primary Pattern Category:**  
+               Identify the main pattern category (e.g., geometric, floral, abstract, animal print, etc.) and provide a confidence score (0 to 1).
+
+            2. **Secondary Pattern Types:**  
+               List any additional pattern types that appear in the image, each with its own confidence score.
+
+            3. **Specific Elements:**  
+               For each key element detected (e.g., a flower, a geometric shape, or an animal skin print), provide:  
+               - The exact element name (e.g., "roses", "tulips", "circles", "leopard skin").  
+               - For animal prints specifically, include the precise animal type (e.g., "leopard", "zebra", "tiger", "giraffe", "snake", "crocodile") and the characteristic textural detail (e.g., "distinctive rosettes", "bold stripes").  
+               - A detailed sub-category if applicable (e.g., "garden roses", "double tulips").  
+               - The dominant color or color description of the element (e.g., "vibrant pink", "pastel blue", "warm brown with black rosettes").  
+               - A confidence score for the detection.
+
+            4. **Layout and Distribution:**  
+               Describe how the elements are arranged (e.g., scattered, clustered, symmetrical, trailing vines) and provide a confidence score.
+
+            5. **Density and Scale:**  
+               Specify the pattern density (e.g., dense, sparse, regular) and the scale of the elements (e.g., small, medium, large) with corresponding confidence scores.
+
+            6. **Texture Type:**
+               Describe the texture quality of the pattern (e.g., smooth, rough, embossed, flat, glossy, matte) with a confidence score.
+
+            7. **Cultural and Historical Context:**
+               - Identify any cultural influences in the pattern (e.g., Japanese, Moroccan, Scandinavian, Art Deco) with a confidence score.
+               - Suggest a historical period the pattern might be associated with (e.g., Victorian, Mid-Century Modern, Contemporary) with a confidence score.
+               - Describe the mood or emotional quality the pattern evokes (e.g., calm, energetic, sophisticated, playful) with a confidence score.
+
+            8. **Style Keywords:**
+               Provide 3-5 descriptive style keywords that best characterize the pattern (e.g., "minimalist", "bohemian", "tropical", "industrial").
+
+            9. **Prompt Description:**  
+               Finally, generate a coherent, human-readable prompt that summarizes the pattern. This description should integrate the above details into a fluid sentence. For example:  
+               "Elegant floral pattern featuring vibrant pink garden roses and delicate pastel tulips, combined with bold leopard skin print exhibiting distinctive rosettes, arranged in a trailing vines layout with a dense overall distribution at a large scale."
+
             Format your response as a structured JSON with the following fields:
+
             {
-                "category": "primary pattern category",
-                "category_confidence": 0.95,
-                "secondary_patterns": [
-                    {"name": "pattern name", "confidence": 0.8},
-                    {"name": "pattern name", "confidence": 0.6}
-                ],
-                "elements": [
-                    {"name": "element name", "confidence": 0.9}
-                ],
-                "density": {
-                    "type": "dense/scattered/regular",
-                    "confidence": 0.85
-                },
-                "layout": {
-                    "type": "layout type",
-                    "confidence": 0.8
-                },
-                "prompt": {
-                    "final_prompt": "A detailed description of the pattern that could be used as a prompt"
+              "category": "primary pattern category",
+              "category_confidence": 0.95,
+              "secondary_patterns": [
+                {"name": "pattern name", "confidence": 0.8},
+                {"name": "pattern name", "confidence": 0.6}
+              ],
+              "elements": [
+                {
+                  "name": "element name",
+                  "sub_category": "detailed element type",
+                  "color": "dominant color description",
+                  "animal_type": "if applicable, specify animal type for animal prints",
+                  "textural_detail": "if applicable, describe specific pattern detail (e.g., rosettes, stripes)",
+                  "confidence": 0.9
                 }
+              ],
+              "density": {
+                "type": "dense/scattered/regular",
+                "confidence": 0.85
+              },
+              "layout": {
+                "type": "layout type",
+                "confidence": 0.8
+              },
+              "scale": {
+                "type": "small/medium/large",
+                "confidence": 0.8
+              },
+              "texture_type": {
+                "type": "texture description (e.g., smooth, rough, embossed)",
+                "confidence": 0.8
+              },
+              "cultural_influence": {
+                "type": "cultural style (e.g., Japanese, Moroccan, Art Deco)",
+                "confidence": 0.7
+              },
+              "historical_period": {
+                "type": "historical era (e.g., Victorian, Mid-Century, Contemporary)",
+                "confidence": 0.7
+              },
+              "mood": {
+                "type": "emotional quality (e.g., calm, energetic, sophisticated)",
+                "confidence": 0.8
+              },
+              "style_keywords": ["keyword1", "keyword2", "keyword3"],
+              "prompt": {
+                "final_prompt": "A detailed, coherent description of the pattern"
+              }
             }
-            """
+            """ #
             
             # Configure the model
             model = genai.GenerativeModel(
@@ -102,27 +166,50 @@ class GeminiAnalyzer:
                 json_content = result_text[json_start:json_end]
                 try:
                     result = json.loads(json_content)
+                    # Add image metadata
+                    result["dimensions"] = {"width": width, "height": height}
+                    result["original_path"] = image_path
                     # Ensure the result has all required fields
                     return self._validate_and_fix_response(result)
                 except json.JSONDecodeError:
                     logger.error("Failed to parse JSON from Gemini response")
-                    return self._get_default_response()
+                    return self._get_default_response(image_path, width, height)
             else:
                 logger.error("No JSON found in Gemini response")
-                return self._get_default_response()
+                return self._get_default_response(image_path, width, height)
                 
         except Exception as e:
             logger.error(f"Error in Gemini analysis: {str(e)}")
-            return self._get_default_response()
+            # Try to get dimensions if image was loaded
+            width, height = 0, 0
+            try:
+                if 'image' in locals() and image:
+                    width, height = image.size
+            except:
+                pass
+            return self._get_default_response(image_path, width, height)
     
     def _validate_and_fix_response(self, response: Dict) -> Dict:
         """Validate and fix the Gemini response to ensure it has all required fields"""
-        default = self._get_default_response()
+        default = self._get_default_response("", 0, 0)
         
         # Ensure all required fields exist
         for key in default.keys():
             if key not in response:
                 response[key] = default[key]
+        
+        # Ensure dimensions has proper structure
+        if not isinstance(response.get("dimensions"), dict):
+            response["dimensions"] = {"width": 0, "height": 0}
+        else:
+            if "width" not in response["dimensions"]:
+                response["dimensions"]["width"] = 0
+            if "height" not in response["dimensions"]:
+                response["dimensions"]["height"] = 0
+        
+        # Ensure original_path exists
+        if "original_path" not in response:
+            response["original_path"] = ""
         
         # Ensure confidence values are floats between 0 and 1
         if isinstance(response.get("category_confidence"), str):
@@ -155,13 +242,125 @@ class GeminiAnalyzer:
         for element in response.get("elements", []):
             if not isinstance(element, dict):
                 continue
-            if "confidence" not in element:
-                element["confidence"] = 0.8
-            elif isinstance(element["confidence"], str):
+            # Ensure all required element fields exist
+            for field in ["name", "sub_category", "color", "confidence"]:
+                if field not in element:
+                    element[field] = "" if field != "confidence" else 0.8
+            
+            # Add animal-specific fields if not present
+            if "animal_type" not in element:
+                element["animal_type"] = ""
+            if "textural_detail" not in element:
+                element["textural_detail"] = ""
+                
+            # Ensure confidence is a float
+            if isinstance(element["confidence"], str):
                 try:
                     element["confidence"] = float(element["confidence"])
                 except:
                     element["confidence"] = 0.8
+        
+        # Ensure density has proper structure
+        if not isinstance(response.get("density"), dict):
+            response["density"] = default["density"]
+        else:
+            if "type" not in response["density"]:
+                response["density"]["type"] = "regular"
+            if "confidence" not in response["density"]:
+                response["density"]["confidence"] = 0.7
+            elif isinstance(response["density"]["confidence"], str):
+                try:
+                    response["density"]["confidence"] = float(response["density"]["confidence"])
+                except:
+                    response["density"]["confidence"] = 0.7
+        
+        # Ensure layout has proper structure
+        if not isinstance(response.get("layout"), dict):
+            response["layout"] = default["layout"]
+        else:
+            if "type" not in response["layout"]:
+                response["layout"]["type"] = "balanced"
+            if "confidence" not in response["layout"]:
+                response["layout"]["confidence"] = 0.7
+            elif isinstance(response["layout"]["confidence"], str):
+                try:
+                    response["layout"]["confidence"] = float(response["layout"]["confidence"])
+                except:
+                    response["layout"]["confidence"] = 0.7
+        
+        # Ensure scale has proper structure
+        if not isinstance(response.get("scale"), dict):
+            response["scale"] = {"type": "medium", "confidence": 0.7}
+        else:
+            if "type" not in response["scale"]:
+                response["scale"]["type"] = "medium"
+            if "confidence" not in response["scale"]:
+                response["scale"]["confidence"] = 0.7
+            elif isinstance(response["scale"]["confidence"], str):
+                try:
+                    response["scale"]["confidence"] = float(response["scale"]["confidence"])
+                except:
+                    response["scale"]["confidence"] = 0.7
+        
+        # Ensure texture_type has proper structure
+        if not isinstance(response.get("texture_type"), dict):
+            response["texture_type"] = {"type": "smooth", "confidence": 0.7}
+        else:
+            if "type" not in response["texture_type"]:
+                response["texture_type"]["type"] = "smooth"
+            if "confidence" not in response["texture_type"]:
+                response["texture_type"]["confidence"] = 0.7
+            elif isinstance(response["texture_type"]["confidence"], str):
+                try:
+                    response["texture_type"]["confidence"] = float(response["texture_type"]["confidence"])
+                except:
+                    response["texture_type"]["confidence"] = 0.7
+        
+        # Ensure cultural_influence has proper structure
+        if not isinstance(response.get("cultural_influence"), dict):
+            response["cultural_influence"] = {"type": "contemporary", "confidence": 0.7}
+        else:
+            if "type" not in response["cultural_influence"]:
+                response["cultural_influence"]["type"] = "contemporary"
+            if "confidence" not in response["cultural_influence"]:
+                response["cultural_influence"]["confidence"] = 0.7
+            elif isinstance(response["cultural_influence"]["confidence"], str):
+                try:
+                    response["cultural_influence"]["confidence"] = float(response["cultural_influence"]["confidence"])
+                except:
+                    response["cultural_influence"]["confidence"] = 0.7
+        
+        # Ensure historical_period has proper structure
+        if not isinstance(response.get("historical_period"), dict):
+            response["historical_period"] = {"type": "modern", "confidence": 0.7}
+        else:
+            if "type" not in response["historical_period"]:
+                response["historical_period"]["type"] = "modern"
+            if "confidence" not in response["historical_period"]:
+                response["historical_period"]["confidence"] = 0.7
+            elif isinstance(response["historical_period"]["confidence"], str):
+                try:
+                    response["historical_period"]["confidence"] = float(response["historical_period"]["confidence"])
+                except:
+                    response["historical_period"]["confidence"] = 0.7
+        
+        # Ensure mood has proper structure
+        if not isinstance(response.get("mood"), dict):
+            response["mood"] = {"type": "neutral", "confidence": 0.7}
+        else:
+            if "type" not in response["mood"]:
+                response["mood"]["type"] = "neutral"
+            if "confidence" not in response["mood"]:
+                response["mood"]["confidence"] = 0.7
+            elif isinstance(response["mood"]["confidence"], str):
+                try:
+                    response["mood"]["confidence"] = float(response["mood"]["confidence"])
+                except:
+                    response["mood"]["confidence"] = 0.7
+        
+        # Ensure style_keywords is a list
+        if not isinstance(response.get("style_keywords"), list):
+            response["style_keywords"] = []
         
         # Add fields expected by the gallery component
         response["primary_pattern"] = response.get("category", "Unknown")
@@ -174,7 +373,7 @@ class GeminiAnalyzer:
         
         return response
     
-    def _get_default_response(self) -> Dict[str, Any]:
+    def _get_default_response(self, image_path: str, width: int, height: int) -> Dict[str, Any]:
         """Return a default response when analysis fails"""
         return {
             "category": "Unknown",
@@ -182,7 +381,16 @@ class GeminiAnalyzer:
             "primary_pattern": "Unknown",
             "pattern_confidence": 0.0,
             "secondary_patterns": [],
-            "elements": [],
+            "elements": [
+                {
+                    "name": "",
+                    "sub_category": "",
+                    "color": "",
+                    "animal_type": "",
+                    "textural_detail": "",
+                    "confidence": 0.0
+                }
+            ],
             "density": {
                 "type": "regular",
                 "confidence": 0.0
@@ -191,9 +399,30 @@ class GeminiAnalyzer:
                 "type": "balanced",
                 "confidence": 0.0
             },
+            "scale": {
+                "type": "medium",
+                "confidence": 0.0
+            },
+            "texture_type": {
+                "type": "",
+                "confidence": 0.0
+            },
+            "cultural_influence": {
+                "type": "",
+                "confidence": 0.0
+            },
+            "historical_period": {
+                "type": "",
+                "confidence": 0.0
+            },
+            "mood": {
+                "type": "",
+                "confidence": 0.0
+            },
+            "style_keywords": [],
             "prompt": {
-                "final_prompt": "Unable to analyze pattern",
-                "components": {},
-                "completeness_score": 0
-            }
+                "final_prompt": "Unable to analyze pattern"
+            },
+            "dimensions": {"width": width, "height": height},
+            "original_path": image_path
         } 
