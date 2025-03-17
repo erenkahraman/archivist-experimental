@@ -15,13 +15,13 @@ dotenv.load_dotenv()
 # Create a Flask Blueprint
 app = Blueprint('api', __name__)
 
-# Get OpenAI API key from environment variable
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-if not OPENAI_API_KEY:
-    logger.warning("No OpenAI API key found in environment variables")
+# Get Gemini API key from environment variable
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if not GEMINI_API_KEY:
+    logger.warning("No Gemini API key found in environment variables")
 
-# Initialize search engine with OpenAI API key
-search_engine = SearchEngine(openai_api_key=OPENAI_API_KEY)
+# Initialize search engine with Gemini API key
+search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
 
 # Configure upload folder
 UPLOAD_FOLDER = Path(__file__).parent.parent / "uploads"
@@ -40,14 +40,14 @@ def serve_thumbnail(filename):
 def handle_bad_request(e):
     return jsonify({'error': str(e)}), 400
 
-# Add a new endpoint to set the OpenAI API key
-@app.route('/set-openai-key', methods=['POST'])
-def set_openai_key():
+# Add a new endpoint to set the Gemini API key
+@app.route('/set-gemini-key', methods=['POST'])
+def set_gemini_key():
     """
-    Set or update the OpenAI API key
+    Set or update the Gemini API key
     
     Expects:
-        - api_key: The OpenAI API key
+        - api_key: The Gemini API key
         
     Returns:
         - JSON response with success or error message
@@ -58,13 +58,11 @@ def set_openai_key():
             return jsonify({'error': 'API key is required'}), 400
             
         api_key = data['api_key']
-        if not api_key.startswith('sk-'):
-            return jsonify({'error': 'Invalid OpenAI API key format'}), 400
-            
-        # Update the API key in the search engine
-        search_engine.set_openai_api_key(api_key)
         
-        return jsonify({'status': 'success', 'message': 'OpenAI API key updated successfully'}), 200
+        # Update the API key in the search engine
+        search_engine.set_gemini_api_key(api_key)
+        
+        return jsonify({'status': 'success', 'message': 'Gemini API key updated successfully'}), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 

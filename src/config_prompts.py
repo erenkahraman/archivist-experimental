@@ -1,8 +1,8 @@
-"""Configuration settings for OpenAI integration."""
+"""Configuration settings for Google Gemini integration."""
 
-# OpenAI API configuration
-OPENAI_CONFIG = {
-    'model': 'gpt-4o',
+# Gemini API configuration
+GEMINI_CONFIG = {
+    'model': 'gemini-1.5-flash',
     'max_tokens': 1000,
     'temperature': 0.7
 }

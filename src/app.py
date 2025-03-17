@@ -33,13 +33,13 @@ logging.getLogger('transformers').setLevel(logging.WARNING)
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.WARNING)
 
-# Get OpenAI API key from environment variable
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
-if OPENAI_API_KEY:
-    logger.info("OpenAI API key found in environment variables")
+# Get Gemini API key from environment variable
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    logger.info("Gemini API key found in environment variables")
 else:
-    logger.warning("No OpenAI API key found in environment variables")
-    OPENAI_API_KEY = None  # Don't use a default key
+    logger.warning("No Gemini API key found in environment variables")
+    GEMINI_API_KEY = None  # Don't use a default key
 
 def create_app():
     """Create and configure the Flask application."""

@@ -13,7 +13,7 @@ from .analyzers.color_analyzer import ColorAnalyzer
 from .search.searcher import ImageSearcher
 import config
 from .embedding_extractor import EmbeddingExtractor
-from .openai_analyzer import OpenAIAnalyzer
+from .gemini_analyzer import GeminiAnalyzer
 
 # Configure logging
 logging.basicConfig(
@@ -27,7 +27,7 @@ werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.ERROR)
 
 class SearchEngine:
-    def __init__(self, openai_api_key=None):
+    def __init__(self, gemini_api_key=None):
         logger.info("Initializing SearchEngine...")
         try:
             # Load models and move to GPU if available
@@ -39,7 +39,7 @@ class SearchEngine:
             logger.info("CLIP processor loaded successfully")
             
             # Initialize analyzers
-            self.openai_analyzer = OpenAIAnalyzer(api_key=openai_api_key)
+            self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS)
             self.searcher = ImageSearcher(self.model, self.processor, self.device)
             
@@ -75,10 +75,10 @@ class SearchEngine:
         except Exception as e:
             logger.error(f"Error saving metadata: {e}")
 
-    def set_openai_api_key(self, api_key: str):
-        """Set or update the OpenAI API key"""
-        self.openai_analyzer.set_api_key(api_key)
-        logger.info("OpenAI API key updated in SearchEngine")
+    def set_gemini_api_key(self, api_key: str):
+        """Set or update the Gemini API key"""
+        self.gemini_analyzer.set_api_key(api_key)
+        logger.info("Gemini API key updated in SearchEngine")
 
     def process_image(self, image_path: Path) -> Dict[str, Any]:
         """Process an image and extract metadata including patterns and colors."""
@@ -110,8 +110,8 @@ class SearchEngine:
             # Analyze colors
             color_info = self.analyze_colors(image_np)
             
-            # Use OpenAI for pattern analysis
-            pattern_info = self.openai_analyzer.analyze_image(str(image_path))
+            # Use Gemini for pattern analysis
+            pattern_info = self.gemini_analyzer.analyze_image(str(image_path))
             
             # Ensure pattern_info has the required fields
             if pattern_info.get('primary_pattern') is None:
