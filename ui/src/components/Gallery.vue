@@ -1,16 +1,28 @@
 <template>
   <div class="gallery-container">
-    <div v-if="loading" class="gallery-loading">
-      <div class="loading-spinner"></div>
-      <p>Loading images...</p>
+    <!-- Empty state -->
+    <div v-if="loading" class="gallery-placeholder animate__animated animate__pulse">
+      <div class="loading-container">
+        <div class="loading-spinner"></div>
+        <p class="loading-text">Discovering images...</p>
+      </div>
     </div>
     
-    <div v-else-if="images.length === 0" class="gallery-empty">
-      <p v-if="searchActive">No images found for your search.</p>
-      <p v-else>Upload pattern images to get started</p>
+    <!-- Empty state -->
+    <div v-else-if="images.length === 0" class="gallery-empty animate__animated animate__fadeIn">
+      <div class="empty-illustration">
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 16L8.58579 11.4142C9.36684 10.6332 10.6332 10.6332 11.4142 11.4142L16 16M14 14L15.5858 12.4142C16.3668 11.6332 17.6332 11.6332 18.4142 12.4142L20 14M14 8H14.01M6 20H18C19.1046 20 20 19.1046 20 18V6C20 4.89543 19.1046 4 18 4H6C4.89543 4 4 4.89543 4 6V18C4 19.1046 4.89543 20 6 20Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </div>
+      <h3 v-if="searchActive" class="empty-title">No images found</h3>
+      <h3 v-else class="empty-title">Your gallery is empty</h3>
+      <p v-if="searchActive" class="empty-description">Try adjusting your search criteria or upload new images</p>
+      <p v-else class="empty-description">Upload images to begin your collection</p>
     </div>
     
-    <div v-else class="gallery-grid">
+    <!-- Image grid -->
+    <div v-else class="gallery-grid animate__animated animate__fadeIn">
       <div 
         v-for="image in images" 
         :key="image.isUploading ? `uploading-${image.original_path}` : image.thumbnail_path"
@@ -20,50 +32,71 @@
           'is-searching': image.isSearching
         }"
       >
+        <!-- Uploading state -->
         <template v-if="image.isUploading">
           <div class="upload-placeholder">
             <div class="upload-spinner"></div>
             <div class="upload-progress">
               <div class="progress-bar">
-                <div 
-                  class="progress-fill"
-                  :style="{ width: `${image.uploadProgress || 0}%` }"
-                ></div>
+                <div class="progress-fill" :style="{ width: `${image.uploadProgress || 0}%` }"></div>
               </div>
               <p class="progress-text">{{ image.uploadProgress || 0 }}%</p>
               <p class="upload-status">{{ image.uploadStatus || 'Uploading...' }}</p>
             </div>
           </div>
         </template>
+        
+        <!-- Regular image display -->
         <template v-else>
           <div class="image-actions">
             <button 
               class="delete-button"
               @click.stop="confirmDelete(image)"
               title="Delete image"
-            >×</button>
+              aria-label="Delete image"
+            >
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
           </div>
-          <img 
-            :src="getThumbnailUrl(image.thumbnail_path)" 
-            :alt="getImageName(image.original_path)"
-            class="gallery-image"
-            @click="selectImage(image)"
-          >
+          
+          <div class="image-container" @click="selectImage(image)">
+            <img 
+              :src="getThumbnailUrl(image.thumbnail_path)" 
+              :alt="getImageName(image.original_path)"
+              class="gallery-image"
+              loading="lazy"
+            >
+            
+            <!-- Hover overlay with quick info -->
+            <div class="image-overlay">
+              <div class="overlay-content">
+                <p class="overlay-title">{{ image.patterns?.primary_pattern || 'Unknown pattern' }}</p>
+                <div class="color-chips" v-if="image.colors?.palette">
+                  <div 
+                    v-for="(color, idx) in image.colors.palette.slice(0, 5)" 
+                    :key="idx"
+                    class="color-chip"
+                    :style="{ backgroundColor: color }"
+                  ></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <div class="image-metadata">
             <div class="pattern-type">
-              <span class="type-label">Pattern:</span>
               <span class="type-value">{{ image.patterns?.primary_pattern || 'Unknown' }}</span>
             </div>
             <div class="pattern-prompt">
               {{ truncatePrompt(image.patterns?.prompt) }}
             </div>
+            
             <!-- Display search score when in search mode -->
             <div v-if="searchActive && image.searchScore !== undefined" class="search-score">
               <div class="score-bar" :style="{ width: `${image.searchScore * 100}%` }"></div>
               <span class="score-label">Match: {{ (image.searchScore * 100).toFixed(0) }}%</span>
-              <span v-if="image.matchedTerms" class="terms-matched">
-                {{ image.matchedTerms }} term{{ image.matchedTerms !== 1 ? 's' : '' }} matched
-              </span>
             </div>
           </div>
         </template>
@@ -115,7 +148,6 @@ const getThumbnailUrl = (path) => {
     console.log('Warning: Empty thumbnail path');
     return '';
   }
-  console.log('Getting thumbnail for path:', path);
   return `http://localhost:8000/api/thumbnails/${path.split('/').pop()}`
 }
 
@@ -152,9 +184,6 @@ const selectImage = (image) => {
     }
   }
   
-  console.log('Using image path:', image.original_path);
-  console.log('Pattern analysis:', image.patterns);
-  console.log('Color analysis:', image.colors);
   selectedImage.value = image
 }
 
@@ -196,160 +225,214 @@ const getPromptText = (prompt, truncate = false) => {
 
 <style scoped>
 .gallery-container {
-  min-height: 200px;
+  min-height: 300px;
 }
 
-.gallery-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1.5rem;
-}
-
-.gallery-item {
-  border-radius: 8px;
-  overflow: hidden;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-  transition: transform 0.3s ease;
-  cursor: pointer;
-}
-
-.gallery-item:hover {
-  transform: translateY(-4px);
-}
-
-.gallery-image {
-  width: 100%;
-  height: 200px;
-  object-fit: cover;
-}
-
-.image-metadata {
-  padding: 0.8rem;
-  background: rgba(255, 255, 255, 0.95);
-  border-top: 1px solid rgba(0, 0, 0, 0.1);
-  transition: all 0.3s ease;
-}
-
-.pattern-type {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.type-label {
-  font-weight: 500;
-  color: #666;
-  font-size: 0.9rem;
-}
-
-.type-value {
-  color: #2c3e50;
-  font-weight: 600;
-}
-
-.pattern-prompt {
-  font-size: 0.85rem;
-  color: #666;
-  line-height: 1.4;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.gallery-loading,
+.gallery-placeholder,
 .gallery-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
-  color: #666;
+  min-height: 300px;
+  padding: var(--space-8);
+  text-align: center;
+  border-radius: var(--radius-lg);
+  background-color: rgba(255, 255, 255, 0.5);
+  backdrop-filter: blur(4px);
 }
 
-.loading-spinner {
-  width: 40px;
-  height: 40px;
-  border: 4px solid #f3f3f3;
-  border-top: 4px solid #4CAF50;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-  margin-bottom: 1rem;
+.loading-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
 }
 
-.delete-modal {
-  position: fixed;
+.loading-text {
+  color: var(--color-text-light);
+  font-size: 1.1rem;
+}
+
+.empty-illustration {
+  width: 100px;
+  height: 100px;
+  color: var(--color-text-light);
+  opacity: 0.6;
+  margin-bottom: var(--space-4);
+}
+
+.empty-title {
+  font-family: var(--font-heading);
+  font-size: 1.8rem;
+  color: var(--color-text);
+  margin-bottom: var(--space-2);
+}
+
+.empty-description {
+  color: var(--color-text-light);
+  max-width: 400px;
+}
+
+.gallery-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: var(--space-6);
+}
+
+.gallery-item {
+  position: relative;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  background-color: var(--color-surface);
+  box-shadow: var(--shadow-md);
+  transition: all var(--transition-normal);
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.gallery-item:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--shadow-lg);
+}
+
+.image-container {
+  position: relative;
+  overflow: hidden;
+  cursor: pointer;
+  height: 250px;
+}
+
+.gallery-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--transition-normal);
+}
+
+.gallery-item:hover .gallery-image {
+  transform: scale(1.05);
+}
+
+.image-overlay {
+  position: absolute;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent 70%);
+  opacity: 0;
+  transition: opacity var(--transition-normal);
+  display: flex;
+  align-items: flex-end;
+  padding: var(--space-4);
+}
+
+.gallery-item:hover .image-overlay {
+  opacity: 1;
+}
+
+.overlay-content {
+  color: white;
+  width: 100%;
+}
+
+.overlay-title {
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+  font-size: 1.1rem;
+}
+
+.color-chips {
+  display: flex;
+  gap: var(--space-1);
+}
+
+.color-chip {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.8);
+}
+
+.image-metadata {
+  padding: var(--space-4);
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.pattern-type {
+  margin-bottom: var(--space-2);
+}
+
+.type-value {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  color: var(--color-primary);
+  font-size: 1.1rem;
+}
+
+.pattern-prompt {
+  color: var(--color-text-light);
+  font-size: 0.9rem;
+  line-height: 1.4;
+  flex-grow: 1;
+}
+
+.image-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 10;
+  opacity: 0;
+  transition: opacity var(--transition-fast);
+}
+
+.gallery-item:hover .image-actions {
+  opacity: 1;
+}
+
+.delete-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background-color: rgba(255, 255, 255, 0.9);
+  color: var(--color-error);
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
-}
-
-.delete-modal-content {
-  background: white;
-  padding: 2rem;
-  border-radius: 8px;
-  max-width: 400px;
-  width: 90%;
-}
-
-.delete-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 1rem;
-  margin-top: 1.5rem;
-}
-
-.cancel-button {
-  padding: 0.5rem 1rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background: white;
   cursor: pointer;
-}
-
-.confirm-button {
-  padding: 0.5rem 1rem;
+  padding: 0;
   border: none;
-  border-radius: 4px;
-  background: #dc3545;
+}
+
+.delete-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.delete-button:hover {
+  background-color: var(--color-error);
   color: white;
-  cursor: pointer;
+  transform: none;
 }
 
-.confirm-button:hover {
-  background: #c82333;
-}
-
-.is-uploading {
-  opacity: 0.7;
-  pointer-events: none;
-}
-
+/* Upload placeholder styles */
 .upload-placeholder {
-  width: 100%;
   height: 100%;
+  min-height: 250px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background-color: rgba(76, 175, 80, 0.05);
-  border-radius: 8px;
-  padding: 1rem;
+  padding: var(--space-4);
+  background-color: rgba(79, 70, 229, 0.05);
 }
 
 .upload-spinner {
-  width: 40px;
-  height: 40px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #4CAF50;
-  border-radius: 50%;
-  margin-bottom: 1rem;
-  animation: spin 1s linear infinite;
+  margin-bottom: var(--space-4);
 }
 
 .upload-progress {
@@ -358,112 +441,128 @@ const getPromptText = (prompt, truncate = false) => {
 }
 
 .progress-bar {
-  width: 100%;
-  height: 4px;
-  background-color: #eee;
-  border-radius: 2px;
+  height: 6px;
+  background-color: var(--color-border);
+  border-radius: var(--radius-full);
   overflow: hidden;
-  margin-bottom: 0.5rem;
+  margin-bottom: var(--space-2);
 }
 
 .progress-fill {
   height: 100%;
-  background-color: #4CAF50;
+  background: var(--gradient-primary);
   transition: width 0.3s ease;
 }
 
 .progress-text {
-  font-size: 0.9rem;
-  color: #666;
-  margin: 0.25rem 0;
+  font-weight: 600;
+  color: var(--color-primary);
+  margin-bottom: var(--space-1);
 }
 
 .upload-status {
-  font-size: 0.8rem;
-  color: #666;
-  margin: 0;
+  font-size: 0.85rem;
+  color: var(--color-text-light);
 }
 
-@keyframes spin {
-  0% { transform: rotate(0deg); }
-  100% { transform: rotate(360deg); }
-}
-
-.is-searching {
-  position: relative;
-}
-
-.search-overlay {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(255, 255, 255, 0.8);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 8px;
-}
-
-.search-spinner {
-  width: 30px;
-  height: 30px;
-  border: 3px solid #f3f3f3;
-  border-top: 3px solid #4CAF50;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.image-actions {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  z-index: 2;
-}
-
-.delete-button {
-  background: rgba(255, 0, 0, 0.7);
-  color: white;
-  border: none;
-  border-radius: 50%;
-  width: 24px;
-  height: 24px;
-  font-size: 18px;
-  line-height: 1;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background-color 0.3s;
-}
-
-.delete-button:hover {
-  background: rgba(255, 0, 0, 0.9);
-}
-
+/* Search score display */
 .search-score {
-  margin-top: 0.5rem;
-  font-size: 0.8rem;
-  color: #555;
-  position: relative;
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--color-border);
 }
 
 .score-bar {
   height: 4px;
-  background-color: #4CAF50;
-  border-radius: 2px;
-  margin-bottom: 4px;
+  background: var(--gradient-primary);
+  border-radius: var(--radius-full);
+  margin-bottom: var(--space-1);
 }
 
 .score-label {
+  font-size: 0.8rem;
+  color: var(--color-primary);
   font-weight: 500;
-  color: #4CAF50;
 }
 
-.terms-matched {
-  margin-left: 0.5rem;
-  font-size: 0.75rem;
-  color: #777;
+/* Delete modal */
+.delete-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.delete-modal-content {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-xl);
+}
+
+.delete-modal-content h3 {
+  font-family: var(--font-heading);
+  margin-bottom: var(--space-3);
+  color: var(--color-error);
+}
+
+.delete-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.cancel-button {
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+}
+
+.cancel-button:hover {
+  background-color: var(--color-background);
+  transform: none;
+}
+
+.confirm-button {
+  background-color: var(--color-error);
+}
+
+.confirm-button:hover {
+  background-color: #dc2626;
+}
+
+@media (max-width: 768px) {
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-4);
+  }
+  
+  .image-container {
+    height: 200px;
+  }
+  
+  .upload-placeholder {
+    min-height: 200px;
+  }
+  
+  .empty-illustration {
+    width: 80px;
+    height: 80px;
+  }
+  
+  .empty-title {
+    font-size: 1.5rem;
+  }
 }
 </style> 

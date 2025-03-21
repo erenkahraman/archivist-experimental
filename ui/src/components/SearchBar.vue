@@ -1,321 +1,342 @@
 <template>
   <div class="search-container">
-    <div class="search-input-wrapper">
-      <input
-        type="text"
-        v-model="searchQuery"
-        @input="handleSearch"
-        placeholder="Search patterns, colors, styles..."
-        :disabled="loading"
-        class="search-input"
-      >
-      <div v-if="loading" class="search-spinner"></div>
+    <div class="search-form">
+      <div class="search-input-wrapper">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <input 
+          v-model="searchQuery" 
+          type="text" 
+          class="search-input"
+          placeholder="Search patterns, colors, or themes..."
+          @keyup.enter="handleSearch"
+        >
+        <button 
+          v-if="searchQuery" 
+          class="clear-search-button"
+          @click="clearSearch"
+          title="Clear search"
+        >
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </button>
+      </div>
       <button 
-        v-if="searchQuery.length > 0 || hasActiveFilters" 
-        @click="clearSearch" 
-        class="clear-button"
-        title="Clear search"
-      >Clear</button>
+        class="search-button"
+        @click="handleSearch"
+        :disabled="!searchQuery"
+      >
+        Search
+      </button>
     </div>
-    
-    <!-- Advanced search filters -->
-    <div class="search-filters">
-      <div class="filter-group">
-        <label>Pattern Type:</label>
-        <select v-model="filters.pattern_type" @change="applyFilters">
-          <option value="">Any</option>
-          <option value="paisley">Paisley</option>
-          <option value="floral">Floral</option>
-          <option value="geometric">Geometric</option>
-          <option value="abstract">Abstract</option>
-          <option value="damask">Damask</option>
-          <option value="striped">Striped</option>
-          <option value="polka dot">Polka Dot</option>
-        </select>
+
+    <div class="search-options">
+      <div class="search-filters">
+        <div class="filter-group">
+          <label class="filter-label">Match:</label>
+          <div class="filter-buttons">
+            <button 
+              class="filter-button" 
+              :class="{ active: searchType === 'patterns' }"
+              @click="searchType = 'patterns'"
+            >
+              Patterns
+            </button>
+            <button 
+              class="filter-button" 
+              :class="{ active: searchType === 'colors' }"
+              @click="searchType = 'colors'"
+            >
+              Colors
+            </button>
+            <button 
+              class="filter-button" 
+              :class="{ active: searchType === 'all' }"
+              @click="searchType = 'all'"
+            >
+              All
+            </button>
+          </div>
+        </div>
+
+        <div class="filter-group">
+          <label class="filter-label">Results:</label>
+          <select v-model="resultCount" class="result-count-select">
+            <option value="10">10</option>
+            <option value="20">20</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+          </select>
+        </div>
       </div>
       
-      <div class="filter-group">
-        <label>Color:</label>
-        <select v-model="filters.color" @change="applyFilters">
-          <option value="">Any</option>
-          <option value="red">Red</option>
-          <option value="blue">Blue</option>
-          <option value="green">Green</option>
-          <option value="yellow">Yellow</option>
-          <option value="purple">Purple</option>
-          <option value="pink">Pink</option>
-          <option value="orange">Orange</option>
-          <option value="brown">Brown</option>
-          <option value="black">Black</option>
-          <option value="white">White</option>
-          <option value="gray">Gray</option>
-        </select>
+      <div class="search-status" v-if="imageStore.searching">
+        <div class="search-spinner"></div>
+        <span>Searching...</span>
       </div>
       
-      <div class="filter-group">
-        <label>Style:</label>
-        <select v-model="filters.style" @change="applyFilters">
-          <option value="">Any</option>
-          <option value="traditional">Traditional</option>
-          <option value="modern">Modern</option>
-          <option value="abstract">Abstract</option>
-          <option value="vintage">Vintage</option>
-          <option value="minimalist">Minimalist</option>
-          <option value="ornate">Ornate</option>
-        </select>
+      <div class="search-results-info" v-if="imageStore.hasSearchResults">
+        <span class="result-count">{{ imageStore.images.length }} results</span>
+        <button class="reset-button" @click="resetSearch">Reset</button>
       </div>
-      
-      <div class="filter-group">
-        <label>Sort By:</label>
-        <select v-model="sortMethod" @change="applyFilters">
-          <option value="relevance">Relevance</option>
-          <option value="newest">Newest</option>
-          <option value="oldest">Oldest</option>
-        </select>
-      </div>
-    </div>
-    
-    <div v-if="searchActive" class="search-info">
-      <span>
-        <strong>{{ displayedQuery }}</strong>
-        <span v-if="hasActiveFilters" class="filter-indicators">
-          <span v-if="filters.pattern_type" class="filter-tag">
-            Pattern: {{ filters.pattern_type }}
-          </span>
-          <span v-if="filters.color" class="filter-tag">
-            Color: {{ filters.color }}
-          </span>
-          <span v-if="filters.style" class="filter-tag">
-            Style: {{ filters.style }}
-          </span>
-        </span>
-      </span>
-      <span v-if="resultsCount !== null" class="results-count">
-        {{ resultsCount }} result{{ resultsCount !== 1 ? 's' : '' }} found
-      </span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, reactive } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useImageStore } from '../stores/imageStore'
 
-// Custom debounce function for search optimization
-function debounce(fn, delay) {
-  let timeoutId
-  return (...args) => {
-    clearTimeout(timeoutId)
-    timeoutId = setTimeout(() => fn(...args), delay)
-  }
-}
-
 const imageStore = useImageStore()
+
 const searchQuery = ref('')
-const filters = reactive({
-  pattern_type: '',
-  color: '',
-  style: ''
+const searchType = ref('all')
+const resultCount = ref(20)
+
+// Watch for external search reset
+watch(() => imageStore.searchQuery, (newVal) => {
+  if (!newVal) {
+    searchQuery.value = ''
+  }
 })
-const sortMethod = ref('relevance')
 
-// Computed properties
-const loading = computed(() => imageStore.isSearching)
-const searchActive = computed(() => imageStore.searchQuery !== '' || hasActiveFilters.value)
-const displayedQuery = computed(() => imageStore.searchQuery || 'All Patterns')
-const resultsCount = computed(() => imageStore.searchTotalResults)
-const hasActiveFilters = computed(() => 
-  filters.pattern_type !== '' || 
-  filters.color !== '' || 
-  filters.style !== ''
-)
-
-// Debounced search function
-const performSearch = debounce(async (query) => {
-  if (query.length < 2 && !hasActiveFilters.value) return
+const handleSearch = async () => {
+  if (!searchQuery.value.trim()) return
   
-  try {
-    await imageStore.searchImages(
-      query, 
-      {
-        pattern_type: filters.pattern_type,
-        color: filters.color,
-        style: filters.style
-      },
-      sortMethod.value
-    )
-  } catch (error) {
-    console.error('Search failed:', error)
-  }
-}, 300)
-
-// Methods
-const handleSearch = (e) => {
-  const value = e.target.value.trim()
-  searchQuery.value = value
-  
-  if (!value && !hasActiveFilters.value) {
-    clearSearch()
-    return
-  }
-  
-  performSearch(value)
+  await imageStore.search({
+    query: searchQuery.value,
+    type: searchType.value,
+    k: resultCount.value
+  })
 }
 
 const clearSearch = () => {
   searchQuery.value = ''
-  imageStore.clearSearch()
+  // Don't reset search results until the user explicitly clicks Search or Reset
 }
 
-const applyFilters = () => {
-  performSearch(searchQuery.value)
+const resetSearch = async () => {
+  searchQuery.value = ''
+  await imageStore.resetSearch()
 }
-
-// Initialize from store
-searchQuery.value = imageStore.searchQuery
-if (imageStore.searchFilters) {
-  filters.pattern_type = imageStore.searchFilters.pattern_type || ''
-  filters.color = imageStore.searchFilters.color || ''
-  filters.style = imageStore.searchFilters.style || ''
-}
-sortMethod.value = imageStore.searchSort || 'relevance'
 </script>
 
 <style scoped>
 .search-container {
-  margin-bottom: 1rem;
-  width: 100%;
+  margin-bottom: var(--space-4);
+}
+
+.search-form {
+  display: flex;
+  gap: var(--space-2);
+  margin-bottom: var(--space-4);
 }
 
 .search-input-wrapper {
   position: relative;
-  width: 100%;
+  flex: 1;
   display: flex;
   align-items: center;
+}
+
+.search-icon {
+  position: absolute;
+  left: var(--space-3);
+  width: 20px;
+  height: 20px;
+  color: var(--color-text-light);
+  pointer-events: none;
 }
 
 .search-input {
-  width: 100%;
-  padding: 0.75rem 1rem;
+  flex: 1;
+  padding: var(--space-3) var(--space-3) var(--space-3) calc(var(--space-3) + 24px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
   font-size: 1rem;
-  border: 2px solid #ddd;
-  border-radius: 8px;
-  outline: none;
-  transition: border-color 0.3s ease;
+  transition: all var(--transition-fast);
+  background-color: var(--color-surface);
 }
 
 .search-input:focus {
-  border-color: #4CAF50;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1);
+  outline: none;
 }
 
-.search-spinner {
+.clear-search-button {
   position: absolute;
-  right: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
+  right: var(--space-3);
   width: 20px;
   height: 20px;
-  border: 2px solid #f3f3f3;
-  border-top: 2px solid #4CAF50;
-  border-radius: 50%;
-  animation: spin 1s linear infinite;
-}
-
-.clear-button {
-  position: absolute;
-  right: 1rem;
-  top: 50%;
-  transform: translateY(-50%);
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: #999;
-  cursor: pointer;
-  padding: 0;
-  line-height: 1;
-  width: 24px;
-  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  color: var(--color-text-light);
 }
 
-.clear-button:hover {
-  color: #555;
-  background-color: #f0f0f0;
+.clear-search-button:hover {
+  color: var(--color-text);
+  background: none;
+}
+
+.clear-search-button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.search-button {
+  padding: var(--space-3) var(--space-6);
+  background-color: var(--color-primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+
+.search-button:hover:not(:disabled) {
+  background-color: var(--color-primary-dark);
+}
+
+.search-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.search-options {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-2);
 }
 
 .search-filters {
   display: flex;
   flex-wrap: wrap;
-  gap: 1rem;
-  margin-top: 1rem;
+  gap: var(--space-4);
 }
 
 .filter-group {
   display: flex;
-  flex-direction: column;
-  min-width: 150px;
-}
-
-.filter-group label {
-  font-size: 0.8rem;
-  color: #666;
-  margin-bottom: 0.25rem;
-}
-
-.filter-group select {
-  padding: 0.5rem;
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  background-color: white;
-  font-size: 0.9rem;
-}
-
-.search-info {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
-  margin-top: 1rem;
-  font-size: 0.85rem;
-  color: #666;
-  padding: 0.5rem 0;
-  border-top: 1px solid #eee;
+  gap: var(--space-2);
 }
 
-.filter-indicators {
-  display: inline-flex;
-  gap: 0.5rem;
-  margin-left: 0.5rem;
-}
-
-.filter-tag {
-  background-color: #f0f0f0;
-  padding: 0.2rem 0.5rem;
-  border-radius: 4px;
-  font-size: 0.75rem;
-  color: #555;
-}
-
-.results-count {
+.filter-label {
+  font-size: 0.875rem;
   font-weight: 500;
-  color: #4CAF50;
+  color: var(--color-text-light);
 }
 
-@keyframes spin {
-  0% { transform: translateY(-50%) rotate(0deg); }
-  100% { transform: translateY(-50%) rotate(360deg); }
+.filter-buttons {
+  display: flex;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+}
+
+.filter-button {
+  padding: var(--space-2) var(--space-3);
+  background-color: var(--color-surface);
+  border: none;
+  color: var(--color-text-light);
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  border-right: 1px solid var(--color-border);
+}
+
+.filter-button:last-child {
+  border-right: none;
+}
+
+.filter-button.active {
+  background-color: var(--color-primary);
+  color: white;
+}
+
+.filter-button:hover:not(.active) {
+  background-color: var(--color-background);
+  transform: none;
+}
+
+.result-count-select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.search-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-light);
+  font-size: 0.875rem;
+}
+
+.search-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(79, 70, 229, 0.2);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
+}
+
+.search-results-info {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.result-count {
+  font-size: 0.875rem;
+  color: var(--color-text-light);
+}
+
+.reset-button {
+  padding: var(--space-1) var(--space-3);
+  background-color: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text);
+  font-size: 0.875rem;
+  border-radius: var(--radius-md);
+}
+
+.reset-button:hover {
+  background-color: var(--color-background);
+  color: var(--color-primary);
+  border-color: var(--color-primary-light);
+  transform: none;
 }
 
 @media (max-width: 768px) {
-  .search-filters {
+  .search-form {
     flex-direction: column;
-    gap: 0.5rem;
   }
   
-  .filter-group {
-    width: 100%;
+  .search-options {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+  
+  .search-filters {
+    flex-direction: column;
+    gap: var(--space-3);
   }
 }
 </style> 
