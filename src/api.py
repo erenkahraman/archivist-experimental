@@ -163,7 +163,7 @@ def upload_file():
 @app.route('/images', methods=['GET'])
 def get_images():
     try:
-        # Sadece geçerli metadata'yı döndür
+        # Only return valid metadata
         valid_metadata = {
             path: data for path, data in search_engine.metadata.items()
             if data and 'thumbnail_path' in data and 'patterns' in data
@@ -175,18 +175,13 @@ def get_images():
 @app.route('/search', methods=['POST'])
 def search():
     """
-    Enhanced search endpoint with advanced filtering options.
+    Search endpoint with simplified filtering options.
     
     Accepts the following parameters:
     - query: Main search query (required)
     - filters: Dictionary of filters to apply (optional)
       - pattern_type: Filter by pattern type
       - color: Filter by color
-      - style: Filter by style
-    - sort: Sort method (optional, default: 'relevance')
-      - 'relevance': Sort by search relevance
-      - 'newest': Sort by upload date (newest first)
-      - 'oldest': Sort by upload date (oldest first)
     - limit: Maximum number of results (optional, default: 50)
     """
     try:
@@ -194,11 +189,10 @@ def search():
         data = request.json or {}
         query = data.get('query', '').strip()
         filters = data.get('filters', {})
-        sort_method = data.get('sort', 'relevance')
         limit = min(int(data.get('limit', 50)), 100)  # Cap at 100 results
         
         # Log search request
-        print(f"Search request: query='{query}', filters={filters}, sort={sort_method}, limit={limit}")
+        logger.info(f"Search request: query='{query}', filters={filters}, limit={limit}")
         
         # Perform basic search
         results = search_engine.search(query, k=limit)
@@ -229,19 +223,6 @@ def search():
                         if not color_match:
                             matches_all_filters = False
                 
-                # Style filter
-                if 'style' in filters and filters['style']:
-                    style = filters['style'].lower()
-                    if 'patterns' in result and 'style' in result['patterns']:
-                        style_match = False
-                        for style_key, style_data in result['patterns']['style'].items():
-                            if isinstance(style_data, dict) and 'type' in style_data:
-                                if style in style_data['type'].lower():
-                                    style_match = True
-                                    break
-                        if not style_match:
-                            matches_all_filters = False
-                
                 # Add to filtered results if it matches all filters
                 if matches_all_filters:
                     filtered_results.append(result)
@@ -249,16 +230,11 @@ def search():
             # Replace results with filtered results
             results = filtered_results
         
-        # Apply sorting
-        if sort_method == 'newest':
-            results.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-        elif sort_method == 'oldest':
-            results.sort(key=lambda x: x.get('timestamp', 0))
-        
+        # Sort by similarity (already done by search_engine)
         return jsonify(results)
         
     except Exception as e:
-        print(f"Search error: {str(e)}")
+        logger.error(f"Search error: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500

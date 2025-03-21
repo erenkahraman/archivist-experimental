@@ -4,7 +4,6 @@ from flask_cors import CORS
 from pathlib import Path
 import os
 import config
-import time
 from .logging_config import configure_logging
 from .search_engine import SearchEngine
 import dotenv
@@ -29,7 +28,6 @@ logger = logging.getLogger(__name__)
 # Suppress less important logs
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
-logging.getLogger('transformers').setLevel(logging.WARNING)
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.WARNING)
 
@@ -78,7 +76,8 @@ def ensure_directories():
     directories = [
         config.UPLOAD_DIR,
         config.THUMBNAIL_DIR,
-        config.METADATA_DIR
+        config.METADATA_DIR,
+        Path(config.BASE_DIR) / "catalogs"  # Add catalogs directory for PantoneAnalyzer
     ]
     
     for directory in directories:

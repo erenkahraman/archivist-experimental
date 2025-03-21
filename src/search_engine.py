@@ -10,10 +10,8 @@ import time as import_time
 
 # Relative imports from the same package
 from .analyzers.color_analyzer import ColorAnalyzer
-from .search.searcher import ImageSearcher
-import config
-from .embedding_extractor import EmbeddingExtractor
 from .gemini_analyzer import GeminiAnalyzer
+import config
 
 # Configure logging
 logging.basicConfig(
@@ -30,15 +28,7 @@ class SearchEngine:
     def __init__(self, gemini_api_key=None):
         logger.info("Initializing SearchEngine...")
         try:
-            # Load models and move to GPU if available
-            logger.info("Loading CLIP model: openai/clip-vit-large-patch14")
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
-            logger.info("CLIP model loaded successfully")
-            self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-            logger.info("CLIP processor loaded successfully")
-            
-            # Initialize analyzers - securely pass API key without logging it
+            # Initialize analyzers with API key
             if gemini_api_key:
                 # Mask the key for logging
                 masked_key = self._mask_api_key(gemini_api_key)
@@ -47,10 +37,6 @@ class SearchEngine:
             # Initialize analyzers without storing the key in this class
             self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
-            self.searcher = ImageSearcher(self.model, self.processor, self.device)
-            
-            # Initialize embedding extractor
-            self.embedding_extractor = EmbeddingExtractor(self.model, self.processor, self.device)
             
             # Load existing metadata if available
             self.metadata = self.load_metadata()
@@ -61,7 +47,6 @@ class SearchEngine:
             raise
 
     def _mask_api_key(self, key):
-        """Safely mask API key for logging purposes."""
         if not key or len(key) < 8:
             return "INVALID_KEY"
         # Show only first 4 and last 4 characters
@@ -122,14 +107,13 @@ class SearchEngine:
             rel_image_path = image_path.relative_to(config.UPLOAD_DIR)
             rel_thumbnail_path = thumbnail_path.relative_to(config.THUMBNAIL_DIR)
             
-            # Extract image features for search
+            # Open the image for analysis
             image = Image.open(image_path).convert('RGB')
-            image_features = self.embedding_extractor.extract_image_features(image)
             
             # Convert to numpy array for color analysis
             image_np = np.array(image)
             
-            # Analyze colors
+            # Analyze colors using Gemini-based analyzer
             color_info = self.analyze_colors(image_np)
             
             # Use Gemini for pattern analysis
@@ -201,17 +185,56 @@ class SearchEngine:
             }
 
     def search(self, query: str, k: int = 10) -> List[Dict]:
-        """Search for images based on a text query."""
+        """Search for images based on a text query using text-based filtering."""
         try:
-            # Get image paths and features
-            image_paths = list(self.metadata.keys())
-            if not image_paths:
+            # Get all images from metadata
+            if not self.metadata:
                 return []
+
+            results = []
+            query_terms = query.lower().split()
             
-            # Perform search
-            results = self.searcher.search(query, image_paths, self.metadata, k)
+            for path, metadata in self.metadata.items():
+                # Initialize match score
+                score = 0
+                
+                # Check pattern matches
+                if 'patterns' in metadata:
+                    patterns = metadata['patterns']
+                    
+                    # Check category/primary pattern
+                    if 'category' in patterns:
+                        category = patterns['category'].lower()
+                        for term in query_terms:
+                            if term in category:
+                                score += 2
+                                
+                    # Check elements
+                    for element in patterns.get('elements', []):
+                        element_name = element.get('name', '').lower()
+                        for term in query_terms:
+                            if term in element_name:
+                                score += 1
+                
+                # Check color matches
+                if 'colors' in metadata:
+                    for color in metadata['colors'].get('dominant_colors', []):
+                        color_name = color.get('name', '').lower()
+                        for term in query_terms:
+                            if term in color_name:
+                                score += 1
+                
+                if score > 0:
+                    # Add metadata with score
+                    results.append({
+                        **metadata,
+                        'similarity': min(score / (len(query_terms) * 2), 1.0)  # Normalize to 0-1
+                    })
             
-            return results
+            # Sort by score
+            results.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            return results[:k]
         except Exception as e:
             logger.error(f"Error in search: {e}")
             return []

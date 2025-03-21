@@ -7,15 +7,15 @@
         :key="color.hex"
         class="color-item"
       >
-        <div class="color-percentage">
-          {{ (color.proportion * 100).toFixed(1) }}%
-        </div>
         <div 
           class="color-preview" 
           :style="{ backgroundColor: color.hex }"
         ></div>
         <div class="color-info">
           <div class="color-name">{{ color.name }}</div>
+        </div>
+        <div class="color-percentage">
+          {{ (color.proportion * 100).toFixed(1) }}%
         </div>
       </div>
     </div>
@@ -46,6 +46,7 @@ const props = defineProps({
   background: #f8f9fa;
   border-radius: 8px;
   position: relative;
+  padding-bottom: 30px;
 }
 
 .color-info {
@@ -62,6 +63,10 @@ const props = defineProps({
   overflow-wrap: break-word;
   hyphens: auto;
   line-height: 1.3;
+  padding: 4px 8px;
+  background-color: rgba(255, 255, 255, 0.8);
+  border-radius: 6px;
+  max-width: calc(100% - 10px);
 }
 
 .color-percentage {
