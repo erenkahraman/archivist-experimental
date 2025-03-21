@@ -36,7 +36,9 @@ werkzeug_logger.setLevel(logging.WARNING)
 # Get Gemini API key from environment variable
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if GEMINI_API_KEY:
-    logger.info("Gemini API key found in environment variables")
+    # Mask API key for secure logging
+    masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
+    logger.info(f"Gemini API key found in environment variables: {masked_key}")
 else:
     logger.warning("No Gemini API key found in environment variables")
     GEMINI_API_KEY = None  # Don't use a default key

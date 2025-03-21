@@ -10,4 +10,5 @@ python-dotenv==0.19.2
 google-generativeai==0.3.1
 celery==5.2.3
 redis==4.1.0
-werkzeug==2.0.2 
+werkzeug==2.0.2
+opencv-python==4.7.0.72 

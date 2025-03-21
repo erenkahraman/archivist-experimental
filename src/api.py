@@ -8,6 +8,12 @@ import config
 from werkzeug.exceptions import BadRequest
 import dotenv
 import logging
+from .analyzers.pantone_analyzer import PantoneAnalyzer
+import time
+import uuid
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -19,9 +25,19 @@ app = Blueprint('api', __name__)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     logger.warning("No Gemini API key found in environment variables")
+else:
+    # Mask API key for secure logging
+    masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
+    logger.info(f"Using Gemini API key: {masked_key}")
 
 # Initialize search engine with Gemini API key
 search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
+
+# Ensure we don't keep the raw API key in memory
+GEMINI_API_KEY = None
+
+# Initialize Pantone analyzer
+pantone_analyzer = PantoneAnalyzer()
 
 # Configure upload folder
 UPLOAD_FOLDER = Path(__file__).parent.parent / "uploads"
@@ -59,65 +75,89 @@ def set_gemini_key():
             
         api_key = data['api_key']
         
+        if not api_key or len(api_key.strip()) == 0:
+            return jsonify({'error': 'API key cannot be empty'}), 400
+            
+        # Log securely with masked key
+        masked_key = api_key[:4] + "..." + api_key[-4:] if len(api_key) >= 8 else "INVALID_KEY"
+        logger.info(f"Setting new Gemini API key: {masked_key}")
+        
         # Update the API key in the search engine
         search_engine.set_gemini_api_key(api_key)
         
+        # Don't keep the key in memory
+        api_key = None
+        
         return jsonify({'status': 'success', 'message': 'Gemini API key updated successfully'}), 200
     except Exception as e:
-        return jsonify({'error': str(e)}), 500
+        logger.error(f"Error setting Gemini API key: {str(e)}")
+        return jsonify({'error': 'Failed to update API key'}), 500
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
     """
     Handle file upload with proper validation and error handling.
     
+    Expects:
+        - file: The image file to upload
+        
     Returns:
-        JSON response with metadata or error
+        JSON response with metadata
     """
     try:
+        # Check if the post request has the file part
         if 'file' not in request.files:
-            raise BadRequest('No file part')
+            logger.error("No file part in request")
+            return jsonify({'error': 'No file part'}), 400
             
         file = request.files['file']
-        if not file or not file.filename:
-            raise BadRequest('No selected file')
+        
+        # If user does not select file, browser also
+        # submit an empty part without filename
+        if file.filename == '':
+            logger.error("No selected file")
+            return jsonify({'error': 'No selected file'}), 400
             
-        if not allowed_file(file.filename):
-            raise BadRequest('File type not allowed')
-
-        # Create a secure filename
-        filename = secure_filename(file.filename)
-        file_path = config.UPLOAD_DIR / filename
-
-        # Check if file already exists
-        if file_path.exists():
-            # Add timestamp to filename to make it unique
+        if file and allowed_file(file.filename):
+            # Generate a unique filename to avoid collisions
+            import uuid
             import time
-            timestamp = int(time.time())
-            name, ext = os.path.splitext(filename)
-            filename = f"{name}_{timestamp}{ext}"
-            file_path = config.UPLOAD_DIR / filename
-
-        # Save the file
-        file.save(str(file_path))
-        print(f"File saved to: {file_path}")
-
-        # Process image
-        metadata = search_engine.process_image(file_path)
-        if metadata is None:
-            # If processing failed, try to remove the file
-            try:
-                os.remove(str(file_path))
-            except:
-                pass
-            return jsonify({'error': 'Failed to process image'}), 500
-
-        return jsonify(metadata), 200
-
+            
+            # Get file extension
+            ext = os.path.splitext(file.filename)[1].lower()
+            
+            # Create a unique filename with timestamp
+            unique_filename = f"{uuid.uuid4()}_{int(time.time())}{ext}"
+            
+            # Save the file
+            file_path = config.UPLOAD_DIR / unique_filename
+            file.save(file_path)
+            
+            logger.info(f"File saved to: {file_path}")
+            
+            # Process the image
+            metadata = search_engine.process_image(file_path)
+            
+            if metadata:
+                # Ensure the metadata has the correct path
+                if 'original_path' not in metadata or not metadata['original_path']:
+                    metadata['original_path'] = str(file_path)
+                
+                # Also add a relative path for frontend use
+                if 'path' not in metadata:
+                    metadata['path'] = f"uploads/{unique_filename}"
+                
+                logger.info(f"Image processed successfully: {metadata.get('original_path')}")
+                return jsonify(metadata), 200
+            else:
+                logger.error(f"Failed to process image: {file_path}")
+                return jsonify({'error': 'Failed to process image'}), 500
+        else:
+            logger.error(f"Invalid file type: {file.filename}")
+            return jsonify({'error': 'Invalid file type'}), 400
     except Exception as e:
         print(f"Upload error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Upload error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @app.route('/images', methods=['GET'])
@@ -256,6 +296,236 @@ def generate_prompt():
             'image_path': image_path
         }), 200
     except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/pantone/catalogs', methods=['GET'])
+def get_pantone_catalogs():
+    """
+    Get list of available Pantone catalogs
+    
+    Returns:
+        JSON response with catalog names
+    """
+    try:
+        catalogs = pantone_analyzer.get_available_catalogs()
+        return jsonify({
+            'status': 'success',
+            'catalogs': catalogs
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting Pantone catalogs: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/pantone/catalogs/info', methods=['GET'])
+def get_pantone_catalogs_info():
+    """
+    Get detailed information about available Pantone catalogs
+    
+    Returns:
+        JSON response with detailed catalog information
+    """
+    try:
+        catalog_info = pantone_analyzer.get_catalog_info()
+        return jsonify({
+            'status': 'success',
+            'catalog_info': catalog_info
+        }), 200
+    except Exception as e:
+        logger.error(f"Error getting Pantone catalog info: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/pantone/upload-catalog', methods=['POST'])
+def upload_pantone_catalog():
+    """
+    Upload a new Pantone catalog file
+    
+    Expects:
+        - file: The catalog file (.cat format)
+        - catalog_name: (Optional) Name for the catalog
+        
+    Returns:
+        JSON response with upload status
+    """
+    try:
+        if 'file' not in request.files:
+            return jsonify({'error': 'No file part'}), 400
+            
+        file = request.files['file']
+        if not file or not file.filename:
+            return jsonify({'error': 'No selected file'}), 400
+            
+        if not file.filename.endswith('.cat'):
+            return jsonify({'error': 'Invalid file format. Only .cat files are supported'}), 400
+
+        # Create catalogs directory if it doesn't exist
+        catalogs_dir = Path(__file__).parent.parent / "catalogs"
+        catalogs_dir.mkdir(exist_ok=True)
+        
+        # Create a secure filename
+        filename = secure_filename(file.filename)
+        temp_file_path = catalogs_dir / f"temp_{int(time.time())}_{filename}"
+        
+        # Save the file to a temporary location first
+        file.save(temp_file_path)
+        logger.info(f"Saved catalog file to temporary location: {temp_file_path}")
+        
+        # Get catalog name from form data or use filename
+        catalog_name = request.form.get('catalog_name')
+        if not catalog_name:
+            catalog_name = os.path.splitext(filename)[0]
+        
+        logger.info(f"Processing catalog: {catalog_name}")
+            
+        # Process the catalog
+        result = pantone_analyzer.upload_catalog(str(temp_file_path), catalog_name)
+        
+        # Clean up the temporary file
+        try:
+            os.remove(temp_file_path)
+        except Exception as e:
+            logger.warning(f"Failed to remove temporary file {temp_file_path}: {str(e)}")
+        
+        if result.get('success'):
+            return jsonify({
+                'status': 'success',
+                'message': result.get('message', f'Catalog uploaded successfully: {catalog_name}'),
+                'catalog_name': catalog_name,
+                'colors_count': result.get('colors_count', 0)
+            }), 200
+        else:
+            logger.error(f"Failed to process catalog: {result.get('error')}")
+            return jsonify({
+                'status': 'error',
+                'message': result.get('error', 'Failed to process catalog')
+            }), 400
+            
+    except Exception as e:
+        logger.error(f"Error in upload_pantone_catalog: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/pantone/convert', methods=['POST'])
+def convert_to_pantone():
+    """
+    Convert RGB colors to Pantone colors
+    
+    Expects:
+        - colors: List of RGB colors to convert
+        - catalog_name: (Optional) Name of catalog to use
+        
+    Returns:
+        JSON response with Pantone color matches
+    """
+    try:
+        data = request.json
+        if not data or 'colors' not in data:
+            return jsonify({'error': 'Colors are required'}), 400
+            
+        colors = data['colors']
+        catalog_name = data.get('catalog_name')
+        
+        # Convert colors to Pantone
+        result = pantone_analyzer.analyze_colors(colors, catalog_name)
+        
+        return jsonify({
+            'status': 'success',
+            'colors': result
+        }), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/pantone/analyze-image/<path:image_path>', methods=['GET'])
+def analyze_image_pantone(image_path):
+    """
+    Analyze an image and convert its dominant colors to Pantone
+    
+    Expects:
+        - image_path: Path to the image
+        - catalog_name: (Optional) Name of catalog to use (query parameter)
+        
+    Returns:
+        JSON response with Pantone color matches
+    """
+    try:
+        # Check if image_path is valid
+        if not image_path or image_path == 'undefined':
+            logger.error(f"Invalid image path: {image_path}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Invalid image path. Please select a valid image.'
+            }), 400
+            
+        catalog_name = request.args.get('catalog_name')
+        
+        # Log the request
+        logger.info(f"Analyzing image for Pantone colors: {image_path}, catalog: {catalog_name or 'All catalogs'}")
+        
+        # Fix the image path if it doesn't include the full path
+        # If the path doesn't start with the expected directory structure, prepend it
+        if not image_path.startswith('/'):
+            # Ensure the path has the correct format
+            if not image_path.startswith('Users/'):
+                # Check if the path is just a filename
+                if '/' not in image_path:
+                    # Try to find the file in the uploads directory
+                    possible_paths = [
+                        f"Users/erenkahraman/Desktop/code/archivist-experimental/uploads/{image_path}",
+                        f"uploads/{image_path}",
+                        image_path
+                    ]
+                    
+                    # Try each path until we find one that works
+                    for path in possible_paths:
+                        logger.info(f"Trying path: {path}")
+                        metadata = search_engine.get_image_metadata(path)
+                        if metadata and 'colors' in metadata:
+                            image_path = path
+                            logger.info(f"Found valid path: {image_path}")
+                            break
+                else:
+                    image_path = f"Users/erenkahraman/Desktop/code/archivist-experimental/uploads/{os.path.basename(image_path)}"
+            
+        logger.info(f"Using normalized image path: {image_path}")
+        
+        # Get image metadata
+        metadata = search_engine.get_image_metadata(image_path)
+        if not metadata or 'colors' not in metadata:
+            logger.error(f"Image colors not found for: {image_path}")
+            return jsonify({
+                'status': 'error',
+                'message': 'Image colors not found. The image may not exist or has not been processed.'
+            }), 404
+            
+        # Get dominant colors
+        colors = metadata['colors'].get('dominant_colors', [])
+        if not colors:
+            logger.error(f"No dominant colors found for image: {image_path}")
+            return jsonify({'error': 'No dominant colors found in image'}), 404
+            
+        # Check if the specified catalog exists
+        if catalog_name and catalog_name not in pantone_analyzer.get_available_catalogs():
+            logger.error(f"Specified catalog not found: {catalog_name}")
+            return jsonify({
+                'status': 'error',
+                'message': f"Catalog '{catalog_name}' not found. Available catalogs: {', '.join(pantone_analyzer.get_available_catalogs())}"
+            }), 400
+        
+        # Convert to Pantone
+        pantone_colors = pantone_analyzer.analyze_colors(colors, catalog_name)
+        
+        logger.info(f"Converted {len(colors)} colors to Pantone using catalog: {catalog_name or 'All catalogs'}")
+        
+        return jsonify({
+            'status': 'success',
+            'image_path': image_path,
+            'pantone_colors': pantone_colors,
+            'catalog_used': catalog_name or 'All catalogs'
+        }), 200
+    except Exception as e:
+        logger.error(f"Error in analyze_image_pantone: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 # Basic test route
