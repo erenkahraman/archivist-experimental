@@ -2,9 +2,10 @@
 
 # Gemini API configuration
 GEMINI_CONFIG = {
-    'model': 'gemini-1.5-flash',  # Using the fastest, most token-efficient model
-    'max_tokens': 800,            # Reduced token count for efficiency
-    'temperature': 0.2            # Lower temperature for more consistent results
+    'model': 'gemini-1.5-flash',
+    'max_tokens': 1000,
+    'temperature': 0.2,
+    'response_mime_type': 'application/json'
 }
 
 # Image size for thumbnails

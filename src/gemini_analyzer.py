@@ -64,11 +64,28 @@ class GeminiAnalyzer:
                 logger.error("Gemini API key not set")
                 return self._get_default_response()
             
-            # Load the image
+            # Load the image and resize for token efficiency
             image = Image.open(image_path)
             
             # Get image dimensions
             width, height = image.size
+            
+            # Resize to smaller dimensions for token efficiency
+            max_dim = 220
+            if width > max_dim or height > max_dim:
+                if width > height:
+                    new_width = max_dim
+                    new_height = int(height * (max_dim / width))
+                else:
+                    new_height = max_dim
+                    new_width = int(width * (max_dim / height))
+                image = image.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to JPEG with compression for token reduction
+            buffer = io.BytesIO()
+            image.convert('RGB').save(buffer, format="JPEG", quality=75)
+            buffer.seek(0)
+            optimized_image = Image.open(buffer)
             
             # Get file name from path
             file_name = os.path.basename(image_path)
@@ -164,36 +181,43 @@ class GeminiAnalyzer:
                 "final_prompt": "A detailed, coherent description of the pattern"
               }
             }
-            """ #
+            """
             
             # Configure the model
             model = genai.GenerativeModel(
                 model_name=GEMINI_CONFIG['model'],
                 generation_config={
                     "max_output_tokens": GEMINI_CONFIG['max_tokens'],
-                    "temperature": GEMINI_CONFIG['temperature']
+                    "temperature": GEMINI_CONFIG['temperature'],
+                    "response_mime_type": GEMINI_CONFIG.get('response_mime_type', 'application/json')
                 }
             )
             
             # Generate content with the image
-            response = model.generate_content([prompt, image])
+            response = model.generate_content([prompt, optimized_image])
             
             # Extract and parse the JSON response
             result_text = response.text
-            # Find JSON content in the response (it might be wrapped in markdown code blocks)
+            
+            # Try to find JSON within the response
             json_start = result_text.find('{')
             json_end = result_text.rfind('}') + 1
+            
             if json_start >= 0 and json_end > json_start:
                 json_content = result_text[json_start:json_end]
                 try:
+                    # Parse JSON and validate result
                     result = json.loads(json_content)
+                    
                     # Add image metadata
                     result["dimensions"] = {"width": width, "height": height}
                     result["original_path"] = image_path
-                    # Ensure the result has all required fields
+                    
+                    # Validate and fix result
                     return self._validate_and_fix_response(result)
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse JSON from Gemini response")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse JSON from Gemini response: {str(e)}")
+                    logger.error(f"JSON content attempted to parse: {json_content[:100]}...")
                     return self._get_default_response(image_path, width, height)
             else:
                 logger.error("No JSON found in Gemini response")

@@ -107,16 +107,25 @@ class SearchEngine:
             rel_image_path = image_path.relative_to(config.UPLOAD_DIR)
             rel_thumbnail_path = thumbnail_path.relative_to(config.THUMBNAIL_DIR)
             
-            # Open the image for analysis
+            # Open the image for analysis - use a lower resolution for analysis
             image = Image.open(image_path).convert('RGB')
+            
+            # Resize for faster processing if image is large
+            width, height = image.size
+            target_pixels = 100_000  # Target pixel count for analysis
+            if width * height > target_pixels:
+                ratio = (target_pixels / (width * height)) ** 0.5
+                new_width = int(width * ratio)
+                new_height = int(height * ratio)
+                image = image.resize((new_width, new_height), Image.LANCZOS)
             
             # Convert to numpy array for color analysis
             image_np = np.array(image)
             
-            # Analyze colors using Gemini-based analyzer
+            # First perform color analysis since it can be done locally
             color_info = self.analyze_colors(image_np)
             
-            # Use Gemini for pattern analysis
+            # Then use Gemini for pattern analysis
             pattern_info = self.gemini_analyzer.analyze_image(str(image_path))
             
             # Ensure pattern_info has the required fields

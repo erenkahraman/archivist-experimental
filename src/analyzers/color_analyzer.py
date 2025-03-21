@@ -201,7 +201,7 @@ class ColorAnalyzer:
             
             # Downsize the image for faster processing 
             h, w = image.shape[:2]
-            target_pixels = 100_000  # Reduced resolution to save tokens
+            target_pixels = 60_000  # Further reduced resolution to save tokens
             scale = min(1.0, np.sqrt(target_pixels / (h * w)))
             if scale < 1.0:
                 new_h, new_w = int(h * scale), int(w * scale)
@@ -211,8 +211,8 @@ class ColorAnalyzer:
             # Only use Gemini for complex, high-color-variety images
             local_result = self._quick_color_check(image)
             
-            # If the image has simple colors, just use local processing
-            if local_result.get('color_complexity', 1.0) < 0.4:
+            # Lower threshold to use local processing more often
+            if local_result.get('color_complexity', 1.0) < 0.55:
                 logger.info("Image has simple color palette, using local analysis to save tokens")
                 return self._precision_color_analysis(image)
             
@@ -358,7 +358,7 @@ class ColorAnalyzer:
         """Analyze colors using Google's Gemini API with token-optimized prompting."""
         try:
             # Further reduce image size to minimize tokens while keeping quality
-            max_dim = 300  # Smaller image = fewer tokens
+            max_dim = 200  # Even smaller image = fewer tokens
             width, height = image.size
             if width > max_dim or height > max_dim:
                 if width > height:
@@ -369,9 +369,9 @@ class ColorAnalyzer:
                     new_width = int(width * (max_dim / height))
                 image = image.resize((new_width, new_height), Image.LANCZOS)
             
-            # Convert to JPEG with moderate compression to reduce size further
+            # Convert to JPEG with higher compression to reduce size further
             buffer = io.BytesIO()
-            image.convert('RGB').save(buffer, format="JPEG", quality=85)
+            image.convert('RGB').save(buffer, format="JPEG", quality=75)
             buffer.seek(0)
             optimized_image = Image.open(buffer)
             
@@ -397,8 +397,9 @@ class ColorAnalyzer:
             model = genai.GenerativeModel(
                 model_name="gemini-1.5-flash",  # Lowest-cost Gemini model
                 generation_config={
-                    "max_output_tokens": 800,
-                    "temperature": 0.1
+                    "max_output_tokens": 600,
+                    "temperature": 0.0,
+                    "response_mime_type": "application/json"  # Explicitly request JSON response
                 }
             )
             
@@ -418,11 +419,11 @@ class ColorAnalyzer:
                     enhanced_result = self._enhance_gemini_result(result, image)
                     return enhanced_result
                 except json.JSONDecodeError:
-                    logger.error("Failed to parse JSON from Gemini response")
-                    return None
+                    logger.error("Failed to parse JSON from Gemini response, falling back to local analysis")
+                    return self._precision_color_analysis(np.array(image))
             else:
-                logger.error("No JSON found in Gemini response")
-                return None
+                logger.error("No JSON found in Gemini response, falling back to local analysis")
+                return self._precision_color_analysis(np.array(image))
                 
         except Exception as e:
             logger.error(f"Error in Gemini color analysis: {str(e)}")
