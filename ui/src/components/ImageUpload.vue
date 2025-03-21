@@ -150,6 +150,12 @@ const uploadSingleFile = async (file) => {
         if (xhr.status >= 200 && xhr.status < 300) {
           try {
             const metadata = JSON.parse(xhr.responseText)
+            console.log('Received metadata from server:', metadata)
+            
+            // Ensure the metadata has a valid path
+            if (!metadata.original_path && metadata.path) {
+              metadata.original_path = metadata.path
+            }
             
             // Replace temp image with actual metadata
             const index = imageStore.images.findIndex(img => 
@@ -157,15 +163,36 @@ const uploadSingleFile = async (file) => {
             )
             
             if (index !== -1) {
-              imageStore.images[index] = { ...metadata, isUploading: false }
+              // Log the path information for debugging
+              console.log('Image path before update:', imageStore.images[index].original_path)
+              console.log('New image path:', metadata.original_path || metadata.path || 'undefined')
+              
+              // Update the image with the new metadata
+              imageStore.images[index] = { 
+                ...metadata, 
+                isUploading: false,
+                // Ensure we have a valid path
+                original_path: metadata.original_path || metadata.path || `uploads/${file.name}`
+              }
+              
+              console.log('Updated image in store:', imageStore.images[index])
             }
             
             resolve(metadata)
           } catch (error) {
+            console.error('Error parsing server response:', error, xhr.responseText)
             reject(new Error('Invalid response format'))
           }
         } else {
-          reject(new Error(`Upload failed with status ${xhr.status}`))
+          let errorMessage = 'Upload failed'
+          try {
+            const errorData = JSON.parse(xhr.responseText)
+            errorMessage = errorData.error || `Upload failed with status ${xhr.status}`
+          } catch (e) {
+            errorMessage = `Upload failed with status ${xhr.status}`
+          }
+          console.error(errorMessage)
+          reject(new Error(errorMessage))
         }
       }
       

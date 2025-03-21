@@ -1,7 +1,7 @@
 <template>
   <div class="app-container">
     <div class="top-bar">
-      <h1 class="app-title">Pattern Archivist</h1>
+      <h1 class="app-title">Archivist Experimental</h1>
       <div class="controls">
         <ImageUpload />
         <SearchBar />
