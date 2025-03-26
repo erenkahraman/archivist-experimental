@@ -12,6 +12,8 @@ import os
 # Relative imports from the same package
 from .analyzers.color_analyzer import ColorAnalyzer
 from .gemini_analyzer import GeminiAnalyzer
+from .search.elasticsearch_client import ElasticsearchClient
+from .utils.cache import SearchCache
 import config
 
 # Configure logging
@@ -39,13 +41,68 @@ class SearchEngine:
             self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
             
+            # Initialize Elasticsearch client
+            self.use_elasticsearch = self._init_elasticsearch()
+            
+            # Initialize Redis cache
+            self.cache = SearchCache()
+            
             # Load existing metadata if available
             self.metadata = self.load_metadata()
+            
+            # If using Elasticsearch, ensure all metadata is indexed
+            if self.use_elasticsearch and self.metadata:
+                self._index_all_metadata()
             
             logger.info("SearchEngine initialization completed")
         except Exception as e:
             logger.error(f"Error initializing SearchEngine: {e}")
             raise
+
+    def _init_elasticsearch(self) -> bool:
+        """Initialize Elasticsearch client and check connection"""
+        try:
+            # Initialize Elasticsearch client
+            self.es_client = ElasticsearchClient(
+                hosts=config.ELASTICSEARCH_HOSTS,
+                cloud_id=config.ELASTICSEARCH_CLOUD_ID,
+                api_key=config.ELASTICSEARCH_API_KEY,
+                username=config.ELASTICSEARCH_USERNAME,
+                password=config.ELASTICSEARCH_PASSWORD
+            )
+            
+            # Check if connected
+            if self.es_client.is_connected():
+                logger.info("Successfully connected to Elasticsearch")
+                
+                # Create index if it doesn't exist
+                self.es_client.create_index()
+                return True
+            else:
+                logger.warning("Failed to connect to Elasticsearch, using in-memory search instead")
+                return False
+        except Exception as e:
+            logger.error(f"Error initializing Elasticsearch: {e}")
+            return False
+
+    def _index_all_metadata(self):
+        """Index all metadata into Elasticsearch"""
+        try:
+            if not self.metadata:
+                logger.info("No metadata to index")
+                return
+                
+            # Collect all metadata as documents
+            documents = list(self.metadata.values())
+            
+            # Bulk index documents
+            result = self.es_client.bulk_index(documents)
+            if result:
+                logger.info(f"Successfully indexed {len(documents)} documents in Elasticsearch")
+            else:
+                logger.error("Failed to index documents in Elasticsearch")
+        except Exception as e:
+            logger.error(f"Error indexing metadata: {e}")
 
     def _mask_api_key(self, key):
         if not key or len(key) < 8:
@@ -147,9 +204,13 @@ class SearchEngine:
                 'timestamp': import_time.time()
             }
             
-            # Store metadata
+            # Store metadata in memory
             self.metadata[str(rel_image_path)] = metadata
             self.save_metadata()
+            
+            # Index in Elasticsearch if enabled
+            if self.use_elasticsearch:
+                self.es_client.index_document(metadata)
             
             logger.info(f"Image processed successfully: {image_path}")
             return metadata
@@ -197,6 +258,53 @@ class SearchEngine:
     def search(self, query: str, k: int = 10) -> List[Dict]:
         """
         Advanced search for images based on pattern, color, and other metadata.
+        If Elasticsearch is enabled, use it for search, otherwise fall back to in-memory search.
+        Results are cached if Redis is available.
+        
+        Args:
+            query: Search query string (can include commas to separate distinct terms)
+            k: Maximum number of results to return
+            
+        Returns:
+            List of image metadata dictionaries with similarity scores
+        """
+        min_similarity = config.DEFAULT_MIN_SIMILARITY
+        
+        # Check cache first if enabled
+        cached_results = self.cache.get(query, k, min_similarity)
+        if cached_results is not None:
+            logger.info(f"Returning cached results for query: '{query}'")
+            return cached_results
+        
+        # Cache miss, perform search
+        if self.use_elasticsearch:
+            logger.info(f"Using Elasticsearch for search: '{query}'")
+            try:
+                results = self.es_client.search(
+                    query=query, 
+                    limit=k,
+                    min_similarity=min_similarity
+                )
+                
+                # Cache the results
+                self.cache.set(query, k, min_similarity, results)
+                
+                return results
+            except Exception as e:
+                logger.error(f"Elasticsearch search failed, falling back to in-memory search: {e}")
+        
+        # Fall back to in-memory search
+        logger.info(f"Using in-memory search: '{query}'")
+        results = self._in_memory_search(query, k)
+        
+        # Cache the results
+        self.cache.set(query, k, min_similarity, results)
+        
+        return results
+    
+    def _in_memory_search(self, query: str, k: int = 10) -> List[Dict]:
+        """
+        Original in-memory search implementation as fallback.
         Supports compound queries with comma-separated terms like 'red paisley, flower'
         as well as space-separated terms like 'red paisley'.
         Results are sorted by relevance to the query.
@@ -452,30 +560,76 @@ class SearchEngine:
             logger.error(f"Error in search: {e}", exc_info=True)
             return []
 
+    def delete_image(self, image_path: str) -> bool:
+        """
+        Delete image metadata and remove from Elasticsearch if enabled.
+        Invalidates the cache to ensure consistency.
+        
+        Args:
+            image_path: Path to the image to delete (relative to upload dir)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Remove from in-memory metadata
+            if image_path in self.metadata:
+                metadata = self.metadata.pop(image_path)
+                self.save_metadata()
+                
+                # Remove from Elasticsearch if enabled
+                if self.use_elasticsearch:
+                    doc_id = metadata.get("id", image_path)
+                    self.es_client.delete_document(doc_id)
+                    
+                # Invalidate cache
+                self.cache.invalidate_all()
+                    
+                logger.info(f"Deleted image metadata: {image_path}")
+                return True
+            else:
+                logger.warning(f"Image not found in metadata: {image_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting image: {e}")
+            return False
+            
+    def update_image_metadata(self, image_path: str, new_metadata: Dict[str, Any]) -> bool:
+        """
+        Update image metadata and in Elasticsearch if enabled.
+        Invalidates the cache to ensure consistency.
+        
+        Args:
+            image_path: Path to the image to update (relative to upload dir)
+            new_metadata: New metadata to apply
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Update in-memory metadata
+            if image_path in self.metadata:
+                # Merge new metadata with existing metadata
+                self.metadata[image_path].update(new_metadata)
+                self.save_metadata()
+                
+                # Update in Elasticsearch if enabled
+                if self.use_elasticsearch:
+                    doc_id = self.metadata[image_path].get("id", image_path)
+                    self.es_client.update_document(doc_id, self.metadata[image_path])
+                    
+                # Invalidate cache
+                self.cache.invalidate_all()
+                    
+                logger.info(f"Updated image metadata: {image_path}")
+                return True
+            else:
+                logger.warning(f"Image not found in metadata: {image_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating image metadata: {e}")
+            return False
+            
     def get_image_metadata(self, image_path: str) -> Dict[str, Any]:
         """Get metadata for a specific image."""
-        try:
-            # Normalize the path format to match what's stored in metadata
-            norm_path = str(image_path).replace("\\", "/")
-            
-            # Try direct match first
-            if norm_path in self.metadata:
-                return self.metadata[norm_path]
-            
-            # Try with just the filename
-            filename = os.path.basename(norm_path)
-            for path, meta in self.metadata.items():
-                if os.path.basename(path) == filename:
-                    return meta
-            
-            # Try to match with relative path
-            for path, meta in self.metadata.items():
-                if path.endswith(norm_path) or norm_path.endswith(path):
-                    return meta
-            
-            logger.warning(f"No metadata found for image: {image_path}")
-            return {}
-            
-        except Exception as e:
-            logger.error(f"Error getting image metadata: {e}")
-            return {} 
+        return self.metadata.get(image_path, None) 
