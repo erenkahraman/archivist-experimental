@@ -49,10 +49,18 @@ def create_app():
         r"/*": {
             "origins": ["http://localhost:3000"],
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type"],
-            "supports_credentials": True
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+            "expose_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True,
+            "max_age": 86400
         }
     })
+    
+    # Add CORS preflight route handler for all routes
+    @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+    @app.route('/<path:path>', methods=['OPTIONS'])
+    def options_handler(path):
+        return '', 200
     
     # Add a root route
     @app.route('/')

@@ -172,7 +172,16 @@ const selectedImage = ref(null)
 const showDeleteConfirm = ref(false)
 const imageToDelete = ref(null)
 
-const images = computed(() => imageStore.images || [])
+const images = computed(() => {
+  if (!imageStore.images) return []
+  
+  // Sort images by timestamp in descending order (newest first)
+  return [...imageStore.images].sort((a, b) => {
+    const timeA = a.timestamp || 0
+    const timeB = b.timestamp || 0
+    return timeB - timeA
+  })
+})
 const loading = computed(() => imageStore.loading)
 const searchActive = computed(() => imageStore.searchQuery !== '')
 
@@ -283,18 +292,44 @@ const handleImageClick = (image) => {
 }
 
 const confirmDelete = (image) => {
+  console.log("Confirm delete called with image:", image)
+  if (image && image.original_path) {
+    console.log("Image has valid path:", image.original_path)
+  } else {
+    console.warn("Image is missing original_path:", image)
+  }
   imageToDelete.value = image
   showDeleteConfirm.value = true
 }
 
 const handleDelete = async () => {
-  if (imageToDelete.value) {
-    await imageStore.deleteImage(imageToDelete.value.original_path)
+  if (!imageToDelete.value) {
+    console.error("Cannot delete: Image is undefined")
+    showDeleteConfirm.value = false
+    return
+  }
+
+  // Try to find a valid path using the same logic as getImageName
+  const image = imageToDelete.value
+  const path = image.original_path || image.file_path || image.image_path || 
+              image.path || image.thumbnail_path
+
+  if (path) {
+    try {
+      console.log("Deleting image with path:", path)
+      await imageStore.deleteImage(path)
+      showDeleteConfirm.value = false
+      imageToDelete.value = null
+      if (selectedImage.value === imageToDelete.value) {
+        selectedImage.value = null
+      }
+    } catch (error) {
+      console.error("Failed to delete image:", error)
+    }
+  } else {
+    console.error("Cannot delete: Image path is undefined")
     showDeleteConfirm.value = false
     imageToDelete.value = null
-    if (selectedImage.value === imageToDelete.value) {
-      selectedImage.value = null
-    }
   }
 }
 

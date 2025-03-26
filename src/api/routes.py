@@ -292,6 +292,42 @@ def generate_prompt():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@api.route('/delete/<path:filename>', methods=['DELETE', 'OPTIONS'])
+def delete_image(filename):
+    """Delete an image and its associated metadata"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        logger.info(f"Deleting image: {filename}")
+        
+        # Look for the file in uploads directory
+        file_path = config.UPLOAD_DIR / filename
+        thumbnail_path = config.THUMBNAIL_DIR / filename
+        
+        # Delete files if they exist
+        if file_path.exists():
+            os.remove(file_path)
+            logger.info(f"Deleted file: {file_path}")
+            
+        if thumbnail_path.exists():
+            os.remove(thumbnail_path)
+            logger.info(f"Deleted thumbnail: {thumbnail_path}")
+            
+        # Remove metadata if it exists
+        if filename in search_engine.metadata:
+            del search_engine.metadata[filename]
+            logger.info(f"Removed metadata for: {filename}")
+            
+        # Save metadata
+        search_engine.save_metadata()
+        
+        return jsonify({'status': 'success'}), 200
+    except Exception as e:
+        logger.error(f"Delete error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 # Basic test route
 @api.route('/')
 def home():

@@ -75,19 +75,28 @@ export const useImageStore = defineStore('images', () => {
     try {
       error.value = null
       
+      // Check if filepath is undefined or null
+      if (!filepath) {
+        throw new Error('Invalid filepath: filepath is undefined or null')
+      }
+      
       // Extract just the filename from the path
-      const filename = filepath.split('/').pop()
+      let filename = filepath.split('/').pop()
+      console.log("Deleting file with filename:", filename)
+      
       const response = await fetch(`${API_BASE_URL}/delete/${encodeURIComponent(filename)}`, {
         method: 'DELETE'
       })
       
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}))
-        throw new Error(errorData.error || 'Delete failed')
+        throw new Error('Delete failed')
       }
       
       // Remove the deleted image from the store
-      images.value = images.value.filter(img => img.original_path !== filepath)
+      images.value = images.value.filter(img => {
+        const imgFilename = (img.path || img.thumbnail_path || '').split('/').pop()
+        return imgFilename !== filename
+      })
       
       return true
     } catch (err) {
