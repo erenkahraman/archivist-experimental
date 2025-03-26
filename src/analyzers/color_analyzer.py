@@ -23,16 +23,14 @@ class ColorAnalyzer:
         self._load_reference_colors()
         
         # Use provided API key or get from environment
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if self.api_key:
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if self._api_key:
             # Mask API key in logs and never store the full key in instance variables
-            masked_key = self._mask_api_key(self.api_key)
+            masked_key = self._mask_api_key(self._api_key)
             logger.info(f"Using Gemini API key: {masked_key}")
             # Configure the API client but don't store the raw key
-            genai.configure(api_key=self.api_key)
+            genai.configure(api_key=self._api_key)
             self.use_gemini = True
-            # Don't store the actual key, just a flag that we have one
-            self.api_key = True
         else:
             logger.warning("No Gemini API key provided for color analysis. Will use fallback method.")
             self.use_gemini = False
@@ -178,15 +176,13 @@ class ColorAnalyzer:
             logger.info(f"Updating Gemini API key: {masked_key}")
             # Configure the API client
             genai.configure(api_key=api_key)
+            self._api_key = api_key
             self.use_gemini = True
-            # Don't store the actual key, just a flag that we have one
-            self.api_key = True
-            
             logger.info("Gemini API key updated for color analysis")
         else:
             logger.warning("Attempted to set empty API key")
+            self._api_key = None
             self.use_gemini = False
-            self.api_key = False
 
     def analyze_colors(self, image: np.ndarray) -> Dict:
         """Analyze colors in the image with token-optimized methods."""
@@ -216,7 +212,7 @@ class ColorAnalyzer:
                 logger.info("Image has simple color palette, using local analysis to save tokens")
                 return self._precision_color_analysis(image)
             
-            if self.use_gemini and self.api_key is True:  # Check if API key flag is true, not the key itself
+            if self.use_gemini and self._api_key:  # Check if API key flag is true, not the key itself
                 # Try using Gemini API with minimal prompting
                 try:
                     # Convert to PIL Image for Gemini

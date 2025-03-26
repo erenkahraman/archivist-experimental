@@ -33,9 +33,6 @@ else:
 # Initialize search engine with Gemini API key
 search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
 
-# Ensure we don't keep the raw API key in memory
-GEMINI_API_KEY = None
-
 # Initialize Pantone analyzer
 pantone_analyzer = PantoneAnalyzer()
 
@@ -84,9 +81,6 @@ def set_gemini_key():
         
         # Update the API key in the search engine
         search_engine.set_gemini_api_key(api_key)
-        
-        # Don't keep the key in memory
-        api_key = None
         
         return jsonify({'status': 'success', 'message': 'Gemini API key updated successfully'}), 200
     except Exception as e:
@@ -175,68 +169,97 @@ def get_images():
 @app.route('/search', methods=['POST'])
 def search():
     """
-    Search endpoint with simplified filtering options.
+    Advanced search endpoint that handles complex queries with pattern and color matching.
     
     Accepts the following parameters:
     - query: Main search query (required)
-    - filters: Dictionary of filters to apply (optional)
-      - pattern_type: Filter by pattern type
-      - color: Filter by color
-    - limit: Maximum number of results (optional, default: 50)
+      - Can include color terms (e.g., "red", "blue") 
+      - Can include pattern terms (e.g., "paisley", "floral")
+      - Can be compound queries (e.g., "red paisley", "blue floral")
+    - limit: Maximum number of results (optional, default: 20)
+    - min_similarity: Minimum similarity score threshold (optional, default: 0.1)
+    
+    Returns:
+    - List of metadata with similarity scores, sorted by relevance
     """
     try:
         # Get search parameters
         data = request.json or {}
         query = data.get('query', '').strip()
-        filters = data.get('filters', {})
-        limit = min(int(data.get('limit', 50)), 100)  # Cap at 100 results
+        limit = min(int(data.get('limit', 20)), 100)  # Cap at 100 results
+        min_similarity = max(0.0, min(float(data.get('min_similarity', 0.1)), 1.0))  # Between 0 and 1
         
+        # Validate query
+        if not query:
+            return jsonify({'error': 'Search query is required'}), 400
+            
         # Log search request
-        logger.info(f"Search request: query='{query}', filters={filters}, limit={limit}")
+        logger.info(f"Search request: query='{query}', limit={limit}, min_similarity={min_similarity}")
         
-        # Perform basic search
+        # Perform search using the enhanced search function
         results = search_engine.search(query, k=limit)
         
-        # Apply additional filters if provided
-        if filters:
-            filtered_results = []
-            for result in results:
-                # Check if result matches all filters
-                matches_all_filters = True
-                
-                # Pattern type filter
-                if 'pattern_type' in filters and filters['pattern_type']:
-                    pattern_type = filters['pattern_type'].lower()
-                    if 'patterns' in result and 'category' in result['patterns']:
-                        if pattern_type not in result['patterns']['category'].lower():
-                            matches_all_filters = False
-                
-                # Color filter
-                if 'color' in filters and filters['color']:
-                    color = filters['color'].lower()
-                    if 'colors' in result and 'dominant_colors' in result['colors']:
-                        color_match = False
-                        for color_data in result['colors']['dominant_colors']:
-                            if color in color_data['name'].lower():
-                                color_match = True
-                                break
-                        if not color_match:
-                            matches_all_filters = False
-                
-                # Add to filtered results if it matches all filters
-                if matches_all_filters:
-                    filtered_results.append(result)
-            
-            # Replace results with filtered results
-            results = filtered_results
+        # Filter by minimum similarity if specified
+        if min_similarity > 0:
+            results = [r for r in results if r.get('similarity', 0) >= min_similarity]
         
-        # Sort by similarity (already done by search_engine)
-        return jsonify(results)
+        # Format the results for the response
+        formatted_results = []
+        for result in results:
+            # Create a clean copy without internal fields
+            item = {
+                'id': result.get('id'),
+                'filename': result.get('filename'),
+                'path': result.get('path'),
+                'thumbnail_path': result.get('thumbnail_path'),
+                'similarity': result.get('similarity', 0.0),
+                'timestamp': result.get('timestamp'),
+            }
+            
+            # Include pattern information
+            if 'patterns' in result:
+                item['pattern'] = {
+                    'primary': result['patterns'].get('primary_pattern', 'Unknown'),
+                    'confidence': result['patterns'].get('pattern_confidence', 0.0),
+                    'secondary': [p.get('name') for p in result['patterns'].get('secondary_patterns', [])],
+                    'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in result['patterns'].get('elements', [])]
+                }
+                
+                # Include style keywords
+                item['style_keywords'] = result['patterns'].get('style_keywords', [])
+                
+                # Include prompt if available
+                if 'prompt' in result['patterns'] and 'final_prompt' in result['patterns']['prompt']:
+                    item['prompt'] = result['patterns']['prompt']['final_prompt']
+            
+            # Include color information
+            if 'colors' in result:
+                item['colors'] = []
+                for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
+                    item['colors'].append({
+                        'name': color.get('name', ''),
+                        'hex': color.get('hex', ''),
+                        'proportion': color.get('proportion', 0.0)
+                    })
+            
+            # Add score components if available (for debugging)
+            if 'pattern_score' in result and 'color_score' in result and 'other_score' in result:
+                item['score_components'] = {
+                    'pattern_score': result.get('pattern_score', 0.0),
+                    'color_score': result.get('color_score', 0.0),
+                    'other_score': result.get('other_score', 0.0)
+                }
+                
+            formatted_results.append(item)
+        
+        return jsonify({
+            'query': query,
+            'result_count': len(formatted_results),
+            'results': formatted_results
+        })
         
     except Exception as e:
-        logger.error(f"Search error: {str(e)}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error in search: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 @app.route('/generate-prompt', methods=['POST'])

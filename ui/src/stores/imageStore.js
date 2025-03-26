@@ -97,27 +97,41 @@ export const useImageStore = defineStore('images', () => {
     }
   }
 
-  const searchImages = async (query, filters = {}, sort = 'relevance', limit = 50) => {
+  const searchImages = async (params) => {
+    // Extract parameters with defaults
+    const { 
+      query = '', 
+      type = 'all', 
+      k = 20, 
+      minSimilarity = 0.1 
+    } = params || {};
+    
+    // Clean the query - trim but preserve commas
+    const cleanedQuery = query.trim();
+    
     // If query is empty, just clear the search
-    if (!query.trim() && Object.keys(filters).length === 0) {
+    if (!cleanedQuery) {
       clearSearch()
       return []
     }
 
-    // Don't search for very short queries unless filters are provided
-    if (query.trim().length < 2 && Object.keys(filters).length === 0) {
+    // Don't search for very short queries (but allow if it contains a comma)
+    if (cleanedQuery.length < 2 && !cleanedQuery.includes(',')) {
       return []
     }
 
-    // Set searching state without affecting loading state
+    // Set searching state
     isSearching.value = true
-    searchQuery.value = query
-    searchFilters.value = filters
-    searchSort.value = sort
+    searchQuery.value = cleanedQuery
     error.value = null
 
     try {
-      console.log(`Searching for: "${query}" with filters:`, filters, `sort: ${sort}`)
+      console.log(`Searching for: "${cleanedQuery}" with limit: ${k}, min similarity: ${minSimilarity}`)
+      
+      // Make sure we have gallery images loaded first (for template structure)
+      if (images.value.filter(img => !img.isUploading).length === 0) {
+        await fetchImages();
+      }
       
       const response = await fetch(`${API_BASE_URL}/search`, {
         method: 'POST',
@@ -126,10 +140,9 @@ export const useImageStore = defineStore('images', () => {
           'Accept': 'application/json'
         },
         body: JSON.stringify({ 
-          query,
-          filters,
-          sort,
-          limit
+          query: cleanedQuery,
+          limit: k,
+          min_similarity: minSimilarity
         }),
       })
 
@@ -141,24 +154,47 @@ export const useImageStore = defineStore('images', () => {
       // Get the search results from the response
       const searchData = await response.json()
       
-      // Update the search metadata
-      searchTotalResults.value = searchData.total_results || 0
-      
       // Keep any uploading images
       const uploadingImages = images.value.filter(img => img.isUploading)
       
       // Process the search results
       if (searchData.results && Array.isArray(searchData.results)) {
-        console.log(`Found ${searchData.total_results} results for "${query}"`)
+        console.log(`Found ${searchData.result_count} results for "${cleanedQuery}"`)
+        searchTotalResults.value = searchData.result_count || 0
         
-        // Add similarity score information to display in UI
-        const processedResults = searchData.results.map(result => ({
-          ...result,
-          searchScore: result.similarity || 0,
-          matchedTerms: result.matched_terms || 0
-        }))
+        // Normalize search results to match gallery data structure
+        const processedResults = searchData.results.map(result => {
+          // Get a template image from the gallery if available
+          const galleryImages = images.value.filter(img => !img.isUploading);
+          const templateImage = galleryImages.length > 0 ? galleryImages[0] : null;
+          
+          // Process colors to ensure they're always in the expected format
+          let processedColors = result.colors;
+          
+          // If we have a template, use its structure, otherwise just use the result
+          if (templateImage) {
+            // Make sure thumbnail_path is properly formed
+            let thumbnailPath = result.thumbnail_path;
+            
+            // Ensure the thumbnail_path doesn't include the full API URL
+            if (thumbnailPath && thumbnailPath.includes('/api/thumbnails/')) {
+              thumbnailPath = thumbnailPath.split('/api/thumbnails/').pop();
+            }
+            
+            return {
+              ...JSON.parse(JSON.stringify(templateImage)), // Deep copy all properties from template
+              ...result,        // Override with search result data
+              thumbnail_path: thumbnailPath, // Use the corrected thumbnail path
+              // Keep track of the similarity score for displaying in the search UI
+              similarity: result.similarity || 0
+            };
+          } else {
+            // No gallery images available, just use the result as is
+            return result;
+          }
+        });
         
-        // Combine uploading images with search results
+        // Store the results
         images.value = [...uploadingImages, ...processedResults]
         searchResults.value = processedResults
       } else {
@@ -181,6 +217,11 @@ export const useImageStore = defineStore('images', () => {
     } finally {
       isSearching.value = false
     }
+  }
+
+  // Add new function for searching conveniently
+  const search = async (params) => {
+    return searchImages(params);
   }
 
   const clearSearch = () => {
@@ -232,11 +273,16 @@ export const useImageStore = defineStore('images', () => {
     fetchImages,
     deleteImage,
     searchImages,
+    search,
     clearSearch,
     clearAllImages,
     clearUploadingStates,
     state,
     hasError,
-    isLoading
+    isLoading,
+    
+    // Computed properties for convenience
+    searching: computed(() => isSearching.value),
+    hasSearchResults: computed(() => searchResults.value.length > 0)
   }
 }) 

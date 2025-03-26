@@ -9,8 +9,9 @@
           v-model="searchQuery" 
           type="text" 
           class="search-input"
-          placeholder="Search patterns, colors, or themes..."
+          placeholder="Search for patterns, colors (e.g. 'paisley, red, flower')"
           @keyup.enter="handleSearch"
+          title="Use commas to separate search terms for more precise results (e.g., 'paisley, red, flower')"
         >
         <button 
           v-if="searchQuery" 
@@ -27,6 +28,7 @@
         class="search-button"
         @click="handleSearch"
         :disabled="!searchQuery"
+        title="Search the image collection using the provided terms"
       >
         Search
       </button>
@@ -35,39 +37,23 @@
     <div class="search-options">
       <div class="search-filters">
         <div class="filter-group">
-          <label class="filter-label">Match:</label>
-          <div class="filter-buttons">
-            <button 
-              class="filter-button" 
-              :class="{ active: searchType === 'patterns' }"
-              @click="searchType = 'patterns'"
-            >
-              Patterns
-            </button>
-            <button 
-              class="filter-button" 
-              :class="{ active: searchType === 'colors' }"
-              @click="searchType = 'colors'"
-            >
-              Colors
-            </button>
-            <button 
-              class="filter-button" 
-              :class="{ active: searchType === 'all' }"
-              @click="searchType = 'all'"
-            >
-              All
-            </button>
-          </div>
-        </div>
-
-        <div class="filter-group">
           <label class="filter-label">Results:</label>
           <select v-model="resultCount" class="result-count-select">
             <option value="10">10</option>
             <option value="20">20</option>
             <option value="50">50</option>
             <option value="100">100</option>
+          </select>
+        </div>
+        
+        <div class="filter-group">
+          <label class="filter-label">Min Score:</label>
+          <select v-model="minSimilarity" class="min-score-select">
+            <option value="0.01">Very low (0.01)</option>
+            <option value="0.1">Low (0.1)</option>
+            <option value="0.3">Medium (0.3)</option>
+            <option value="0.5">High (0.5)</option>
+            <option value="0.7">Very high (0.7)</option>
           </select>
         </div>
       </div>
@@ -78,9 +64,33 @@
       </div>
       
       <div class="search-results-info" v-if="imageStore.hasSearchResults">
-        <span class="result-count">{{ imageStore.images.length }} results</span>
+        <span class="result-count">
+          <strong>{{ imageStore.searchResults.length }}</strong> results for 
+          <span class="search-terms">{{ imageStore.searchQuery }}</span>
+        </span>
         <button class="reset-button" @click="resetSearch">Reset</button>
       </div>
+    </div>
+    
+    <!-- Quick search examples -->
+    <div class="search-examples">
+      <span class="examples-label">Try:</span>
+      <div class="example-buttons">
+        <button 
+          v-for="example in searchExamples" 
+          :key="example"
+          class="example-button"
+          @click="runExampleSearch(example)"
+        >
+          {{ example }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Add an info hint about advanced search -->
+    <div class="search-hint">
+      <span class="hint-icon">💡</span>
+      <span class="hint-text">Use commas to separate search terms for more specific results.</span>
     </div>
   </div>
 </template>
@@ -94,6 +104,7 @@ const imageStore = useImageStore()
 const searchQuery = ref('')
 const searchType = ref('all')
 const resultCount = ref(20)
+const minSimilarity = ref(0.1)
 
 // Watch for external search reset
 watch(() => imageStore.searchQuery, (newVal) => {
@@ -108,7 +119,8 @@ const handleSearch = async () => {
   await imageStore.search({
     query: searchQuery.value,
     type: searchType.value,
-    k: resultCount.value
+    k: parseInt(resultCount.value),
+    minSimilarity: parseFloat(minSimilarity.value)
   })
 }
 
@@ -119,7 +131,22 @@ const clearSearch = () => {
 
 const resetSearch = async () => {
   searchQuery.value = ''
-  await imageStore.resetSearch()
+  await imageStore.clearSearch()
+}
+
+// Examples of common searches
+const searchExamples = [
+  "paisley", 
+  "floral",
+  "red, paisley",
+  "paisley, flower",
+  "blue, floral", 
+  "geometric, green"
+]
+
+const runExampleSearch = (example) => {
+  searchQuery.value = example
+  handleSearch()
 }
 </script>
 
@@ -322,6 +349,81 @@ const resetSearch = async () => {
   color: var(--color-primary);
   border-color: var(--color-primary-light);
   transform: none;
+}
+
+.search-examples {
+  margin-top: var(--space-3);
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.examples-label {
+  font-size: 0.875rem;
+  color: var(--color-text-light);
+}
+
+.example-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.example-button {
+  font-size: 0.75rem;
+  padding: var(--space-1) var(--space-2);
+  background-color: var(--color-surface-lighter);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.example-button:hover {
+  background-color: var(--color-primary-lighter);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.min-score-select {
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background-color: var(--color-surface);
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
+.search-hint {
+  margin-top: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--color-text-light);
+  font-size: 0.85rem;
+  padding: var(--space-2);
+  background-color: rgba(79, 70, 229, 0.05);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(79, 70, 229, 0.1);
+}
+
+.hint-icon {
+  font-size: 1rem;
+  color: var(--color-primary);
+}
+
+.hint-text {
+  font-size: 0.875rem;
+}
+
+.search-terms {
+  font-weight: 600;
+  color: var(--color-primary);
+  background-color: rgba(79, 70, 229, 0.1);
+  padding: 2px 6px;
+  border-radius: var(--radius-md);
 }
 
 @media (max-width: 768px) {

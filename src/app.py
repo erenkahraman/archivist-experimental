@@ -39,7 +39,6 @@ if GEMINI_API_KEY:
     logger.info(f"Gemini API key found in environment variables: {masked_key}")
 else:
     logger.warning("No Gemini API key found in environment variables")
-    GEMINI_API_KEY = None  # Don't use a default key
 
 def create_app():
     """Create and configure the Flask application."""

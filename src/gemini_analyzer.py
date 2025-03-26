@@ -16,17 +16,15 @@ class GeminiAnalyzer:
     def __init__(self, api_key=None):
         """Initialize with Gemini API key"""
         # Use provided API key or get from environment
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY")
-        if not self.api_key:
+        self._api_key = api_key or os.environ.get("GEMINI_API_KEY")
+        if not self._api_key:
             logger.warning("No Gemini API key provided. Set GEMINI_API_KEY environment variable or pass api_key parameter.")
         else:
             # Mask API key in logs and never store the full key in instance variables
-            masked_key = self._mask_api_key(self.api_key)
+            masked_key = self._mask_api_key(self._api_key)
             logger.info(f"Using Gemini API key: {masked_key}")
             # Configure the API client but don't store the raw key
-            genai.configure(api_key=self.api_key)
-            # Don't store the actual key, just a flag that we have one
-            self.api_key = True
+            genai.configure(api_key=self._api_key)
     
     def _mask_api_key(self, key):
         """Safely mask API key for logging purposes."""
@@ -42,12 +40,11 @@ class GeminiAnalyzer:
             logger.info(f"Updating Gemini API key: {masked_key}")
             # Configure the API client
             genai.configure(api_key=api_key)
-            # Don't store the actual key, just a flag that we have one
-            self.api_key = True
+            self._api_key = api_key
             logger.info("Gemini API key updated")
         else:
             logger.warning("Attempted to set empty API key")
-            self.api_key = False
+            self._api_key = None
     
     def analyze_image(self, image_path: str) -> Dict[str, Any]:
         """
@@ -60,7 +57,7 @@ class GeminiAnalyzer:
             Dictionary containing pattern analysis results
         """
         try:
-            if not self.api_key or self.api_key is not True:
+            if not self._api_key:
                 logger.error("Gemini API key not set")
                 return self._get_default_response()
             

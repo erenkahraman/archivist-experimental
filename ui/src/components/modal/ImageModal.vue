@@ -1,151 +1,166 @@
 <template>
-  <div class="modal" @click="$emit('close')">
-    <div class="modal-content glass animate__animated animate__fadeIn" @click.stop>
-      <button class="close-button" @click="$emit('close')" aria-label="Close modal">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-      
-      <div class="modal-layout">
-        <!-- Image Column -->
-        <div class="image-column">
-          <div class="image-container">
-            <div v-if="isLoading" class="image-loading">
-              <div class="loading-spinner"></div>
-              <p>Loading image...</p>
-            </div>
-            <img 
-              :src="getImageUrl(selectedImage.original_path)" 
-              :alt="getImageName(selectedImage.original_path)"
+  <div v-if="props.selectedImage" class="modal-container" :class="{ 'is-open': isOpen }">
+    <div class="modal-backdrop" @click="closeModal"></div>
+    <div class="modal">
+      <div class="modal-header">
+        <h3>{{ getImageTitle() }}</h3>
+        <button class="close-button" @click="closeModal">×</button>
+      </div>
+      <div class="modal-content">
+        <!-- Image display - always visible -->
+        <div class="image-section">
+          <div class="image-container" :class="{ 'is-loading': isLoading }">
+            <img
+              id="modal-image"
+              :src="getImageUrl(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path || props.selectedImage.id)"
+              :alt="getImageName(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.id)"
               class="main-image"
               @load="handleImageLoaded"
               @error="handleImageError"
               :class="{ 'hidden': isLoading }"
               ref="imageElement"
             >
-            <div v-if="loadError" class="image-error">
+            <div v-if="imageLoadError" class="image-error">
+              <div class="error-message">{{ errorMessage }}</div>
               <button @click="tryLoadThumbnail" class="try-thumbnail-btn">
                 Try Thumbnail
               </button>
             </div>
+            <div v-if="isLoading" class="loading-spinner">
+              <div class="spinner"></div>
+              <p>Loading image...</p>
+            </div>
           </div>
-          <h2 class="image-name">{{ getImageName(selectedImage.original_path) }}</h2>
         </div>
         
-        <!-- Details Column -->
-        <div class="details-column">
-          <!-- Tabs Navigation -->
-          <div class="tabs-nav">
-            <button 
-              v-for="tab in tabs" 
-              :key="tab.id"
-              class="tab-button"
-              :class="{ 'active': activeTab === tab.id }"
-              @click="activeTab = tab.id"
-            >
-              {{ tab.label }}
-            </button>
+        <!-- Tabs for metadata -->
+        <div class="tabs">
+          <button
+            v-for="tab in tabs"
+            :key="tab.id"
+            :class="['tab-button', { active: activeTab === tab.id }]"
+            @click="activeTab = tab.id"
+          >
+            {{ tab.label }}
+          </button>
+        </div>
+        
+        <div class="tab-content">
+          <!-- Patterns Tab -->
+          <div v-if="activeTab === 'patterns'" class="tab-pane">
+            <div class="pattern-section" v-if="props.selectedImage.patterns?.primary_pattern">
+              <h3 class="section-title">Primary Pattern</h3>
+              <div class="pattern-primary">
+                {{ typeof props.selectedImage.patterns.primary_pattern === 'object' ? 
+                   props.selectedImage.patterns.primary_pattern.name : 
+                   props.selectedImage.patterns.primary_pattern }}
+                <span class="inline-confidence">
+                  {{ props.selectedImage.patterns.category_confidence !== undefined ? 
+                     Math.round((props.selectedImage.patterns.category_confidence || 0) * 100) + '%' : 
+                     '0%' }}
+                </span>
+              </div>
+            </div>
+            
+            <div class="pattern-section" v-if="hasSecondaryPatterns">
+              <h3 class="section-title">Secondary Patterns</h3>
+              <p class="confidence-note">Percentages indicate pattern confidence level</p>
+              <div class="tag-container">
+                <span 
+                  v-for="pattern in getSecondaryPatterns()" 
+                  :key="typeof pattern === 'string' ? pattern : JSON.stringify(pattern)"
+                  class="tag"
+                >
+                  {{ typeof pattern === 'string' ? pattern : 
+                     (pattern.name ? `${pattern.name} (${Math.round((pattern.confidence || 0) * 100)}%)` : JSON.stringify(pattern)) }}
+                </span>
+              </div>
+            </div>
+            
+            <div class="pattern-section" v-if="props.selectedImage.patterns?.prompt">
+              <h3 class="section-title">Pattern Description</h3>
+              <div class="image-data">{{ getPromptText(props.selectedImage.patterns.prompt) }}</div>
+            </div>
+
+            <div class="pattern-section" v-if="hasStyleKeywords">
+              <h3 class="section-title">Style Keywords</h3>
+              <div class="keyword-tags">
+                <span 
+                  v-for="(keyword, index) in getStyleKeywords()" 
+                  :key="index"
+                  class="keyword-tag"
+                >
+                  {{ keyword }}
+                </span>
+              </div>
+            </div>
           </div>
           
-          <!-- Tab Content -->
-          <div class="tab-content">
-            <!-- Patterns Tab -->
-            <div v-if="activeTab === 'patterns'" class="tab-pane">
-              <div class="pattern-section" v-if="selectedImage.patterns?.primary_pattern">
-                <h3 class="section-title">Primary Pattern</h3>
-                <div class="pattern-primary">
-                  {{ typeof selectedImage.patterns.primary_pattern === 'object' ? 
-                     selectedImage.patterns.primary_pattern.name : 
-                     selectedImage.patterns.primary_pattern }}
-                  <span class="inline-confidence">{{ Math.round((selectedImage.patterns.category_confidence || 0) * 100) }}%</span>
+          <!-- Colors Tab -->
+          <div v-if="activeTab === 'colors'" class="tab-pane">
+            <!-- Colors debug info -->
+            <div v-if="isDev" class="debug-info">
+              <pre>{{ JSON.stringify(props.selectedImage.colors, null, 2) }}</pre>
+            </div>
+
+            <!-- Dominant Color -->
+            <div class="color-section" v-if="getDominantColor()">
+              <h3 class="section-title">Primary Color</h3>
+              <div class="color-display">
+                <div 
+                  class="color-preview" 
+                  :style="{ backgroundColor: extractHexColor(getDominantColor()) }"
+                ></div>
+                <div class="color-info">
+                  <span class="color-value">{{ extractHexColor(getDominantColor()) }}</span>
+                  <span class="color-name" v-if="extractColorName(getDominantColor())">{{ extractColorName(getDominantColor()) }}</span>
+                  <span class="color-proportion" v-if="extractProportion(getDominantColor())">{{ formatProportion(extractProportion(getDominantColor())) }}</span>
                 </div>
-              </div>
-              
-              <div class="pattern-section" v-if="hasSecondaryPatterns">
-                <h3 class="section-title">Secondary Patterns</h3>
-                <p class="confidence-note">Percentages indicate pattern confidence level</p>
-                <div class="tag-container">
-                  <span 
-                    v-for="pattern in getSecondaryPatterns()" 
-                    :key="typeof pattern === 'string' ? pattern : JSON.stringify(pattern)"
-                    class="tag"
-                  >
-                    {{ typeof pattern === 'string' ? pattern : 
-                       (pattern.name ? `${pattern.name} (${Math.round((pattern.confidence || 0) * 100)}%)` : JSON.stringify(pattern)) }}
-                  </span>
-                </div>
-              </div>
-              
-              <div class="pattern-section" v-if="selectedImage.patterns?.prompt">
-                <h3 class="section-title">Pattern Description</h3>
-                <p class="prompt-text">{{ getPromptText(selectedImage.patterns.prompt) }}</p>
               </div>
             </div>
             
-            <!-- Colors Tab -->
-            <div v-if="activeTab === 'colors'" class="tab-pane">
-              <div class="color-section" v-if="getDominantColor()">
-                <h3 class="section-title">Dominant Color</h3>
-                <div class="color-display">
-                  <div 
-                    class="color-preview" 
-                    :style="{ backgroundColor: extractHexColor(getDominantColor()) }"
-                  ></div>
+            <!-- Color Palette -->
+            <div class="color-section" v-if="getColorPalette().length > 0">
+              <h3 class="section-title">Color Palette</h3>
+              <div class="color-palette-grid">
+                <div 
+                  v-for="(color, idx) in getColorPalette()" 
+                  :key="idx"
+                  class="palette-item"
+                >
+                  <div class="color-preview" :style="{ backgroundColor: extractHexColor(color) }"></div>
                   <div class="color-info">
-                    <span class="color-value">{{ extractHexColor(getDominantColor()) }}</span>
-                    <span class="color-name" v-if="extractColorName(getDominantColor())">{{ extractColorName(getDominantColor()) }}</span>
-                    <span class="color-rgb" v-if="extractRGB(getDominantColor())">RGB: {{ extractRGB(getDominantColor()) }}</span>
-                  </div>
-                </div>
-              </div>
-              
-              <div class="color-section" v-if="getColorPalette().length > 0">
-                <h3 class="section-title">Color Palette</h3>
-                <div class="color-palette-grid">
-                  <div 
-                    v-for="(color, index) in getColorPalette()" 
-                    :key="index"
-                    class="palette-color"
-                  >
-                    <div 
-                      class="color-swatch" 
-                      :style="{ backgroundColor: extractHexColor(color) }"
-                    ></div>
-                    <div class="color-info">
-                      <span class="color-hex">{{ extractHexColor(color) }}</span>
-                      <span class="color-name" v-if="extractColorName(color)">{{ extractColorName(color) }}</span>
-                      <span class="color-rgb" v-if="extractRGB(color)">RGB: {{ extractRGB(color) }}</span>
-                      <span class="color-proportion" v-if="extractProportion(color)">{{ formatProportion(extractProportion(color)) }}</span>
-                    </div>
+                    <span class="color-value">{{ extractHexColor(color) }}</span>
+                    <span class="color-name" v-if="extractColorName(color)">{{ extractColorName(color) }}</span>
+                    <span class="color-proportion" v-if="extractProportion(color)">{{ formatProportion(extractProportion(color)) }}</span>
                   </div>
                 </div>
               </div>
             </div>
-            
-            <!-- Details Tab -->
-            <div v-if="activeTab === 'details'" class="tab-pane">
-              <div class="details-section">
-                <h3 class="section-title">File Information</h3>
-                <table class="details-table">
-                  <tr>
-                    <td class="details-label">Filename:</td>
-                    <td>{{ getImageName(selectedImage.original_path) }}</td>
-                  </tr>
-                  <tr v-if="selectedImage.metadata?.width && selectedImage.metadata?.height">
-                    <td class="details-label">Dimensions:</td>
-                    <td>{{ selectedImage.metadata.width }} × {{ selectedImage.metadata.height }} px</td>
-                  </tr>
-                  <tr v-if="selectedImage.created_at">
-                    <td class="details-label">Added:</td>
-                    <td>{{ formatDate(selectedImage.created_at) }}</td>
-                  </tr>
-                  <tr>
-                    <td class="details-label">Path:</td>
-                    <td class="file-path">{{ selectedImage.original_path }}</td>
-                  </tr>
-                </table>
-              </div>
+          </div>
+          
+          <!-- Details Tab -->
+          <div v-if="activeTab === 'details'" class="tab-pane">
+            <div class="details-section">
+              <h3 class="section-title">File Information</h3>
+              <table class="details-table">
+                <tr>
+                  <td class="details-label">Filename:</td>
+                  <td>{{ getImageName(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.id) }}</td>
+                </tr>
+                <tr v-if="props.selectedImage.metadata?.width && props.selectedImage.metadata?.height">
+                  <td class="details-label">Dimensions:</td>
+                  <td>{{ props.selectedImage.metadata.width }} × {{ props.selectedImage.metadata.height }} px</td>
+                </tr>
+                <tr v-if="props.selectedImage.created_at">
+                  <td class="details-label">Added:</td>
+                  <td>{{ formatDate(props.selectedImage.created_at) }}</td>
+                </tr>
+                <tr>
+                  <td class="details-label">Path:</td>
+                  <td class="file-path">{{ props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path }}</td>
+                </tr>
+              </table>
             </div>
           </div>
         </div>
@@ -155,7 +170,7 @@
 </template>
 
 <script setup>
-import { defineProps, defineEmits, ref, computed, onMounted } from 'vue'
+import { defineProps, ref, computed, onMounted } from 'vue'
 
 const props = defineProps({
   selectedImage: {
@@ -164,13 +179,18 @@ const props = defineProps({
   }
 })
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
+
+// Add this near the top of the script section, with other imports/constants
+const API_BASE_URL = 'http://localhost:8000/api';
+const isDev = false; // Set to true when debugging is needed
 
 // Image loading state
 const imageElement = ref(null)
 const isLoading = ref(true)
-const loadError = ref(false)
+const imageLoadError = ref(false)
 const useThumbnail = ref(false)
+const errorMessage = ref('')
 
 // Tab management
 const tabs = [
@@ -187,20 +207,72 @@ const hasSecondaryPatterns = computed(() => {
     typeof props.selectedImage.patterns.secondary_patterns === 'object')
 })
 
+const hasStyleKeywords = computed(() => {
+  return !!getStyleKeywords()?.length;
+});
+
 // Core data functions
-const getImageUrl = (path) => {
-  if (useThumbnail.value || !path) {
-    return getThumbnailUrl(props.selectedImage.thumbnail_path)
+const getImageTitle = () => {
+  // If there's a filename, use that first
+  if (props.selectedImage.filename) {
+    return props.selectedImage.filename;
   }
-  const filename = path.split('/').pop()
-  return `http://localhost:8000/api/images/${filename}`
+  
+  // Otherwise try to use one of the path fields or ID
+  return getImageName(props.selectedImage.file_path || 
+                      props.selectedImage.image_path || 
+                      props.selectedImage.original_path || 
+                      props.selectedImage.thumbnail_path || 
+                      props.selectedImage.id);
 }
 
+const getImageUrl = (path) => {
+  if (!path) return '';
+  
+  // If it's already a full URL, use it
+  if (path.startsWith('http')) {
+    return path;
+  }
+  
+  // Handle case where the path already includes the API part
+  if (path.includes('/api/images/')) {
+    return path;
+  }
+  
+  // Handle paths where the filename is the full path
+  if (path.includes('/')) {
+    // Extract just the filename
+    const filename = path.split('/').pop();
+    return `${API_BASE_URL}/images/${filename}`;
+  }
+  
+  // Simple case - just the filename
+  return `${API_BASE_URL}/images/${path}`;
+};
+
 const getThumbnailUrl = (path) => {
-  if (!path) return ''
-  const filename = path.split('/').pop()
-  return `http://localhost:8000/api/thumbnails/${filename}`
-}
+  if (!path) return '';
+  
+  // If it's already a full URL, use it
+  if (path.startsWith('http')) {
+    return path;
+  }
+  
+  // Handle case where the path already includes the API part
+  if (path.includes('/api/thumbnails/')) {
+    return path;
+  }
+  
+  // Handle paths where the filename is the full path
+  if (path.includes('/')) {
+    // Extract just the filename
+    const filename = path.split('/').pop();
+    return `${API_BASE_URL}/thumbnails/${filename}`;
+  }
+  
+  // Simple case - just the filename
+  return `${API_BASE_URL}/thumbnails/${path}`;
+};
 
 const getImageName = (path) => {
   if (!path) return 'Unknown Image'
@@ -283,108 +355,203 @@ const getSecondaryPatterns = () => {
   return []
 }
 
+const getStyleKeywords = () => {
+  if (!props.selectedImage) return [];
+  
+  // Check different possible locations for style keywords
+  if (props.selectedImage.style_keywords) {
+    return Array.isArray(props.selectedImage.style_keywords) 
+      ? props.selectedImage.style_keywords 
+      : [props.selectedImage.style_keywords];
+  }
+  
+  if (props.selectedImage.patterns?.style_keywords) {
+    return Array.isArray(props.selectedImage.patterns.style_keywords) 
+      ? props.selectedImage.patterns.style_keywords 
+      : [props.selectedImage.patterns.style_keywords];
+  }
+  
+  if (props.selectedImage.metadata?.style_keywords) {
+    return Array.isArray(props.selectedImage.metadata.style_keywords) 
+      ? props.selectedImage.metadata.style_keywords 
+      : [props.selectedImage.metadata.style_keywords];
+  }
+  
+  return [];
+};
+
 // Color handling
 const getDominantColor = () => {
+  // Check for direct colors array in the search results
+  if (props.selectedImage.colors && Array.isArray(props.selectedImage.colors)) {
+    // If colors is an array (common in search results), use the first one
+    if (props.selectedImage.colors.length > 0) {
+      return props.selectedImage.colors[0];
+    }
+  }
+  
+  // Try various possible locations for color data
+  if (props.selectedImage.colors?.dominant_colors && 
+      Array.isArray(props.selectedImage.colors.dominant_colors)) {
+    return props.selectedImage.colors.dominant_colors[0];
+  }
+  
   if (props.selectedImage.colors?.dominant_color) {
-    return props.selectedImage.colors.dominant_color
+    return props.selectedImage.colors.dominant_color;
   }
   
+  // For search results, it might be in metadata or different structures
+  if (props.selectedImage.metadata?.colors?.dominant_color) {
+    return props.selectedImage.metadata.colors.dominant_color;
+  }
+  
+  // Try palette as fallback
   if (props.selectedImage.colors?.palette && props.selectedImage.colors.palette.length > 0) {
-    return props.selectedImage.colors.palette[0]
+    return props.selectedImage.colors.palette[0];
   }
   
-  if (props.selectedImage.patterns?.colors?.dominant_color) {
-    return props.selectedImage.patterns.colors.dominant_color
+  if (props.selectedImage.patterns?.colors?.palette && 
+      props.selectedImage.patterns.colors.palette.length > 0) {
+    return props.selectedImage.patterns.colors.palette[0];
   }
   
-  return null
-}
+  if (props.selectedImage.metadata?.colors?.palette && 
+      props.selectedImage.metadata.colors.palette.length > 0) {
+    return props.selectedImage.metadata.colors.palette[0];
+  }
+  
+  return null;
+};
 
 const getColorPalette = () => {
+  // Check for direct colors array in the search results
+  if (props.selectedImage.colors && Array.isArray(props.selectedImage.colors)) {
+    return props.selectedImage.colors;
+  }
+  
+  // Try various possible locations for palette data
+  if (props.selectedImage.colors?.dominant_colors && 
+      Array.isArray(props.selectedImage.colors.dominant_colors)) {
+    return props.selectedImage.colors.dominant_colors;
+  }
+  
   if (props.selectedImage.colors?.palette && props.selectedImage.colors.palette.length > 0) {
-    return props.selectedImage.colors.palette
+    return props.selectedImage.colors.palette;
   }
   
-  if (props.selectedImage.colors?.dominant_colors && props.selectedImage.colors.dominant_colors.length > 0) {
-    return props.selectedImage.colors.dominant_colors
+  if (props.selectedImage.patterns?.colors?.palette && 
+      props.selectedImage.patterns.colors.palette.length > 0) {
+    return props.selectedImage.patterns.colors.palette;
   }
   
-  if (props.selectedImage.patterns?.colors?.palette && props.selectedImage.patterns.colors.palette.length > 0) {
-    return props.selectedImage.patterns.colors.palette
+  if (props.selectedImage.metadata?.colors?.palette && 
+      props.selectedImage.metadata.colors.palette.length > 0) {
+    return props.selectedImage.metadata.colors.palette;
   }
   
-  return []
-}
+  return [];
+};
 
 const extractHexColor = (color) => {
-  if (!color) return '#cccccc'
+  if (!color) return '#cccccc'; // Default gray
   
-  if (typeof color === 'string') return color
+  // If it's a simple string, return it directly
+  if (typeof color === 'string') return color;
   
-  if (typeof color === 'object' && color.hex) return color.hex
+  // If it's an object, try to find the hex code
+  if (typeof color === 'object') {
+    // Direct hex property
+    if (color.hex) return color.hex;
+    if (color.color) return color.color;
+    
+    // Try to find RGB values
+    if (color.rgb && Array.isArray(color.rgb) && color.rgb.length >= 3) {
+      return `rgb(${color.rgb.join(', ')})`;
+    }
+  }
   
+  // Last resort - try to extract from a stringified representation
   try {
-    const colorStr = JSON.stringify(color)
-    const hexMatch = colorStr.match(/"hex":"(#[0-9a-fA-F]{6})"/i)
-    if (hexMatch && hexMatch[1]) return hexMatch[1]
+    const colorStr = JSON.stringify(color);
+    
+    // Look for hex code pattern first
+    const hexPattern = /#[0-9a-f]{6}/i;
+    const foundHex = colorStr.match(hexPattern);
+    if (foundHex) {
+      return foundHex[0];
+    }
+    
+    const hexMatch = colorStr.match(/"hex":"(#[0-9a-f]+)"/i);
+    if (hexMatch && hexMatch[1]) {
+      return hexMatch[1];
+    }
+    
+    const colorMatch = colorStr.match(/"color":"(#[0-9a-f]+)"/i);
+    if (colorMatch && colorMatch[1]) {
+      return colorMatch[1];
+    }
   } catch (e) {}
   
-  return '#cccccc'
+  return '#cccccc'; // Default gray
 }
 
 const extractColorName = (color) => {
-  if (!color) return ''
+  if (!color) return null;
   
-  if (typeof color === 'object' && color.name) return color.name
+  if (typeof color === 'object' && color.name) {
+    return color.name;
+  }
   
   try {
-    const colorStr = JSON.stringify(color)
-    const nameMatch = colorStr.match(/"name":"([^"]+)"/i)
-    if (nameMatch && nameMatch[1]) return nameMatch[1]
+    const colorStr = JSON.stringify(color);
+    const nameMatch = colorStr.match(/"name":"([^"]+)"/i);
+    if (nameMatch && nameMatch[1]) {
+      return nameMatch[1];
+    }
   } catch (e) {}
   
-  return ''
+  return null;
 }
 
 const extractRGB = (color) => {
-  if (!color) return null
+  if (!color) return null;
   
   if (typeof color === 'object' && Array.isArray(color.rgb)) {
-    return color.rgb.join(', ')
+    return color.rgb.join(', ');
   }
   
   try {
-    const colorStr = JSON.stringify(color)
-    const rgbMatch = colorStr.match(/"rgb":\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]/i)
+    const colorStr = JSON.stringify(color);
+    const rgbMatch = colorStr.match(/"rgb":\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]/i);
     if (rgbMatch && rgbMatch.length >= 4) {
-      return `${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}`
+      return `${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}`;
     }
   } catch (e) {}
   
-  return null
+  return null;
 }
 
 const extractProportion = (color) => {
-  if (!color) return null
+  if (!color) return null;
   
   if (typeof color === 'object' && typeof color.proportion === 'number') {
-    return color.proportion
+    return color.proportion;
   }
   
   try {
-    const colorStr = JSON.stringify(color)
-    const proportionMatch = colorStr.match(/"proportion":([0-9.]+)/i)
+    const colorStr = JSON.stringify(color);
+    const proportionMatch = colorStr.match(/"proportion":([0-9.]+)/i);
     if (proportionMatch && proportionMatch[1]) {
-      return parseFloat(proportionMatch[1])
+      return parseFloat(proportionMatch[1]);
     }
   } catch (e) {}
   
-  return null
+  return null;
 }
 
 const formatProportion = (proportion) => {
-  if (proportion === null || proportion === undefined) return ''
-  return `${Math.round(proportion * 100)}%`
+  if (proportion === null || proportion === undefined) return '';
+  return `${Math.round(proportion * 100)}%`;
 }
 
 // Utility functions
@@ -400,76 +567,146 @@ const formatDate = (dateString) => {
 
 // Image loading handlers
 const handleImageLoaded = () => {
-  isLoading.value = false
-  loadError.value = false
-}
+  isLoading.value = false;
+  imageLoadError.value = false;
+  errorMessage.value = '';
+};
 
-const handleImageError = () => {
-  if (!useThumbnail.value) {
-    tryLoadThumbnail()
-  } else {
-    isLoading.value = false
-    loadError.value = true
+const handleImageError = (error) => {
+  console.error('Error loading image:', error);
+  console.log('Image that failed to load:', props.selectedImage);
+  isLoading.value = false;
+  imageLoadError.value = true;
+  
+  // Provide a more detailed error message for debugging
+  let errorDetail = '';
+  if (props.selectedImage) {
+    const imagePath = props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path || props.selectedImage.id;
+    errorDetail = ` Path attempted: ${imagePath}`;
   }
-}
+  
+  errorMessage.value = `Failed to load image. The image may be unavailable or the server cannot access it.${errorDetail}`;
+  
+  // Try to load the thumbnail automatically if one is available
+  if (props.selectedImage.thumbnail_path) {
+    console.log('Attempting to load thumbnail instead:', props.selectedImage.thumbnail_path);
+    tryLoadThumbnail();
+  }
+};
 
 const tryLoadThumbnail = () => {
-  useThumbnail.value = true
-  isLoading.value = true
-  loadError.value = false
-  
-  if (imageElement.value) {
-    const thumbnailUrl = getThumbnailUrl(props.selectedImage.thumbnail_path)
-    if (thumbnailUrl) {
-      setTimeout(() => {
-        imageElement.value.src = thumbnailUrl
-      }, 10)
-    } else {
-      isLoading.value = false
-      loadError.value = true
-    }
+  if (!props.selectedImage.thumbnail_path) {
+    errorMessage.value = 'No thumbnail available for this image.';
+    return;
   }
+  
+  // Prevent infinite retries
+  if (useThumbnail.value) {
+    errorMessage.value = 'Failed to load both image and thumbnail. The image may be unavailable.';
+    isLoading.value = false;
+    return;
+  }
+  
+  useThumbnail.value = true;
+  isLoading.value = true;
+  
+  // Change the image source to the thumbnail
+  if (imageElement.value) {
+    imageElement.value.src = getThumbnailUrl(props.selectedImage.thumbnail_path);
+  }
+};
+
+// Modal state
+const isOpen = ref(true)
+
+const closeModal = () => {
+  isOpen.value = false
+  setTimeout(() => {
+    emit('close')
+  }, 300) // Wait for animation to complete
 }
 
 onMounted(() => {
-  isLoading.value = true
-  loadError.value = false
-  useThumbnail.value = false
-})
+  // Set image element for load handling
+  imageElement.value = document.getElementById('modal-image');
+  
+  // Handle image loading events
+  if (imageElement.value) {
+    imageElement.value.onload = () => {
+      isLoading.value = false;
+      imageLoadError.value = false;
+      errorMessage.value = '';
+    };
+    
+    imageElement.value.onerror = (error) => {
+      console.error('Image load error:', error);
+      
+      // If we're not already using the thumbnail, try to use it
+      if (!useThumbnail.value) {
+        tryLoadThumbnail();
+      } else {
+        // If we're already using the thumbnail and it failed, show an error
+        isLoading.value = false;
+        imageLoadError.value = true;
+        errorMessage.value = 'Failed to load image.';
+      }
+    };
+  }
+});
 </script>
 
 <style scoped>
-.modal {
+.modal-container {
   position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+
+.modal-container.is-open {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.modal-backdrop {
+  position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
   background-color: rgba(0, 0, 0, 0.6);
   backdrop-filter: blur(5px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
 }
 
-.modal-content {
+.modal {
+  position: relative;
   width: 95%;
   max-width: 1200px;
   max-height: 90vh;
+  background-color: white;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  position: relative;
-  background-color: rgba(244, 244, 248, 0.95);
   box-shadow: var(--shadow-xl);
-  color: #333;
+  z-index: 1001;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  border-bottom: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .close-button {
-  position: absolute;
-  top: var(--space-3);
-  right: var(--space-3);
   width: 32px;
   height: 32px;
   border-radius: 50%;
@@ -510,29 +747,28 @@ onMounted(() => {
   background-color: rgba(255, 255, 255, 0.5);
 }
 
-.image-container {
-  flex: 1;
+.image-section {
+  margin-bottom: var(--space-4);
   border-radius: var(--radius-lg);
   overflow: hidden;
-  box-shadow: var(--shadow-md);
-  background-color: white;
-  min-height: 300px;
+  background-color: rgba(0, 0, 0, 0.02);
+}
+
+.image-container {
+  width: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
   position: relative;
-  margin-bottom: var(--space-3);
+  min-height: 300px;
+  max-height: 500px;
+  overflow: hidden;
 }
 
 .main-image {
   max-width: 100%;
-  max-height: 70vh;
+  max-height: 500px;
   object-fit: contain;
-  transition: opacity 0.3s;
-}
-
-.main-image.hidden {
-  opacity: 0;
 }
 
 .image-name {
@@ -579,11 +815,13 @@ onMounted(() => {
   cursor: pointer;
   font-weight: 500;
   box-shadow: var(--shadow-sm);
+  transition: all 0.2s;
 }
 
 .try-thumbnail-btn:hover {
   opacity: 0.9;
   transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
 }
 
 .details-column {
@@ -704,7 +942,7 @@ onMounted(() => {
   font-weight: 500;
 }
 
-.prompt-text {
+.image-data {
   line-height: 1.6;
   color: #333;
   font-size: 0.95rem;
@@ -719,43 +957,40 @@ onMounted(() => {
 /* Colors tab */
 .color-section {
   margin-bottom: var(--space-5);
-}
-
-.color-display {
-  display: flex;
-  align-items: center;
-  gap: var(--space-3);
-  margin-top: var(--space-2);
-  padding: var(--space-3);
+  padding: var(--space-4);
   background-color: #f9f9fb;
   border-radius: var(--radius-md);
   border: 1px solid rgba(0, 0, 0, 0.05);
 }
 
+.color-display {
+  display: flex;
+  align-items: center;
+  margin-top: var(--space-3);
+}
+
 .color-preview {
   width: 48px;
   height: 48px;
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-sm);
+  border-radius: 50%;
+  margin-right: var(--space-3);
   border: 1px solid rgba(0, 0, 0, 0.1);
 }
 
 .color-info {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
 }
 
 .color-value {
-  font-family: monospace;
-  font-size: 0.95rem;
   font-weight: 600;
-  color: #333;
+  font-size: 0.9rem;
 }
 
 .color-name {
   font-size: 0.85rem;
-  color: #555;
+  color: var(--color-text-light);
 }
 
 .color-rgb {
@@ -766,28 +1001,28 @@ onMounted(() => {
 
 .color-proportion {
   font-size: 0.8rem;
-  color: #777;
+  color: var(--color-text-light);
+  font-weight: 500;
 }
 
 .color-palette-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: var(--space-3);
+  gap: var(--space-4);
   margin-top: var(--space-3);
 }
 
-.palette-color {
+.palette-item {
   display: flex;
   align-items: center;
-  gap: var(--space-3);
-  padding: var(--space-2);
-  background-color: #f9f9fb;
+  padding: var(--space-3);
   border-radius: var(--radius-md);
-  border: 1px solid rgba(0, 0, 0, 0.05);
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  background-color: white;
+  box-shadow: var(--shadow-xs);
+  transition: all 0.2s;
 }
 
-.palette-color:hover {
+.palette-item:hover {
   transform: translateY(-2px);
   box-shadow: var(--shadow-sm);
 }
@@ -889,5 +1124,107 @@ onMounted(() => {
     font-size: 0.9rem;
     padding: var(--space-2) var(--space-1);
   }
+}
+
+.keyword-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.keyword-tag {
+  display: inline-block;
+  background-color: rgba(var(--primary-rgb), 0.1);
+  color: var(--primary-color);
+  border-radius: 16px;
+  padding: 4px 12px;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: default;
+  transition: all 0.2s ease;
+}
+
+.keyword-tag:hover {
+  background-color: rgba(var(--primary-rgb), 0.2);
+}
+
+.modal-content {
+  padding: var(--space-4);
+  height: calc(90vh - 60px); /* Adjust for header height */
+  overflow-y: auto;
+}
+
+.main-image.hidden {
+  opacity: 0;
+  transition: opacity 0.3s;
+}
+
+.image-container.is-loading {
+  min-height: 300px;
+}
+
+.image-error {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.9);
+  padding: var(--space-4);
+  text-align: center;
+}
+
+.error-message {
+  color: var(--color-error);
+  margin-bottom: var(--space-4);
+  font-weight: 500;
+}
+
+.loading-spinner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background-color: rgba(255, 255, 255, 0.7);
+}
+
+.loading-spinner .spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(79, 70, 229, 0.2);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s infinite linear;
+  margin-bottom: var(--space-3);
+}
+
+@keyframes spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+.debug-info {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  background-color: #f0f0f0;
+  border-radius: var(--radius-md);
+  font-family: monospace;
+  font-size: 12px;
+  overflow: auto;
+  max-height: 200px;
 }
 </style> 

@@ -61,10 +61,10 @@
             </button>
           </div>
           
-          <div class="image-container" @click="selectImage(image)">
+          <div class="image-container" @click="handleImageClick(image)">
             <img 
               :src="getThumbnailUrl(image.thumbnail_path)" 
-              :alt="getImageName(image.original_path)"
+              :alt="getImageName(image)"
               class="gallery-image"
               loading="lazy"
             >
@@ -72,14 +72,27 @@
             <!-- Hover overlay with quick info -->
             <div class="image-overlay">
               <div class="overlay-content">
-                <p class="overlay-title">{{ image.patterns?.primary_pattern || 'Unknown pattern' }}</p>
-                <div class="color-chips" v-if="image.colors?.palette">
+                <p class="overlay-title">
+                  {{ getPatternName(image) }}
+                  <span v-if="getPatternConfidence(image)" class="confidence-badge">
+                    {{ formatConfidence(getPatternConfidence(image)) }}
+                  </span>
+                </p>
+                
+                <!-- Color chips -->
+                <div class="color-chips" v-if="image.colors && image.colors.length > 0">
                   <div 
-                    v-for="(color, idx) in image.colors.palette.slice(0, 5)" 
+                    v-for="(color, idx) in image.colors.slice(0, 5)" 
                     :key="idx"
                     class="color-chip"
-                    :style="{ backgroundColor: color }"
+                    :style="{ backgroundColor: color.hex }"
+                    :title="`${color.name} (${Math.round(color.proportion * 100)}%)`"
                   ></div>
+                </div>
+                
+                <!-- Search score when in search mode -->
+                <div v-if="searchActive && image.similarity !== undefined" class="search-score-info">
+                  <span class="score-label">Match score: {{ (image.similarity * 100).toFixed(0) }}%</span>
                 </div>
               </div>
             </div>
@@ -87,16 +100,41 @@
           
           <div class="image-metadata">
             <div class="pattern-type">
-              <span class="type-value">{{ image.patterns?.primary_pattern || 'Unknown' }}</span>
+              <span class="type-label">Pattern:</span>
+              <span class="type-value">{{ getPatternName(image) }}</span>
             </div>
-            <div class="pattern-prompt">
-              {{ truncatePrompt(image.patterns?.prompt) }}
+            
+            <!-- Secondary patterns if available -->
+            <div class="secondary-patterns" v-if="hasSecondaryPatterns(image)">
+              <span class="sec-pattern-label">Also:</span>
+              <div class="sec-pattern-tags">
+                <span 
+                  v-for="(pattern, idx) in getSecondaryPatterns(image)" 
+                  :key="idx"
+                  class="sec-pattern-tag"
+                >
+                  {{ pattern }}
+                </span>
+              </div>
+            </div>
+            
+            <!-- Style keywords -->
+            <div class="style-keywords" v-if="hasStyleKeywords(image)">
+              <div class="keyword-tags">
+                <span 
+                  v-for="(keyword, idx) in getStyleKeywords(image)" 
+                  :key="idx"
+                  class="keyword-tag"
+                >
+                  {{ keyword }}
+                </span>
+              </div>
             </div>
             
             <!-- Display search score when in search mode -->
-            <div v-if="searchActive && image.searchScore !== undefined" class="search-score">
-              <div class="score-bar" :style="{ width: `${image.searchScore * 100}%` }"></div>
-              <span class="score-label">Match: {{ (image.searchScore * 100).toFixed(0) }}%</span>
+            <div v-if="searchActive && image.similarity !== undefined" class="search-score">
+              <div class="score-bar" :style="{ width: `${image.similarity * 100}%` }"></div>
+              <span class="score-label">Match: {{ (image.similarity * 100).toFixed(0) }}%</span>
             </div>
           </div>
         </template>
@@ -143,48 +181,105 @@ onMounted(() => {
   imageStore.clearUploadingStates()
 })
 
+// Helper functions for pattern information
+const getPatternName = (image) => {
+  if (image.pattern && image.pattern.primary) {
+    return image.pattern.primary;
+  }
+  if (image.patterns && image.patterns.primary_pattern) {
+    return image.patterns.primary_pattern;
+  }
+  return 'Unknown pattern';
+}
+
+const getPatternConfidence = (image) => {
+  if (image.pattern && image.pattern.confidence) {
+    return image.pattern.confidence;
+  }
+  if (image.patterns && image.patterns.pattern_confidence) {
+    return image.patterns.pattern_confidence;
+  }
+  return null;
+}
+
+const formatConfidence = (confidence) => {
+  const percent = Math.round(confidence * 100);
+  return `${percent}%`;
+}
+
+const hasSecondaryPatterns = (image) => {
+  if (image.pattern && image.pattern.secondary && image.pattern.secondary.length > 0) {
+    return true;
+  }
+  if (image.patterns && image.patterns.secondary_patterns && image.patterns.secondary_patterns.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+const getSecondaryPatterns = (image) => {
+  if (image.pattern && image.pattern.secondary) {
+    return image.pattern.secondary;
+  }
+  if (image.patterns && image.patterns.secondary_patterns) {
+    return image.patterns.secondary_patterns.map(p => p.name);
+  }
+  return [];
+}
+
+const hasStyleKeywords = (image) => {
+  if (image.style_keywords && image.style_keywords.length > 0) {
+    return true;
+  }
+  if (image.patterns && image.patterns.style_keywords && image.patterns.style_keywords.length > 0) {
+    return true;
+  }
+  return false;
+}
+
+const getStyleKeywords = (image) => {
+  if (image.style_keywords) {
+    return image.style_keywords;
+  }
+  if (image.patterns && image.patterns.style_keywords) {
+    return image.patterns.style_keywords;
+  }
+  return [];
+}
+
+// Helper function to get thumbnail URL
 const getThumbnailUrl = (path) => {
-  if (!path) {
-    console.log('Warning: Empty thumbnail path');
-    return '';
+  if (!path) return '';
+  
+  // If it's already a full URL, use it
+  if (path.startsWith('http')) {
+    return path;
   }
-  return `http://localhost:8000/api/thumbnails/${path.split('/').pop()}`
+  
+  // If it already has the API path, use it
+  if (path.includes('/api/')) {
+    return path;
+  }
+  
+  // Construct the API URL with just the filename
+  const filename = path.split('/').pop();
+  return `http://localhost:8000/api/thumbnails/${filename}`;
 }
 
-const getImageName = (path) => {
-  if (!path) return 'Unknown'
-  return path.split('/').pop()
+const getImageName = (image) => {
+  // Check various possible path properties
+  const path = image.file_path || image.image_path || image.original_path || 
+              image.path || image.thumbnail_path || '';
+  
+  if (!path) return 'Unknown image';
+  
+  return path.split('/').pop();
 }
 
-const selectImage = (image) => {
-  console.log('Selected image data:', image);
-  
-  // Check if this is an uploading image
-  if (image.isUploading) {
-    console.log('Cannot select an image that is still uploading');
-    return;
-  }
-  
-  // Ensure the image has a valid path
-  if (!image.original_path) {
-    console.error('Image has no path:', image);
-    
-    // Try to fix the path if possible
-    if (image.path) {
-      console.log('Using image.path instead:', image.path);
-      image.original_path = image.path;
-    } else if (image.thumbnail_path) {
-      // Derive original path from thumbnail path
-      const filename = image.thumbnail_path.split('/').pop();
-      image.original_path = `uploads/${filename}`;
-      console.log('Derived path from thumbnail:', image.original_path);
-    } else {
-      alert('This image cannot be selected because it has no path. Please try refreshing the page.');
-      return;
-    }
-  }
-  
-  selectedImage.value = image
+// Handle image click to open modal
+const handleImageClick = (image) => {
+  // Just directly set the selected image without modifications
+  selectedImage.value = image;
 }
 
 const confirmDelete = (image) => {
@@ -285,100 +380,189 @@ const getPromptText = (prompt, truncate = false) => {
   border-radius: var(--radius-lg);
   overflow: hidden;
   background-color: var(--color-surface);
-  box-shadow: var(--shadow-md);
-  transition: all var(--transition-normal);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition-fast);
   height: 100%;
   display: flex;
   flex-direction: column;
 }
 
 .gallery-item:hover {
-  transform: translateY(-4px);
-  box-shadow: var(--shadow-lg);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.gallery-item.search-result {
+  border: 2px solid transparent;
+}
+
+.gallery-item.search-result:hover {
+  border-color: var(--color-primary);
 }
 
 .image-container {
   position: relative;
   overflow: hidden;
+  aspect-ratio: 1 / 1;
   cursor: pointer;
-  height: 250px;
 }
 
 .gallery-image {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--transition-normal);
+  transition: transform var(--transition-fast);
 }
 
-.gallery-item:hover .gallery-image {
+.image-container:hover .gallery-image {
   transform: scale(1.05);
 }
 
 .image-overlay {
   position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.7), transparent 70%);
+  inset: 0;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
   opacity: 0;
-  transition: opacity var(--transition-normal);
+  transition: opacity var(--transition-fast);
   display: flex;
-  align-items: flex-end;
-  padding: var(--space-4);
-}
-
-.gallery-item:hover .image-overlay {
-  opacity: 1;
-}
-
-.overlay-content {
+  flex-direction: column;
+  justify-content: flex-end;
+  padding: var(--space-3);
   color: white;
-  width: 100%;
+}
+
+.image-container:hover .image-overlay {
+  opacity: 1;
 }
 
 .overlay-title {
   font-weight: 600;
   margin-bottom: var(--space-2);
-  font-size: 1.1rem;
+  font-size: 0.95rem;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.confidence-badge {
+  font-size: 0.7rem;
+  background-color: rgba(255, 255, 255, 0.2);
+  padding: 2px 6px;
+  border-radius: 10px;
+  font-weight: normal;
 }
 
 .color-chips {
   display: flex;
   gap: var(--space-1);
+  margin-bottom: var(--space-2);
 }
 
 .color-chip {
   width: 20px;
   height: 20px;
   border-radius: 50%;
-  border: 2px solid rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .image-metadata {
-  padding: var(--space-4);
-  flex-grow: 1;
+  padding: var(--space-3);
   display: flex;
   flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
 }
 
 .pattern-type {
-  margin-bottom: var(--space-2);
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+
+.type-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  opacity: 0.7;
 }
 
 .type-value {
-  font-family: var(--font-heading);
+  font-size: 0.85rem;
   font-weight: 600;
-  color: var(--color-primary);
-  font-size: 1.1rem;
 }
 
-.pattern-prompt {
+.secondary-patterns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+.sec-pattern-label {
+  font-size: 0.7rem;
+  opacity: 0.7;
+}
+
+.sec-pattern-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.sec-pattern-tag {
+  font-size: 0.7rem;
+  background-color: var(--color-surface-light);
+  padding: 2px 6px;
+  border-radius: 10px;
+}
+
+.style-keywords {
+  margin-top: var(--space-1);
+}
+
+.keyword-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.keyword-tag {
+  font-size: 0.65rem;
+  background-color: var(--color-surface-lighter);
   color: var(--color-text-light);
-  font-size: 0.9rem;
-  line-height: 1.4;
-  flex-grow: 1;
+  padding: 1px 5px;
+  border-radius: 6px;
+}
+
+.search-score {
+  margin-top: auto;
+  padding-top: var(--space-2);
+  position: relative;
+  height: 6px;
+  background-color: var(--color-surface-lighter);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.score-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  background-color: var(--color-primary);
+  border-radius: 10px;
+}
+
+.score-label {
+  position: absolute;
+  right: 0;
+  top: -16px;
+  font-size: 0.7rem;
+  color: var(--color-text-light);
+}
+
+.search-score-info {
+  margin-top: var(--space-1);
+  font-size: 0.8rem;
 }
 
 .image-actions {
@@ -395,28 +579,26 @@ const getPromptText = (prompt, truncate = false) => {
 }
 
 .delete-button {
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   border-radius: 50%;
-  background-color: rgba(255, 255, 255, 0.9);
-  color: var(--color-error);
+  background: rgba(0, 0, 0, 0.6);
+  color: white;
+  border: none;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  padding: 0;
-  border: none;
-}
-
-.delete-button svg {
-  width: 16px;
-  height: 16px;
+  transition: all var(--transition-fast);
 }
 
 .delete-button:hover {
-  background-color: var(--color-error);
-  color: white;
-  transform: none;
+  background: rgba(255, 0, 0, 0.8);
+}
+
+.delete-button svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* Upload placeholder styles */
@@ -463,26 +645,6 @@ const getPromptText = (prompt, truncate = false) => {
 .upload-status {
   font-size: 0.85rem;
   color: var(--color-text-light);
-}
-
-/* Search score display */
-.search-score {
-  margin-top: var(--space-2);
-  padding-top: var(--space-2);
-  border-top: 1px solid var(--color-border);
-}
-
-.score-bar {
-  height: 4px;
-  background: var(--gradient-primary);
-  border-radius: var(--radius-full);
-  margin-bottom: var(--space-1);
-}
-
-.score-label {
-  font-size: 0.8rem;
-  color: var(--color-primary);
-  font-weight: 500;
 }
 
 /* Delete modal */
