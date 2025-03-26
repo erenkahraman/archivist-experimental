@@ -1,9 +1,8 @@
-from flask import Flask, request, jsonify, send_from_directory, Blueprint
-from flask_cors import CORS
+from flask import request, jsonify, send_from_directory, Blueprint
 from pathlib import Path
 import os
 from werkzeug.utils import secure_filename
-from .search_engine import SearchEngine
+from src.core.search_engine import SearchEngine
 import config
 from werkzeug.exceptions import BadRequest
 import dotenv
@@ -18,7 +17,7 @@ logger = logging.getLogger(__name__)
 dotenv.load_dotenv()
 
 # Create a Flask Blueprint
-app = Blueprint('api', __name__)
+api = Blueprint('api', __name__)
 
 # Get Gemini API key from environment variable
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -33,24 +32,24 @@ else:
 search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
 
 # Configure upload folder
-UPLOAD_FOLDER = Path(__file__).parent.parent / "uploads"
+UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
 UPLOAD_FOLDER.mkdir(exist_ok=True)
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@app.route('/thumbnails/<path:filename>')
+@api.route('/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
     """Serve thumbnail images"""
     return send_from_directory(config.THUMBNAIL_DIR, filename)
 
-@app.errorhandler(BadRequest)
+@api.errorhandler(BadRequest)
 def handle_bad_request(e):
     return jsonify({'error': str(e)}), 400
 
 # Add a new endpoint to set the Gemini API key
-@app.route('/set-gemini-key', methods=['POST'])
+@api.route('/set-gemini-key', methods=['POST'])
 def set_gemini_key():
     """
     Set or update the Gemini API key
@@ -83,7 +82,7 @@ def set_gemini_key():
         logger.error(f"Error setting Gemini API key: {str(e)}")
         return jsonify({'error': 'Failed to update API key'}), 500
 
-@app.route('/upload', methods=['POST'])
+@api.route('/upload', methods=['POST'])
 def upload_file():
     """
     Handle file upload with proper validation and error handling.
@@ -150,7 +149,7 @@ def upload_file():
         logger.error(f"Upload error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@app.route('/images', methods=['GET'])
+@api.route('/images', methods=['GET'])
 def get_images():
     try:
         # Only return valid metadata
@@ -162,7 +161,7 @@ def get_images():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/search', methods=['POST'])
+@api.route('/search', methods=['POST'])
 def search():
     """
     Advanced search endpoint that handles complex queries with pattern and color matching.
@@ -258,7 +257,7 @@ def search():
         logger.error(f"Error in search: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
-@app.route('/generate-prompt', methods=['POST'])
+@api.route('/generate-prompt', methods=['POST'])
 def generate_prompt():
     """
     Generate a prompt for an image
@@ -294,6 +293,6 @@ def generate_prompt():
         return jsonify({'error': str(e)}), 500
 
 # Basic test route
-@app.route('/')
+@api.route('/')
 def home():
     return 'API is running' 

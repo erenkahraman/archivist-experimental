@@ -1,5 +1,5 @@
 """
-Main entry point for the Archivist application.
+Archivist - Main application entry point
 """
 from src.app import start_app
 

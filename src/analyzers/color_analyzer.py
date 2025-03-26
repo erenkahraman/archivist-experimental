@@ -9,7 +9,7 @@ import os
 import json
 import io
 import base64
-from ..config_prompts import GEMINI_CONFIG
+from src.config.prompts import GEMINI_CONFIG
 import cv2
 from collections import Counter
 import math
@@ -39,8 +39,8 @@ class ColorAnalyzer:
         self._precompute_reference_colors()
 
     def _load_reference_colors(self):
-        """Load comprehensive color reference database including approximations of Pantone colors."""
-        # Include essential design-focused colors (like Pantone approximations)
+        """Load comprehensive color reference database."""
+        # Include essential design-focused colors
         self.color_references = {
             # Reds
             'Red': (255, 0, 0),

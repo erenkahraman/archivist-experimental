@@ -4,8 +4,8 @@ from flask_cors import CORS
 from pathlib import Path
 import os
 import config
-from .logging_config import configure_logging
-from .search_engine import SearchEngine
+from src.utils.logging_config import configure_logging
+from src.core.search_engine import SearchEngine
 import dotenv
 
 # Load environment variables from .env file if it exists
@@ -60,10 +60,10 @@ def create_app():
         return 'Archivist server is running'
     
     # Import API routes
-    from . import api
+    from src.api import api
     
     # Register API routes with prefix
-    app.register_blueprint(api.app, url_prefix='/api')
+    app.register_blueprint(api, url_prefix='/api')
     
     # Ensure required directories exist
     ensure_directories()
@@ -75,8 +75,7 @@ def ensure_directories():
     directories = [
         config.UPLOAD_DIR,
         config.THUMBNAIL_DIR,
-        config.METADATA_DIR,
-        Path(config.BASE_DIR) / "catalogs"  # Add catalogs directory for PantoneAnalyzer
+        config.METADATA_DIR
     ]
     
     for directory in directories:
