@@ -1,5 +1,16 @@
 <template>
   <div class="gallery-container">
+    <!-- Reset button -->
+    <div class="reset-container">
+      <button 
+        class="reset-button" 
+        @click="confirmReset"
+        title="WARNING: This will delete ALL images"
+      >
+        Reset All Images
+      </button>
+    </div>
+    
     <!-- Empty state -->
     <div v-if="loading" class="gallery-placeholder animate__animated animate__pulse">
       <div class="loading-container">
@@ -67,6 +78,7 @@
               :alt="getImageName(image)"
               class="gallery-image"
               loading="lazy"
+              @error="handleImageError(image)"
             >
             
             <!-- Hover overlay with quick info -->
@@ -159,6 +171,19 @@
         </div>
       </div>
     </div>
+
+    <!-- Add the reset confirmation modal -->
+    <div v-if="showResetConfirm" class="reset-modal" @click="showResetConfirm = false">
+      <div class="reset-modal-content" @click.stop>
+        <h3>⚠️ WARNING: Delete ALL Images</h3>
+        <p>This will permanently delete ALL images from the server.</p>
+        <p>This action <strong>cannot be undone</strong>.</p>
+        <div class="reset-modal-actions">
+          <button class="cancel-button" @click="showResetConfirm = false">Cancel</button>
+          <button class="confirm-button" @click="handleReset">Delete Everything</button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -167,22 +192,24 @@ import { ref, computed, onMounted } from 'vue'
 import { useImageStore } from '../stores/imageStore'
 import ImageModal from './modal/ImageModal.vue'
 
+// Helper to control log level
+const isDev = process.env.NODE_ENV === 'development'
+const log = (message, ...args) => {
+  if (isDev) {
+    console.log(message, ...args)
+  }
+}
+
 const imageStore = useImageStore()
 const selectedImage = ref(null)
 const showDeleteConfirm = ref(false)
 const imageToDelete = ref(null)
+const showResetConfirm = ref(false)
+const isResetting = ref(false)
 
 const images = computed(() => {
-  if (!imageStore.images) return []
-  
-  // Filter out images without thumbnails - these are likely deleted images
-  const validImages = imageStore.images.filter(img => {
-    // Keep uploading images
-    if (img.isUploading) return true
-    
-    // Filter out images with missing thumbnails or original paths
-    return img.thumbnail_path && img.original_path
-  })
+  // Get valid images from the store
+  const validImages = imageStore.getValidImages() || []
   
   // Sort images by timestamp in descending order (newest first)
   return [...validImages].sort((a, b) => {
@@ -196,16 +223,16 @@ const searchActive = computed(() => imageStore.searchQuery !== '')
 
 onMounted(async () => {
   try {
-    // Clear all local storage immediately
-    localStorage.removeItem('gallery-images')
+    // Reset the store to get fresh data - only once on mount
+    await imageStore.resetStore()
     
-    // Fetch fresh data directly from server
-    await imageStore.purgeDeletedImages()
-    
-    // Always clear uploading states
-    imageStore.clearUploadingStates()
+    // No need for additional real-time polling here
+    // This will reduce the number of requests to the backend
   } catch (error) {
-    console.error("Failed to initialize gallery:", error)
+    // Only log errors in development
+    if (isDev) {
+      console.error("Failed to initialize gallery:", error)
+    }
   }
 })
 
@@ -275,23 +302,16 @@ const getStyleKeywords = (image) => {
   return [];
 }
 
-// Helper function to get thumbnail URL
-const getThumbnailUrl = (path) => {
-  if (!path) return '';
+// Handle image error
+const handleImageError = (image) => {
+  if (!image || !image.thumbnail_path) return;
   
-  // If it's already a full URL, use it
-  if (path.startsWith('http')) {
-    return path;
+  if (isDev) {
+    console.warn('Thumbnail failed to load:', image.thumbnail_path);
   }
   
-  // If it already has the API path, use it
-  if (path.includes('/api/')) {
-    return path;
-  }
-  
-  // Construct the API URL with just the filename
-  const filename = path.split('/').pop();
-  return `http://localhost:8000/api/thumbnails/${filename}`;
+  // Remove invalid images from the gallery
+  imageStore.cleanGallery();
 }
 
 const getImageName = (image) => {
@@ -311,19 +331,16 @@ const handleImageClick = (image) => {
 }
 
 const confirmDelete = (image) => {
-  console.log("Confirm delete called with image:", image)
-  if (image && image.original_path) {
-    console.log("Image has valid path:", image.original_path)
-  } else {
-    console.warn("Image is missing original_path:", image)
-  }
+  if (!image) return
   imageToDelete.value = image
   showDeleteConfirm.value = true
 }
 
 const handleDelete = async () => {
   if (!imageToDelete.value) {
-    console.error("Cannot delete: Image is undefined")
+    if (isDev) {
+      console.error("Cannot delete: Image is undefined")
+    }
     showDeleteConfirm.value = false
     return
   }
@@ -335,7 +352,6 @@ const handleDelete = async () => {
 
   if (path) {
     try {
-      console.log("Deleting image with path:", path)
       await imageStore.deleteImage(path)
       showDeleteConfirm.value = false
       imageToDelete.value = null
@@ -343,10 +359,14 @@ const handleDelete = async () => {
         selectedImage.value = null
       }
     } catch (error) {
-      console.error("Failed to delete image:", error)
+      if (isDev) {
+        console.error("Failed to delete image:", error)
+      }
     }
   } else {
-    console.error("Cannot delete: Image path is undefined")
+    if (isDev) {
+      console.error("Cannot delete: Image path is undefined")
+    }
     showDeleteConfirm.value = false
     imageToDelete.value = null
   }
@@ -369,6 +389,42 @@ const getPromptText = (prompt, truncate = false) => {
   }
   
   return promptText;
+}
+
+// Replace getThumbnailUrl function
+const getThumbnailUrl = (path) => {
+  if (!path) return '';
+  
+  // Get just the filename
+  const filename = imageStore.getFileName(path);
+  
+  // Construct API URL
+  return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
+}
+
+// Add these functions for the reset functionality
+const confirmReset = () => {
+  showResetConfirm.value = true
+}
+
+const handleReset = async () => {
+  try {
+    isResetting.value = true
+    
+    // Call the nuclear option
+    await imageStore.nukeEverything()
+    
+    showResetConfirm.value = false
+    
+    // Fetch fresh empty state
+    await imageStore.fetchImages()
+  } catch (error) {
+    if (isDev) {
+      console.error("Failed to reset images:", error)
+    }
+  } finally {
+    isResetting.value = false
+  }
 }
 </script>
 
@@ -780,5 +836,82 @@ const getPromptText = (prompt, truncate = false) => {
   .empty-title {
     font-size: 1.5rem;
   }
+}
+
+/* Add this to your existing styles */
+.reset-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
+.reset-button {
+  background-color: #ff3b30;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.reset-button:hover {
+  background-color: #d63530;
+}
+
+.reset-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(4px);
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-4);
+}
+
+.reset-modal-content {
+  background-color: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-xl);
+}
+
+.reset-modal-content h3 {
+  font-family: var(--font-heading);
+  margin-bottom: var(--space-3);
+  color: #ff3b30;
+}
+
+.reset-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.cancel-button {
+  background-color: var(--color-surface-muted);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.confirm-button {
+  background-color: #ff3b30;
+  color: white;
+  border: none;
+  padding: 8px 16px;
+  border-radius: 4px;
+  cursor: pointer;
 }
 </style> 

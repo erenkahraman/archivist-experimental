@@ -183,8 +183,7 @@ const props = defineProps({
 const emit = defineEmits(['close'])
 const imageStore = useImageStore()
 
-// Add this near the top of the script section, with other imports/constants
-const API_BASE_URL = 'http://localhost:8000/api';
+// Use the API_BASE_URL from the store for consistency
 const isDev = false; // Set to true when debugging is needed
 
 // Image loading state
@@ -236,44 +235,21 @@ const getImageUrl = (path) => {
     return path;
   }
   
-  // Handle case where the path already includes the API part
-  if (path.includes('/api/images/')) {
-    return path;
-  }
+  // Get just the filename
+  const filename = imageStore.getFileName(path);
   
-  // Handle paths where the filename is the full path
-  if (path.includes('/')) {
-    // Extract just the filename
-    const filename = path.split('/').pop();
-    return `${API_BASE_URL}/images/${filename}`;
-  }
-  
-  // Simple case - just the filename
-  return `${API_BASE_URL}/images/${path}`;
+  // Construct API URL
+  return `${imageStore.API_BASE_URL}/images/${filename}`;
 };
 
 const getThumbnailUrl = (path) => {
   if (!path) return '';
   
-  // If it's already a full URL, use it
-  if (path.startsWith('http')) {
-    return path;
-  }
+  // Get just the filename
+  const filename = imageStore.getFileName(path);
   
-  // Handle case where the path already includes the API part
-  if (path.includes('/api/thumbnails/')) {
-    return path;
-  }
-  
-  // Handle paths where the filename is the full path
-  if (path.includes('/')) {
-    // Extract just the filename
-    const filename = path.split('/').pop();
-    return `${API_BASE_URL}/thumbnails/${filename}`;
-  }
-  
-  // Simple case - just the filename
-  return `${API_BASE_URL}/thumbnails/${path}`;
+  // Construct API URL
+  return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
 };
 
 const getImageName = (path) => {
@@ -583,36 +559,24 @@ const handleImageError = (error) => {
   isLoading.value = false;
   imageLoadError.value = true;
   
-  // If we get an error loading both the main image and thumbnail,
-  // the image likely doesn't exist on the server anymore
+  // If we've tried multiple times, just close the modal
   if (useThumbnail.value || attemptCount.value > 1) {
-    console.log("Image seems to be deleted from the server, closing modal and removing from store");
-    
-    // Get the filename to check
-    const thumbnailFilename = props.selectedImage.thumbnail_path ? 
-      props.selectedImage.thumbnail_path.split('/').pop() : null;
+    console.log("Image seems to be deleted from the server, closing modal");
     
     // Close the modal
     setTimeout(() => {
       emit('close');
       
-      // Purge all deleted images from the store
-      imageStore.purgeDeletedImages();
+      // Clean the gallery to remove any invalid images
+      imageStore.cleanGallery();
     }, 500);
     
     return;
   }
   
-  // Provide a more detailed error message for debugging
-  let errorDetail = '';
-  if (props.selectedImage) {
-    const imagePath = props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path || props.selectedImage.id;
-    errorDetail = ` Path attempted: ${imagePath}`;
-  }
+  // Try loading the thumbnail
+  errorMessage.value = 'Failed to load image. Trying thumbnail instead...';
   
-  errorMessage.value = `Failed to load image. The image may be unavailable or the server cannot access it.${errorDetail}`;
-  
-  // Try to load the thumbnail automatically if one is available
   if (props.selectedImage.thumbnail_path) {
     console.log('Attempting to load thumbnail instead:', props.selectedImage.thumbnail_path);
     tryLoadThumbnail();
@@ -633,10 +597,10 @@ const tryLoadThumbnail = () => {
     errorMessage.value = 'Failed to load both image and thumbnail. The image may no longer exist.';
     isLoading.value = false;
     
-    // Close modal and clean up cache
+    // Close modal
     setTimeout(() => {
       emit('close');
-      imageStore.purgeDeletedImages();
+      imageStore.cleanGallery();
     }, 1000);
     
     return;
