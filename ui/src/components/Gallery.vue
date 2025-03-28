@@ -25,7 +25,7 @@
     <div v-else class="gallery-grid animate__animated animate__fadeIn">
       <div 
         v-for="image in images" 
-        :key="image.isUploading ? `uploading-${image.original_path}` : image.thumbnail_path"
+        :key="image.id || image.timestamp || (image.thumbnail_path ? image.thumbnail_path : Math.random())"
         class="gallery-item"
         :class="{
           'is-uploading': image.isUploading,
@@ -175,8 +175,17 @@ const imageToDelete = ref(null)
 const images = computed(() => {
   if (!imageStore.images) return []
   
+  // Filter out images without thumbnails - these are likely deleted images
+  const validImages = imageStore.images.filter(img => {
+    // Keep uploading images
+    if (img.isUploading) return true
+    
+    // Filter out images with missing thumbnails or original paths
+    return img.thumbnail_path && img.original_path
+  })
+  
   // Sort images by timestamp in descending order (newest first)
-  return [...imageStore.images].sort((a, b) => {
+  return [...validImages].sort((a, b) => {
     const timeA = a.timestamp || 0
     const timeB = b.timestamp || 0
     return timeB - timeA
@@ -185,9 +194,19 @@ const images = computed(() => {
 const loading = computed(() => imageStore.loading)
 const searchActive = computed(() => imageStore.searchQuery !== '')
 
-onMounted(() => {
-  imageStore.fetchImages()
-  imageStore.clearUploadingStates()
+onMounted(async () => {
+  try {
+    // Clear all local storage immediately
+    localStorage.removeItem('gallery-images')
+    
+    // Fetch fresh data directly from server
+    await imageStore.purgeDeletedImages()
+    
+    // Always clear uploading states
+    imageStore.clearUploadingStates()
+  } catch (error) {
+    console.error("Failed to initialize gallery:", error)
+  }
 })
 
 // Helper functions for pattern information

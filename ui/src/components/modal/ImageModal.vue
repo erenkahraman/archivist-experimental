@@ -171,6 +171,7 @@
 
 <script setup>
 import { defineProps, ref, computed, onMounted } from 'vue'
+import { useImageStore } from '../../stores/imageStore'
 
 const props = defineProps({
   selectedImage: {
@@ -180,6 +181,7 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['close'])
+const imageStore = useImageStore()
 
 // Add this near the top of the script section, with other imports/constants
 const API_BASE_URL = 'http://localhost:8000/api';
@@ -572,11 +574,34 @@ const handleImageLoaded = () => {
   errorMessage.value = '';
 };
 
+// Track thumbnail load attempts
+const attemptCount = ref(0);
+
 const handleImageError = (error) => {
   console.error('Error loading image:', error);
   console.log('Image that failed to load:', props.selectedImage);
   isLoading.value = false;
   imageLoadError.value = true;
+  
+  // If we get an error loading both the main image and thumbnail,
+  // the image likely doesn't exist on the server anymore
+  if (useThumbnail.value || attemptCount.value > 1) {
+    console.log("Image seems to be deleted from the server, closing modal and removing from store");
+    
+    // Get the filename to check
+    const thumbnailFilename = props.selectedImage.thumbnail_path ? 
+      props.selectedImage.thumbnail_path.split('/').pop() : null;
+    
+    // Close the modal
+    setTimeout(() => {
+      emit('close');
+      
+      // Purge all deleted images from the store
+      imageStore.purgeDeletedImages();
+    }, 500);
+    
+    return;
+  }
   
   // Provide a more detailed error message for debugging
   let errorDetail = '';
@@ -600,10 +625,20 @@ const tryLoadThumbnail = () => {
     return;
   }
   
+  // Increase attempt count
+  attemptCount.value++;
+  
   // Prevent infinite retries
-  if (useThumbnail.value) {
-    errorMessage.value = 'Failed to load both image and thumbnail. The image may be unavailable.';
+  if (attemptCount.value > 2) {
+    errorMessage.value = 'Failed to load both image and thumbnail. The image may no longer exist.';
     isLoading.value = false;
+    
+    // Close modal and clean up cache
+    setTimeout(() => {
+      emit('close');
+      imageStore.purgeDeletedImages();
+    }, 1000);
+    
     return;
   }
   

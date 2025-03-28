@@ -83,28 +83,132 @@ class ElasticsearchClient:
                     # Pattern information
                     "patterns": {
                         "properties": {
-                            "primary_pattern": {"type": "text", "analyzer": "standard"},
+                            # New fields with multi-field mappings
+                            "main_theme": {
+                                "type": "text", 
+                                "analyzer": "standard",
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {
+                                        "type": "text",
+                                        "analyzer": "partial_analyzer",
+                                        "search_analyzer": "standard"
+                                    }
+                                }
+                            },
+                            "main_theme_confidence": {"type": "float"},
+                            "content_details": {
+                                "type": "nested",
+                                "properties": {
+                                    "name": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    },
+                                    "confidence": {"type": "float"}
+                                }
+                            },
+                            "stylistic_attributes": {
+                                "type": "nested",
+                                "properties": {
+                                    "name": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    },
+                                    "confidence": {"type": "float"}
+                                }
+                            },
+                            "primary_pattern": {
+                                "type": "text", 
+                                "analyzer": "standard",
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {
+                                        "type": "text",
+                                        "analyzer": "partial_analyzer",
+                                        "search_analyzer": "standard"
+                                    }
+                                }
+                            },
                             "pattern_confidence": {"type": "float"},
                             "secondary_patterns": {
                                 "type": "nested",
                                 "properties": {
-                                    "name": {"type": "text", "analyzer": "standard"},
+                                    "name": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    },
                                     "confidence": {"type": "float"}
                                 }
                             },
                             "prompt": {
                                 "properties": {
-                                    "final_prompt": {"type": "text", "analyzer": "standard"}
+                                    "final_prompt": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    }
                                 }
                             },
                             "elements": {
                                 "type": "nested",
                                 "properties": {
-                                    "name": {"type": "text", "analyzer": "standard"},
+                                    "name": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    },
                                     "confidence": {"type": "float"}
                                 }
                             },
-                            "style_keywords": {"type": "text", "analyzer": "standard"}
+                            "style_keywords": {
+                                "type": "text", 
+                                "analyzer": "standard",
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {
+                                        "type": "text",
+                                        "analyzer": "partial_analyzer",
+                                        "search_analyzer": "standard"
+                                    }
+                                }
+                            }
                         }
                     },
                     
@@ -114,7 +218,18 @@ class ElasticsearchClient:
                             "dominant_colors": {
                                 "type": "nested",
                                 "properties": {
-                                    "name": {"type": "text", "analyzer": "standard"},
+                                    "name": {
+                                        "type": "text", 
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {
+                                                "type": "text",
+                                                "analyzer": "partial_analyzer",
+                                                "search_analyzer": "standard"
+                                            }
+                                        }
+                                    },
                                     "hex": {"type": "keyword"},
                                     "proportion": {"type": "float"}
                                 }
@@ -139,6 +254,18 @@ class ElasticsearchClient:
                             "type": "custom",
                             "tokenizer": "standard",
                             "filter": ["lowercase", "stemmer"]
+                        },
+                        "partial_analyzer": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": ["lowercase", "edge_ngram_filter"]
+                        }
+                    },
+                    "filter": {
+                        "edge_ngram_filter": {
+                            "type": "edge_ngram",
+                            "min_gram": 2,
+                            "max_gram": 10
                         }
                     }
                 }
@@ -314,100 +441,189 @@ class ElasticsearchClient:
         # Parse the query into components
         query = query.lower().strip()
         
-        # Split on commas first to get distinct search "phrases"
+        # Split on commas to get distinct search phrases
         query_phrases = [phrase.strip() for phrase in query.split(',')]
-        
-        # Common color names to help with color matching
-        color_names = [
-            "red", "blue", "green", "yellow", "orange", "purple", "pink", 
-            "brown", "black", "white", "gray", "grey", "teal", "turquoise", 
-            "gold", "silver", "bronze", "maroon", "navy", "olive", "mint",
-            "cyan", "magenta", "lavender", "violet", "indigo", "coral", "peach"
-        ]
         
         try:
             # Build the search query
             should_clauses = []
             
+            # Log the search query for analysis
+            logger.info(f"Processing search query: '{query}' with {len(query_phrases)} phrases")
+            search_start_time = time.time()
+            
             # Add query for each phrase
             for phrase in query_phrases:
-                # Add match clauses for pattern fields
-                should_clauses.extend([
-                    {
-                        "match": {
-                            "patterns.primary_pattern": {
-                                "query": phrase,
-                                "fuzziness": "AUTO",
-                                "boost": 2.0
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "patterns.prompt.final_prompt": {
-                                "query": phrase,
-                                "fuzziness": "AUTO"
-                            }
-                        }
-                    },
-                    {
-                        "match": {
-                            "patterns.style_keywords": {
-                                "query": phrase,
-                                "fuzziness": "AUTO"
-                            }
-                        }
-                    }
-                ])
+                phrase_terms = phrase.split()
                 
-                # Add nested query for secondary patterns
-                should_clauses.append({
-                    "nested": {
-                        "path": "patterns.secondary_patterns",
-                        "query": {
-                            "match": {
-                                "patterns.secondary_patterns.name": {
+                # For multi-word phrases, use match_phrase with slop
+                if len(phrase_terms) > 1:
+                    logger.debug(f"Adding match_phrase clauses for multi-word phrase: '{phrase}'")
+                    should_clauses.extend([
+                        {
+                            "match_phrase": {
+                                "patterns.main_theme": {
                                     "query": phrase,
-                                    "fuzziness": "AUTO"
+                                    "slop": 2,
+                                    "boost": 3.0
+                                }
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "patterns.prompt.final_prompt": {
+                                    "query": phrase,
+                                    "slop": 3,
+                                    "boost": 2.0
                                 }
                             }
                         }
-                    }
-                })
-                
-                # Add nested query for elements
-                should_clauses.append({
-                    "nested": {
-                        "path": "patterns.elements",
-                        "query": {
-                            "match": {
-                                "patterns.elements.name": {
-                                    "query": phrase,
-                                    "fuzziness": "AUTO"
+                    ])
+                    
+                    # Nested match_phrase for content_details and stylistic_attributes
+                    should_clauses.extend([
+                        {
+                            "nested": {
+                                "path": "patterns.content_details",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.content_details.name": {
+                                            "query": phrase,
+                                            "slop": 2,
+                                            "boost": 2.0
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
-                })
-                
-                # If the phrase contains a color name, add a nested query for dominant colors
-                if any(color in phrase for color in color_names):
-                    should_clauses.append({
-                        "nested": {
-                            "path": "colors.dominant_colors",
-                            "query": {
-                                "match": {
-                                    "colors.dominant_colors.name": {
-                                        "query": phrase,
-                                        "fuzziness": "AUTO",
-                                        "boost": 1.5
+                        },
+                        {
+                            "nested": {
+                                "path": "patterns.stylistic_attributes",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.stylistic_attributes.name": {
+                                            "query": phrase,
+                                            "slop": 2,
+                                            "boost": 1.5
+                                        }
                                     }
                                 }
                             }
                         }
+                    ])
+                
+                # For all phrases (including single-word and multi-word), add multi_match query
+                logger.debug(f"Adding multi_match clause for phrase: '{phrase}'")
+                should_clauses.append({
+                    "multi_match": {
+                        "query": phrase,
+                        "fields": [
+                            "patterns.main_theme^3",
+                            "patterns.main_theme.partial^2.5",
+                            "patterns.primary_pattern^2.5",
+                            "patterns.primary_pattern.partial^2",
+                            "patterns.prompt.final_prompt^1.5",
+                            "patterns.prompt.final_prompt.partial^1.2",
+                            "patterns.style_keywords^1.2",
+                            "patterns.style_keywords.partial^1"
+                        ],
+                        "type": "best_fields",
+                        "fuzziness": "AUTO",
+                        "prefix_length": 2
+                    }
+                })
+                
+                # Add nested queries for arrays and nested objects
+                should_clauses.extend([
+                    {
+                        "nested": {
+                            "path": "patterns.content_details",
+                            "query": {
+                                "multi_match": {
+                                    "query": phrase,
+                                    "fields": [
+                                        "patterns.content_details.name^2",
+                                        "patterns.content_details.name.partial^1.5"
+                                    ],
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            "score_mode": "max"
+                        }
+                    },
+                    {
+                        "nested": {
+                            "path": "patterns.stylistic_attributes",
+                            "query": {
+                                "multi_match": {
+                                    "query": phrase,
+                                    "fields": [
+                                        "patterns.stylistic_attributes.name^1.5",
+                                        "patterns.stylistic_attributes.name.partial^1.2"
+                                    ],
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            "score_mode": "max"
+                        }
+                    },
+                    {
+                        "nested": {
+                            "path": "patterns.secondary_patterns",
+                            "query": {
+                                "multi_match": {
+                                    "query": phrase,
+                                    "fields": [
+                                        "patterns.secondary_patterns.name^1",
+                                        "patterns.secondary_patterns.name.partial^0.8"
+                                    ],
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            "score_mode": "max"
+                        }
+                    },
+                    {
+                        "nested": {
+                            "path": "patterns.elements",
+                            "query": {
+                                "multi_match": {
+                                    "query": phrase,
+                                    "fields": [
+                                        "patterns.elements.name^1",
+                                        "patterns.elements.name.partial^0.8"
+                                    ],
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            "score_mode": "max"
+                        }
+                    }
+                ])
+                
+                # Check for color terms in the phrase
+                color_boost = self._is_color_term(phrase)
+                if color_boost:
+                    logger.debug(f"Detected color term in phrase: '{phrase}'")
+                    should_clauses.append({
+                        "nested": {
+                            "path": "colors.dominant_colors",
+                            "query": {
+                                "multi_match": {
+                                    "query": phrase,
+                                    "fields": [
+                                        "colors.dominant_colors.name^2",
+                                        "colors.dominant_colors.name.partial^1.5"
+                                    ],
+                                    "fuzziness": "AUTO"
+                                }
+                            },
+                            "score_mode": "max",
+                            "boost": color_boost
+                        }
                     })
                 
-                # Match filename
+                # Match filename with lower boost
                 should_clauses.append({
                     "match": {
                         "filename": {
@@ -435,16 +651,65 @@ class ElasticsearchClient:
             
             # Extract and format results
             results = []
+            total_hits = response["hits"]["total"]["value"] if "total" in response["hits"] else len(response["hits"]["hits"])
+            max_score = response["hits"]["max_score"] or 1.0  # Avoid division by zero
+            
             for hit in response["hits"]["hits"]:
                 doc = hit["_source"]
-                doc["similarity"] = hit["_score"] / response["hits"]["max_score"]  # Normalize scores
+                doc["similarity"] = hit["_score"] / max_score  # Normalize scores
                 
                 # Only include results above min_similarity threshold
                 if doc["similarity"] >= min_similarity:
                     results.append(doc)
             
-            logger.info(f"Search for '{query}' found {len(results)} results in {search_time:.2f}s")
+            # Log search performance
+            query_time = time.time() - search_start_time
+            logger.info(f"Search for '{query}' found {total_hits} hits, returning {len(results)} results in {query_time:.2f}s (ES query: {search_time:.2f}s)")
+            
             return results
         except Exception as e:
-            logger.error(f"Search error: {str(e)}")
-            return [] 
+            logger.error(f"Search error: {str(e)}", exc_info=True)
+            return []
+    
+    def _is_color_term(self, phrase: str) -> float:
+        """
+        Check if a phrase contains color terms and return appropriate boost.
+        
+        Args:
+            phrase: The phrase to check
+            
+        Returns:
+            float: Boost value (higher for more specific color terms)
+        """
+        # Common color names
+        basic_colors = [
+            "red", "blue", "green", "yellow", "orange", "purple", "pink", 
+            "brown", "black", "white", "gray", "grey"
+        ]
+        
+        specific_colors = [
+            "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
+            "magenta", "lavender", "violet", "indigo", "coral", "peach",
+            "crimson", "azure", "beige", "tan", "gold", "silver", "bronze"
+        ]
+        
+        # Check for exact matches in the phrase
+        words = phrase.lower().split()
+        
+        # Direct color mention gets highest boost
+        for word in words:
+            if word in specific_colors:
+                return 2.5  # Higher boost for specific colors
+            if word in basic_colors:
+                return 2.0  # Standard boost for basic colors
+        
+        # Check for color mentions within the phrase
+        for color in specific_colors:
+            if color in phrase.lower():
+                return 2.0
+        
+        for color in basic_colors:
+            if color in phrase.lower():
+                return 1.5
+        
+        return 0  # Not a color term 

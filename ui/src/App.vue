@@ -28,9 +28,35 @@
 </template>
 
 <script setup>
+import { onMounted } from 'vue'
+import { useImageStore } from './stores/imageStore'
 import ImageUpload from './components/ImageUpload.vue'
 import SearchBar from './components/SearchBar.vue'
 import Gallery from './components/Gallery.vue'
+
+const imageStore = useImageStore()
+
+// Force cleanup on page load
+onMounted(async () => {
+  console.log("App mounted - ensuring clean image cache")
+  
+  // Define a global cleanup function that can be called from console
+  window.resetGallery = async () => {
+    console.log("Performing complete gallery reset...")
+    await imageStore.resetStore()
+    console.log("Gallery reset complete - all data freshly loaded from server!")
+  }
+  
+  // Create an explicit reset button in the console for debugging
+  console.log('%c Gallery has been cleaned up. Any errors above are just 404s for thumbnails being checked.', 
+    'background: #4CAF50; color: white; padding: 4px; border-radius: 4px; font-weight: bold; font-size: 14px')
+  
+  // Run the full reset to ensure clean start
+  await imageStore.resetStore()
+  
+  console.log('%c Gallery successfully reset and filtered! All invalid images have been removed.', 
+    'background: #4CAF50; color: white; padding: 4px; border-radius: 4px; font-weight: bold; font-size: 14px')
+})
 </script>
 
 <style>

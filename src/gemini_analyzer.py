@@ -91,13 +91,19 @@ class GeminiAnalyzer:
             prompt = """
             Analyze this image and provide a detailed analysis of any patterns present. Focus on the following aspects:
 
-            1. **Primary Pattern Category:**  
+            1. **Main Theme:**  
                Identify the main pattern category (e.g., geometric, floral, abstract, animal print, etc.) and provide a confidence score (0 to 1).
 
-            2. **Secondary Pattern Types:**  
+            2. **Content Details:**  
+               List all specific elements detected (e.g., roses, circles, stripes, leopard spots) with confidence scores.
+
+            3. **Stylistic Attributes:**  
+               Provide descriptive style keywords that characterize the pattern (e.g., "minimalist", "bohemian", "tropical", "industrial").
+
+            4. **Secondary Pattern Types:**  
                List any additional pattern types that appear in the image, each with its own confidence score.
 
-            3. **Specific Elements:**  
+            5. **Specific Elements:**  
                For each key element detected (e.g., a flower, a geometric shape, or an animal skin print), provide:  
                - The exact element name (e.g., "roses", "tulips", "circles", "leopard skin").  
                - For animal prints specifically, include the precise animal type (e.g., "leopard", "zebra", "tiger", "giraffe", "snake", "crocodile") and the characteristic textural detail (e.g., "distinctive rosettes", "bold stripes").  
@@ -105,30 +111,36 @@ class GeminiAnalyzer:
                - The dominant color or color description of the element (e.g., "vibrant pink", "pastel blue", "warm brown with black rosettes").  
                - A confidence score for the detection.
 
-            4. **Layout and Distribution:**  
+            6. **Layout and Distribution:**  
                Describe how the elements are arranged (e.g., scattered, clustered, symmetrical, trailing vines) and provide a confidence score.
 
-            5. **Density and Scale:**  
+            7. **Density and Scale:**  
                Specify the pattern density (e.g., dense, sparse, regular) and the scale of the elements (e.g., small, medium, large) with corresponding confidence scores.
 
-            6. **Texture Type:**
+            8. **Texture Type:**
                Describe the texture quality of the pattern (e.g., smooth, rough, embossed, flat, glossy, matte) with a confidence score.
 
-            7. **Cultural and Historical Context:**
+            9. **Cultural and Historical Context:**
                - Identify any cultural influences in the pattern (e.g., Japanese, Moroccan, Scandinavian, Art Deco) with a confidence score.
                - Suggest a historical period the pattern might be associated with (e.g., Victorian, Mid-Century Modern, Contemporary) with a confidence score.
                - Describe the mood or emotional quality the pattern evokes (e.g., calm, energetic, sophisticated, playful) with a confidence score.
 
-            8. **Style Keywords:**
-               Provide 3-5 descriptive style keywords that best characterize the pattern (e.g., "minimalist", "bohemian", "tropical", "industrial").
-
-            9. **Prompt Description:**  
-               Finally, generate a coherent, human-readable prompt that summarizes the pattern. This description should integrate the above details into a fluid sentence. For example:  
-               "Elegant floral pattern featuring vibrant pink garden roses and delicate pastel tulips, combined with bold leopard skin print exhibiting distinctive rosettes, arranged in a trailing vines layout with a dense overall distribution at a large scale."
+            10. **Prompt Description:**  
+               Finally, generate a coherent, human-readable prompt that summarizes the pattern. This description should integrate the above details into a fluid sentence.
 
             Format your response as a structured JSON with the following fields:
 
             {
+              "main_theme": "primary pattern category",
+              "main_theme_confidence": 0.95,
+              "content_details": [
+                {"name": "specific element", "confidence": 0.9},
+                {"name": "specific element", "confidence": 0.8}
+              ],
+              "stylistic_attributes": [
+                {"name": "style attribute", "confidence": 0.85},
+                {"name": "style attribute", "confidence": 0.75}
+              ],
               "category": "primary pattern category",
               "category_confidence": 0.95,
               "secondary_patterns": [
@@ -252,6 +264,33 @@ class GeminiAnalyzer:
         # Ensure original_path exists
         if "original_path" not in response:
             response["original_path"] = ""
+            
+        # Ensure new fields exist
+        if "main_theme" not in response:
+            response["main_theme"] = response.get("category", "Unknown")
+        if "main_theme_confidence" not in response:
+            response["main_theme_confidence"] = response.get("category_confidence", 0.8)
+            
+        # Ensure content_details is a list with proper structure
+        if not isinstance(response.get("content_details"), list):
+            # Try to populate from elements if available
+            response["content_details"] = []
+            for element in response.get("elements", []):
+                if isinstance(element, dict) and "name" in element:
+                    response["content_details"].append({
+                        "name": element["name"],
+                        "confidence": element.get("confidence", 0.8)
+                    })
+        
+        # Ensure stylistic_attributes is a list with proper structure
+        if not isinstance(response.get("stylistic_attributes"), list):
+            # Try to populate from style_keywords if available
+            response["stylistic_attributes"] = []
+            for keyword in response.get("style_keywords", []):
+                response["stylistic_attributes"].append({
+                    "name": keyword,
+                    "confidence": 0.8
+                })
         
         # Ensure confidence values are floats between 0 and 1
         if isinstance(response.get("category_confidence"), str):
@@ -418,6 +457,10 @@ class GeminiAnalyzer:
     def _get_default_response(self, image_path: str, width: int, height: int) -> Dict[str, Any]:
         """Return a default response when analysis fails"""
         return {
+            "main_theme": "Unknown",
+            "main_theme_confidence": 0.0,
+            "content_details": [],
+            "stylistic_attributes": [],
             "category": "Unknown",
             "category_confidence": 0.0,
             "primary_pattern": "Unknown",

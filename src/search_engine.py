@@ -50,6 +50,9 @@ class SearchEngine:
             # Load existing metadata if available
             self.metadata = self.load_metadata()
             
+            # Initialize search analytics
+            self.search_logs = self._load_search_logs()
+            
             # If using Elasticsearch, ensure all metadata is indexed
             if self.use_elasticsearch and self.metadata:
                 self._index_all_metadata()
@@ -192,6 +195,34 @@ class SearchEngine:
             
             if pattern_info.get('pattern_confidence') is None:
                 pattern_info['pattern_confidence'] = pattern_info.get('category_confidence', 0.8)
+                
+            # Add new structured fields if they're missing
+            if pattern_info.get('main_theme') is None:
+                pattern_info['main_theme'] = pattern_info.get('primary_pattern', pattern_info.get('category', 'Unknown'))
+                
+            if pattern_info.get('main_theme_confidence') is None:
+                pattern_info['main_theme_confidence'] = pattern_info.get('pattern_confidence', pattern_info.get('category_confidence', 0.8))
+                
+            # Ensure content_details exists
+            if not pattern_info.get('content_details'):
+                # Create from elements if available
+                pattern_info['content_details'] = []
+                for element in pattern_info.get('elements', []):
+                    if isinstance(element, dict) and element.get('name'):
+                        pattern_info['content_details'].append({
+                            'name': element.get('name', ''),
+                            'confidence': element.get('confidence', 0.8)
+                        })
+                        
+            # Ensure stylistic_attributes exists
+            if not pattern_info.get('stylistic_attributes'):
+                # Create from style_keywords if available
+                pattern_info['stylistic_attributes'] = []
+                for keyword in pattern_info.get('style_keywords', []):
+                    pattern_info['stylistic_attributes'].append({
+                        'name': keyword,
+                        'confidence': 0.8
+                    })
             
             # Generate metadata
             metadata = {
@@ -210,7 +241,11 @@ class SearchEngine:
             
             # Index in Elasticsearch if enabled
             if self.use_elasticsearch:
-                self.es_client.index_document(metadata)
+                indexing_successful = self.es_client.index_document(metadata)
+                if indexing_successful:
+                    logger.info(f"Successfully indexed {image_path.name} in Elasticsearch")
+                else:
+                    logger.warning(f"Failed to index {image_path.name} in Elasticsearch")
             
             logger.info(f"Image processed successfully: {image_path}")
             return metadata
@@ -255,7 +290,183 @@ class SearchEngine:
                 "color_distribution": {}
             }
 
-    def search(self, query: str, k: int = 10) -> List[Dict]:
+    def _load_search_logs(self) -> Dict:
+        """Load search logs from file."""
+        try:
+            logs_path = config.BASE_DIR / "search_logs.json"
+            if logs_path.exists():
+                with open(logs_path, 'r') as f:
+                    return json.load(f)
+            return {"queries": [], "clicks": []}
+        except Exception as e:
+            logger.error(f"Error loading search logs: {e}")
+            return {"queries": [], "clicks": []}
+
+    def _save_search_logs(self):
+        """Save search logs to file."""
+        try:
+            logs_path = config.BASE_DIR / "search_logs.json"
+            with open(logs_path, 'w') as f:
+                json.dump(self.search_logs, f)
+        except Exception as e:
+            logger.error(f"Error saving search logs: {e}")
+
+    def log_search_query(self, query: str, result_count: int, search_time: float, 
+                         session_id: str = None, user_id: str = None):
+        """
+        Log search query for analytics to improve search quality.
+        
+        Args:
+            query: The search query string
+            result_count: Number of results returned
+            search_time: Time taken to perform the search
+            session_id: Optional session identifier
+            user_id: Optional user identifier
+        """
+        try:
+            timestamp = import_time.time()
+            log_entry = {
+                "timestamp": timestamp,
+                "query": query,
+                "result_count": result_count,
+                "search_time": search_time,
+                "session_id": session_id,
+                "user_id": user_id,
+                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+            }
+            
+            self.search_logs["queries"].append(log_entry)
+            
+            # Trim log if it gets too large (keep last 1000 entries)
+            if len(self.search_logs["queries"]) > 1000:
+                self.search_logs["queries"] = self.search_logs["queries"][-1000:]
+                
+            # Periodically save logs (every 10 searches)
+            if len(self.search_logs["queries"]) % 10 == 0:
+                self._save_search_logs()
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error logging search query: {e}")
+            return False
+    
+    def log_result_click(self, query: str, result_id: str, rank: int, 
+                         session_id: str = None, user_id: str = None):
+        """
+        Log when a user clicks on a search result to help improve relevance.
+        
+        Args:
+            query: The search query that produced the result
+            result_id: ID of the clicked result
+            rank: Position of the result in the results list (0-based)
+            session_id: Optional session identifier
+            user_id: Optional user identifier
+        """
+        try:
+            timestamp = import_time.time()
+            log_entry = {
+                "timestamp": timestamp,
+                "query": query,
+                "result_id": result_id,
+                "rank": rank,
+                "session_id": session_id,
+                "user_id": user_id,
+                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+            }
+            
+            self.search_logs["clicks"].append(log_entry)
+            
+            # Trim log if it gets too large (keep last 1000 entries)
+            if len(self.search_logs["clicks"]) > 1000:
+                self.search_logs["clicks"] = self.search_logs["clicks"][-1000:]
+                
+            # Always save logs when a click is recorded (important feedback)
+            self._save_search_logs()
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error logging result click: {e}")
+            return False
+            
+    def get_search_analytics(self, days: int = 7) -> Dict:
+        """
+        Get search analytics for the specified time range.
+        
+        Args:
+            days: Number of days to include in analytics
+            
+        Returns:
+            Dictionary with analytics data
+        """
+        try:
+            # Calculate cutoff timestamp
+            cutoff = import_time.time() - (days * 24 * 60 * 60)
+            
+            # Filter queries and clicks by time range
+            recent_queries = [q for q in self.search_logs["queries"] 
+                              if q["timestamp"] >= cutoff]
+            recent_clicks = [c for c in self.search_logs["clicks"] 
+                             if c["timestamp"] >= cutoff]
+                             
+            # Calculate top queries
+            query_counts = {}
+            for query in recent_queries:
+                q = query["query"].lower()
+                if q in query_counts:
+                    query_counts[q] += 1
+                else:
+                    query_counts[q] = 1
+                    
+            # Sort by count
+            top_queries = [(q, c) for q, c in query_counts.items()]
+            top_queries.sort(key=lambda x: x[1], reverse=True)
+            
+            # Calculate zero-result queries
+            zero_results = [q for q in recent_queries if q["result_count"] == 0]
+            
+            # Calculate click-through rate
+            query_results = {}
+            for query in recent_queries:
+                q = query["query"].lower()
+                if q not in query_results:
+                    query_results[q] = 0
+                query_results[q] += query["result_count"]
+                
+            click_counts = {}
+            for click in recent_clicks:
+                q = click["query"].lower()
+                if q in click_counts:
+                    click_counts[q] += 1
+                else:
+                    click_counts[q] = 1
+                    
+            ctr_data = []
+            for q, results in query_results.items():
+                clicks = click_counts.get(q, 0)
+                if results > 0:
+                    ctr = clicks / results
+                else:
+                    ctr = 0
+                ctr_data.append({"query": q, "results": results, "clicks": clicks, "ctr": ctr})
+                
+            # Sort by CTR (descending)
+            ctr_data.sort(key=lambda x: x["ctr"], reverse=True)
+            
+            return {
+                "period_days": days,
+                "total_queries": len(recent_queries),
+                "total_clicks": len(recent_clicks),
+                "avg_results_per_query": sum(q["result_count"] for q in recent_queries) / max(len(recent_queries), 1),
+                "avg_search_time": sum(q["search_time"] for q in recent_queries) / max(len(recent_queries), 1),
+                "top_queries": top_queries[:20],  # Top 20 queries
+                "zero_result_queries": [q["query"] for q in zero_results][:20],  # Top 20 zero-result queries
+                "ctr_by_query": ctr_data[:20]  # Top 20 by CTR
+            }
+        except Exception as e:
+            logger.error(f"Error generating search analytics: {e}")
+            return {"error": str(e)}
+
+    def search(self, query: str, k: int = 10, session_id: str = None, user_id: str = None) -> List[Dict]:
         """
         Advanced search for images based on pattern, color, and other metadata.
         If Elasticsearch is enabled, use it for search, otherwise fall back to in-memory search.
@@ -264,16 +475,21 @@ class SearchEngine:
         Args:
             query: Search query string (can include commas to separate distinct terms)
             k: Maximum number of results to return
+            session_id: Optional session identifier for analytics
+            user_id: Optional user identifier for analytics
             
         Returns:
             List of image metadata dictionaries with similarity scores
         """
         min_similarity = config.DEFAULT_MIN_SIMILARITY
+        search_start_time = import_time.time()
         
         # Check cache first if enabled
         cached_results = self.cache.get(query, k, min_similarity)
         if cached_results is not None:
             logger.info(f"Returning cached results for query: '{query}'")
+            search_time = import_time.time() - search_start_time
+            self.log_search_query(query, len(cached_results), search_time, session_id, user_id)
             return cached_results
         
         # Cache miss, perform search
@@ -289,6 +505,10 @@ class SearchEngine:
                 # Cache the results
                 self.cache.set(query, k, min_similarity, results)
                 
+                # Log the search for analytics
+                search_time = import_time.time() - search_start_time
+                self.log_search_query(query, len(results), search_time, session_id, user_id)
+                
                 return results
             except Exception as e:
                 logger.error(f"Elasticsearch search failed, falling back to in-memory search: {e}")
@@ -299,6 +519,10 @@ class SearchEngine:
         
         # Cache the results
         self.cache.set(query, k, min_similarity, results)
+        
+        # Log the search for analytics
+        search_time = import_time.time() - search_start_time
+        self.log_search_query(query, len(results), search_time, session_id, user_id)
         
         return results
     
@@ -324,6 +548,10 @@ class SearchEngine:
             # Parse the query into components
             query = query.lower().strip()
             
+            # Log the search query for analysis
+            logger.info(f"In-memory search for: '{query}'")
+            search_start_time = import_time.time()
+            
             # Split on commas first to get distinct search "phrases"
             query_phrases = [phrase.strip() for phrase in query.split(',')]
             
@@ -339,12 +567,19 @@ class SearchEngine:
                     query_terms.append(term)
             
             # Common color names to help with color matching
-            color_names = [
+            basic_colors = [
                 "red", "blue", "green", "yellow", "orange", "purple", "pink", 
-                "brown", "black", "white", "gray", "grey", "teal", "turquoise", 
-                "gold", "silver", "bronze", "maroon", "navy", "olive", "mint",
-                "cyan", "magenta", "lavender", "violet", "indigo", "coral", "peach"
+                "brown", "black", "white", "gray", "grey"
             ]
+            
+            specific_colors = [
+                "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
+                "magenta", "lavender", "violet", "indigo", "coral", "peach",
+                "crimson", "azure", "beige", "tan", "gold", "silver", "bronze"
+            ]
+            
+            # Combine color lists for easier checking
+            color_names = basic_colors + specific_colors
             
             # Common pattern types
             pattern_types = [
@@ -393,17 +628,78 @@ class SearchEngine:
             
             for path, metadata in self.metadata.items():
                 # Initialize score components
+                main_theme_score = 0.0
+                content_details_score = 0.0
+                stylistic_attributes_score = 0.0
                 color_score = 0.0
                 pattern_score = 0.0
                 other_score = 0.0
                 confidence_boost = 0.0
                 proportion_boost = 0.0
                 
-                # PATTERN MATCHING
+                # MAIN THEME MATCHING (new field)
                 if 'patterns' in metadata and metadata['patterns']:
                     patterns = metadata['patterns']
                     
-                    # Primary pattern match is weighted heavily
+                    # Main theme match is weighted heavily
+                    main_theme = patterns.get('main_theme', '').lower()
+                    if main_theme and main_theme != 'unknown':
+                        main_theme_confidence = patterns.get('main_theme_confidence', 0.5)
+                        
+                        # Check for exact main theme matches
+                        for pattern_term in pattern_terms:
+                            if pattern_term == main_theme:
+                                # Exact match with high confidence
+                                main_theme_score += 10.0 * main_theme_confidence
+                            elif pattern_term in main_theme or main_theme in pattern_term:
+                                # Partial match
+                                main_theme_score += 5.0 * main_theme_confidence
+                                
+                        # Also check general terms against main theme
+                        for term in other_terms:
+                            if term.strip() and (term == main_theme or term in main_theme):
+                                main_theme_score += 2.0 * main_theme_confidence
+                    
+                    # CONTENT DETAILS MATCHING (new field)
+                    content_details = patterns.get('content_details', [])
+                    for content in content_details:
+                        if isinstance(content, dict):
+                            content_name = content.get('name', '').lower()
+                            content_confidence = content.get('confidence', 0.5)
+                            
+                            # Check pattern terms against content details
+                            for pattern_term in pattern_terms:
+                                if pattern_term == content_name:
+                                    # Exact match
+                                    content_details_score += 4.0 * content_confidence
+                                elif pattern_term in content_name:
+                                    # Partial match
+                                    content_details_score += 2.0 * content_confidence
+                            
+                            # Check other terms against content details
+                            for term in other_terms:
+                                if term.strip() and (term == content_name or term in content_name):
+                                    content_details_score += 3.0 * content_confidence
+                    
+                    # STYLISTIC ATTRIBUTES MATCHING (new field)
+                    stylistic_attributes = patterns.get('stylistic_attributes', [])
+                    for attr in stylistic_attributes:
+                        if isinstance(attr, dict):
+                            attr_name = attr.get('name', '').lower()
+                            attr_confidence = attr.get('confidence', 0.5)
+                            
+                            # Check other terms against stylistic attributes
+                            for term in other_terms:
+                                if term.strip() and (term == attr_name or term in attr_name):
+                                    stylistic_attributes_score += 3.0 * attr_confidence
+                            
+                            # Also check pattern terms against stylistic attributes
+                            for pattern_term in pattern_terms:
+                                if pattern_term in attr_name:
+                                    stylistic_attributes_score += 2.0 * attr_confidence
+                    
+                    # PATTERN MATCHING (existing fields)
+                    # Primary pattern match
                     primary_pattern = patterns.get('primary_pattern', '').lower()
                     if primary_pattern and primary_pattern != 'unknown':
                         primary_confidence = patterns.get('pattern_confidence', 0.5)
@@ -412,10 +708,10 @@ class SearchEngine:
                         for pattern_term in pattern_terms:
                             if pattern_term == primary_pattern:
                                 # Exact match with high confidence
-                                pattern_score += 10.0 * primary_confidence
+                                pattern_score += 8.0 * primary_confidence
                             elif pattern_term in primary_pattern or primary_pattern in pattern_term:
                                 # Partial match
-                                pattern_score += 5.0 * primary_confidence
+                                pattern_score += 4.0 * primary_confidence
                     
                     # Check secondary patterns
                     secondary_patterns = patterns.get('secondary_patterns', [])
@@ -452,6 +748,15 @@ class SearchEngine:
                         for pattern_term in pattern_terms:
                             if pattern_term in prompt_text:
                                 pattern_score += 0.5
+                                
+                        # Also check other terms in the prompt
+                        for term in other_terms:
+                            if term.strip() and term in prompt_text:
+                                # Give higher weight to full phrase matches in the prompt
+                                if len(term.split()) > 1:
+                                    other_score += 2.0
+                                else:
+                                    other_score += 0.8
                 
                 # COLOR MATCHING
                 if 'colors' in metadata and metadata['colors']:
@@ -464,10 +769,14 @@ class SearchEngine:
                         proportion = color_data.get('proportion', 0.1)
                         
                         for color_term in color_terms:
-                            if color_term == color_name or color_term in color_name:
-                                # Weight by the color's proportion in the image
-                                color_score += 5.0 * proportion
+                            # Exact match gets higher score
+                            if color_term == color_name:
+                                color_score += 6.0 * proportion
                                 proportion_boost += proportion
+                            # Partial match gets lower score
+                            elif color_term in color_name:
+                                color_score += 3.0 * proportion
+                                proportion_boost += proportion * 0.5
                     
                     # Also check shades for more subtle color matches
                     for color_data in dominant_colors:
@@ -508,20 +817,14 @@ class SearchEngine:
                         for term in other_terms:
                             if term.strip() and term in mood:
                                 other_score += 1.5 * mood_conf
-                    
-                    # Check the prompt text for any other terms - this is important for general searches
-                    if 'prompt' in patterns and 'final_prompt' in patterns['prompt']:
-                        prompt_text = patterns['prompt']['final_prompt'].lower()
-                        for term in other_terms:
-                            if term.strip() and term in prompt_text:
-                                # Give higher weight to full phrase matches in the prompt
-                                if len(term.split()) > 1:
-                                    other_score += 3.0
-                                else:
-                                    other_score += 1.0
                 
                 # Calculate final score (weighted sum)
                 final_score = 0.0
+                
+                # Add new field scores with high weights
+                final_score += main_theme_score * 3.0
+                final_score += content_details_score * 2.0
+                final_score += stylistic_attributes_score * 1.5
                 
                 # Weight pattern matches most heavily when pattern terms are present
                 if pattern_terms:
@@ -543,6 +846,9 @@ class SearchEngine:
                     scored_results.append({
                         **metadata, 
                         'similarity': min(final_score, 1.0),  # Cap at 1.0
+                        'main_theme_score': main_theme_score,
+                        'content_details_score': content_details_score,
+                        'stylistic_attributes_score': stylistic_attributes_score,
                         'pattern_score': pattern_score,
                         'color_score': color_score,
                         'other_score': other_score
@@ -551,8 +857,9 @@ class SearchEngine:
             # Sort results by similarity score (descending)
             scored_results.sort(key=lambda x: x['similarity'], reverse=True)
             
-            # Log search results for debugging
-            logger.info(f"Search for '{query}' found {len(scored_results)} results")
+            # Log search performance
+            search_time = import_time.time() - search_start_time
+            logger.info(f"In-memory search for '{query}' found {len(scored_results)} results in {search_time:.2f}s")
             
             return scored_results[:k]  # Return top k results
             
