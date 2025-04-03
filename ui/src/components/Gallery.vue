@@ -396,7 +396,9 @@ const getThumbnailUrl = (path) => {
   if (!path) return '';
   
   // Get just the filename
-  const filename = imageStore.getFileName(path);
+  const filename = path.includes('/') ? 
+    imageStore.getFileName(path) : 
+    path; // Use path directly if it's already just a filename
   
   // Construct API URL
   return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;

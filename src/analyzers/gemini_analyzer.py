@@ -88,134 +88,99 @@ class GeminiAnalyzer:
             # Get file name from path
             file_name = os.path.basename(image_path)
             
-            # Prepare the prompt for pattern analysis
-            prompt = """
-            Analyze this image and provide a detailed analysis of any patterns present. Focus on the following aspects:
-
-            1. **Primary Pattern Category:**  
-               Identify the main pattern category (e.g., geometric, floral, abstract, animal print, etc.) and provide a confidence score (0 to 1).
-
-            2. **Secondary Pattern Types:**  
-               List any additional pattern types that appear in the image, each with its own confidence score.
-
-            3. **Specific Elements:**  
-               For each key element detected (e.g., a flower, a geometric shape, or an animal skin print), provide:  
-               - The exact element name (e.g., "roses", "tulips", "circles", "leopard skin").  
-               - For animal prints specifically, include the precise animal type (e.g., "leopard", "zebra", "tiger", "giraffe", "snake", "crocodile") and the characteristic textural detail (e.g., "distinctive rosettes", "bold stripes").  
-               - A detailed sub-category if applicable (e.g., "garden roses", "double tulips").  
-               - The dominant color or color description of the element (e.g., "vibrant pink", "pastel blue", "warm brown with black rosettes").  
-               - A confidence score for the detection.
-
-            4. **Layout and Distribution:**  
-               Describe how the elements are arranged (e.g., scattered, clustered, symmetrical, trailing vines) and provide a confidence score.
-
-            5. **Density and Scale:**  
-               Specify the pattern density (e.g., dense, sparse, regular) and the scale of the elements (e.g., small, medium, large) with corresponding confidence scores.
-
-            6. **Texture Type:**
-               Describe the texture quality of the pattern (e.g., smooth, rough, embossed, flat, glossy, matte) with a confidence score.
-
-            7. **Cultural and Historical Context:**
-               - Identify any cultural influences in the pattern (e.g., Japanese, Moroccan, Scandinavian, Art Deco) with a confidence score.
-               - Suggest a historical period the pattern might be associated with (e.g., Victorian, Mid-Century Modern, Contemporary) with a confidence score.
-               - Describe the mood or emotional quality the pattern evokes (e.g., calm, energetic, sophisticated, playful) with a confidence score.
-
-            8. **Style Keywords:**
-               Provide 3-5 descriptive style keywords that best characterize the pattern (e.g., "minimalist", "bohemian", "tropical", "industrial").
-
-            9. **Prompt Description:**  
-               Finally, generate a coherent, human-readable prompt that summarizes the pattern. This description should integrate the above details into a fluid sentence. For example:  
-               "Elegant floral pattern featuring vibrant pink garden roses and delicate pastel tulips, combined with bold leopard skin print exhibiting distinctive rosettes, arranged in a trailing vines layout with a dense overall distribution at a large scale."
-
-            Format your response as a structured JSON with the following fields:
-
-            {
-              "category": "primary pattern category",
-              "category_confidence": 0.95,
-              "secondary_patterns": [
-                {"name": "pattern name", "confidence": 0.8},
-                {"name": "pattern name", "confidence": 0.6}
-              ],
-              "elements": [
-                {
-                  "name": "element name",
-                  "sub_category": "detailed element type",
-                  "color": "dominant color description",
-                  "animal_type": "if applicable, specify animal type for animal prints",
-                  "textural_detail": "if applicable, describe specific pattern detail (e.g., rosettes, stripes)",
-                  "confidence": 0.9
-                }
-              ],
-              "density": {
-                "type": "dense/scattered/regular",
-                "confidence": 0.85
-              },
-              "layout": {
-                "type": "layout type",
-                "confidence": 0.8
-              },
-              "scale": {
-                "type": "small/medium/large",
-                "confidence": 0.8
-              },
-              "texture_type": {
-                "type": "texture description (e.g., smooth, rough, embossed)",
-                "confidence": 0.8
-              },
-              "cultural_influence": {
-                "type": "cultural style (e.g., Japanese, Moroccan, Art Deco)",
-                "confidence": 0.7
-              },
-              "historical_period": {
-                "type": "historical era (e.g., Victorian, Mid-Century, Contemporary)",
-                "confidence": 0.7
-              },
-              "mood": {
-                "type": "emotional quality (e.g., calm, energetic, sophisticated)",
-                "confidence": 0.8
-              },
-              "style_keywords": ["keyword1", "keyword2", "keyword3"],
-              "prompt": {
-                "final_prompt": "A detailed, coherent description of the pattern"
-              }
-            }
+            # Define the analysis prompt
+            analysis_prompt = f"""
+            Analyze the following image in detail and identify the pattern, style, and visual elements.
+            
+            Focus on:
+            1. Main theme or pattern category (e.g., floral, geometric, paisley)
+            2. Specific content elements in the image (e.g., roses, triangles, teardrops)
+            3. Stylistic attributes (e.g., watercolor, hand-drawn, digital, sketched)
+            4. Layout, scale, and density characteristics
+            5. Cultural or historical influences
+            6. Color composition and mood
+            
+            Important note: If the image contains paisley motifs as a dominant element, set the main_theme to "paisley" or "paisley pattern", NOT just "textile pattern".
+            
+            Return the results in the following JSON format with confidence scores for each element:
+            
+            {{
+                "main_theme": "The primary theme or category of the pattern",
+                "main_theme_confidence": 0.9,
+                "content_details": [
+                    {{"name": "Specific element 1", "confidence": 0.8}},
+                    {{"name": "Specific element 2", "confidence": 0.7}}
+                ],
+                "stylistic_attributes": [
+                    {{"name": "Style attribute 1", "confidence": 0.9}},
+                    {{"name": "Style attribute 2", "confidence": 0.7}}
+                ],
+                "category": "Overall pattern category",
+                "category_confidence": 0.9,
+                "secondary_patterns": [
+                    {{"name": "Secondary pattern 1", "confidence": 0.7}},
+                    {{"name": "Secondary pattern 2", "confidence": 0.6}}
+                ],
+                "elements": [
+                    {{
+                        "name": "Element name",
+                        "sub_category": "Element subcategory",
+                        "color": "Element color",
+                        "animal_type": "If animal, the type", 
+                        "textural_detail": "Texture description",
+                        "confidence": 0.8
+                    }}
+                ],
+                "density": {{"type": "sparse/medium/dense", "confidence": 0.8}},
+                "layout": {{"type": "regular/irregular/balanced", "confidence": 0.8}},
+                "scale": {{"type": "small/medium/large", "confidence": 0.8}},
+                "texture_type": {{"type": "texture description", "confidence": 0.8}},
+                "cultural_influence": {{"type": "culture name", "confidence": 0.7}},
+                "historical_period": {{"type": "time period", "confidence": 0.6}},
+                "mood": {{"type": "mood description", "confidence": 0.7}},
+                "style_keywords": ["keyword1", "keyword2", "keyword3"],
+                "prompt": {{
+                    "final_prompt": "A detailed description that could be used as a generative prompt for this image"
+                }}
+            }}
+            
+            Focus on accuracy and give confidence values between 0.0 and 1.0. The main_theme should be more general, while content_details should be specific elements found in the image.
             """
             
-            # Configure the model
+            # Set up the Gemini model
+            generation_config = {
+                "temperature": 0.0,
+                "top_p": 0.8,
+                "top_k": 40,
+                "max_output_tokens": 1024,
+            }
+            
+            # Load the model
             model = genai.GenerativeModel(
-                model_name=GEMINI_CONFIG['model'],
-                generation_config={
-                    "max_output_tokens": GEMINI_CONFIG['max_tokens'],
-                    "temperature": GEMINI_CONFIG['temperature'],
-                    "response_mime_type": GEMINI_CONFIG.get('response_mime_type', 'application/json')
-                }
+                model_name="gemini-1.5-flash",
+                generation_config=generation_config
             )
             
-            # Generate content with the image
-            response = model.generate_content([prompt, optimized_image])
+            # Generate content
+            response = model.generate_content([analysis_prompt, optimized_image])
             
-            # Extract and parse the JSON response
+            # Extract and parse JSON
             result_text = response.text
-            
-            # Try to find JSON within the response
             json_start = result_text.find('{')
             json_end = result_text.rfind('}') + 1
             
             if json_start >= 0 and json_end > json_start:
                 json_content = result_text[json_start:json_end]
                 try:
-                    # Parse JSON and validate result
                     result = json.loads(json_content)
-                    
-                    # Add image metadata
+                    # Add image dimensions and path
                     result["dimensions"] = {"width": width, "height": height}
                     result["original_path"] = image_path
-                    
-                    # Validate and fix result
-                    return self._validate_and_fix_response(result)
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse JSON from Gemini response: {str(e)}")
-                    logger.error(f"JSON content attempted to parse: {json_content[:100]}...")
+                    # Validate and fix the response
+                    validated_result = self._validate_and_fix_response(result)
+                    return validated_result
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse JSON from Gemini response")
                     return self._get_default_response(image_path, width, height)
             else:
                 logger.error("No JSON found in Gemini response")
@@ -241,6 +206,34 @@ class GeminiAnalyzer:
             if key not in response:
                 response[key] = default[key]
         
+        # Ensure new fields exist
+        if "main_theme" not in response:
+            response["main_theme"] = response.get("category", "Unknown")
+        
+        if "main_theme_confidence" not in response:
+            response["main_theme_confidence"] = response.get("category_confidence", 0.8)
+        
+        if "content_details" not in response or not isinstance(response["content_details"], list):
+            response["content_details"] = []
+            # Generate from elements if available
+            if "elements" in response and isinstance(response["elements"], list):
+                for element in response["elements"]:
+                    if isinstance(element, dict) and "name" in element:
+                        response["content_details"].append({
+                            "name": element["name"],
+                            "confidence": element.get("confidence", 0.7)
+                        })
+        
+        if "stylistic_attributes" not in response or not isinstance(response["stylistic_attributes"], list):
+            response["stylistic_attributes"] = []
+            # Generate from style_keywords if available
+            if "style_keywords" in response and isinstance(response["style_keywords"], list):
+                for keyword in response["style_keywords"]:
+                    response["stylistic_attributes"].append({
+                        "name": keyword,
+                        "confidence": 0.7
+                    })
+        
         # Ensure dimensions has proper structure
         if not isinstance(response.get("dimensions"), dict):
             response["dimensions"] = {"width": 0, "height": 0}
@@ -262,6 +255,47 @@ class GeminiAnalyzer:
                 response["category_confidence"] = 0.8
         elif response.get("category_confidence") is None:
             response["category_confidence"] = 0.8
+        
+        # Ensure main_theme_confidence is a float
+        if isinstance(response.get("main_theme_confidence"), str):
+            try:
+                response["main_theme_confidence"] = float(response["main_theme_confidence"])
+            except:
+                response["main_theme_confidence"] = 0.8
+        elif response.get("main_theme_confidence") is None:
+            response["main_theme_confidence"] = 0.8
+        
+        # Validate content_details items
+        for item in response.get("content_details", []):
+            if not isinstance(item, dict):
+                continue
+            
+            if "name" not in item:
+                item["name"] = ""
+            
+            if "confidence" not in item:
+                item["confidence"] = 0.7
+            elif isinstance(item["confidence"], str):
+                try:
+                    item["confidence"] = float(item["confidence"])
+                except:
+                    item["confidence"] = 0.7
+        
+        # Validate stylistic_attributes items
+        for item in response.get("stylistic_attributes", []):
+            if not isinstance(item, dict):
+                continue
+            
+            if "name" not in item:
+                item["name"] = ""
+            
+            if "confidence" not in item:
+                item["confidence"] = 0.7
+            elif isinstance(item["confidence"], str):
+                try:
+                    item["confidence"] = float(item["confidence"])
+                except:
+                    item["confidence"] = 0.7
         
         # Ensure secondary_patterns is a list with proper structure
         if not isinstance(response.get("secondary_patterns"), list):
@@ -406,10 +440,19 @@ class GeminiAnalyzer:
             response["style_keywords"] = []
         
         # Add fields expected by the gallery component
-        response["primary_pattern"] = response.get("category", "Unknown")
+        if "main_theme" in response and response["main_theme"]:
+            # Check if "paisley" is in the main_theme
+            if "paisley" in response["main_theme"].lower():
+                response["primary_pattern"] = "paisley pattern"
+            else:
+                response["primary_pattern"] = response["main_theme"]
+        else:
+            response["primary_pattern"] = response.get("category", "Unknown")
         
         # Ensure pattern_confidence is a valid number
-        if "category_confidence" in response and response["category_confidence"] is not None:
+        if "main_theme_confidence" in response and response["main_theme_confidence"] is not None:
+            response["pattern_confidence"] = float(response["main_theme_confidence"])
+        elif "category_confidence" in response and response["category_confidence"] is not None:
             response["pattern_confidence"] = float(response["category_confidence"])
         else:
             response["pattern_confidence"] = 0.8
@@ -419,6 +462,10 @@ class GeminiAnalyzer:
     def _get_default_response(self, image_path: str, width: int, height: int) -> Dict[str, Any]:
         """Return a default response when analysis fails"""
         return {
+            "main_theme": "Unknown",
+            "main_theme_confidence": 0.0,
+            "content_details": [],
+            "stylistic_attributes": [],
             "category": "Unknown",
             "category_confidence": 0.0,
             "primary_pattern": "Unknown",

@@ -213,11 +213,16 @@ class SearchEngine:
                 logger.info("No metadata available for search")
                 return []
 
+            # Start of search process
+            logger.info("===== IN-MEMORY SEARCH PROCESS START =====")
+            search_start_time = import_time.time()
+            
             # Parse the query into components
             query = query.lower().strip()
             
             # Split on commas first to get distinct search "phrases"
             query_phrases = [phrase.strip() for phrase in query.split(',')]
+            logger.info(f"Parsed query into {len(query_phrases)} phrases: {query_phrases}")
             
             # Then split each phrase into individual terms
             all_query_terms = []
@@ -242,8 +247,23 @@ class SearchEngine:
             pattern_types = [
                 "paisley", "floral", "geometric", "abstract", "animal", "stripe", 
                 "dots", "plaid", "check", "chevron", "herringbone", "tropical", 
-                "diamond", "swirl", "damask", "toile", "ikat", "medallion", "flower"
+                "diamond", "swirl", "damask", "toile", "ikat", "medallion", "flower",
+                "textile", "seamless", "embroidered", "woven", "print", "pattern"
             ]
+            
+            # Common pattern phrases that should be treated as a single unit
+            pattern_phrases = [
+                "seamless pattern", "textile pattern", "seamless textile pattern",
+                "paisley pattern", "floral pattern", "geometric pattern", 
+                "embroidered pattern", "woven pattern", "seamless textile"
+            ]
+            
+            # Check for pattern phrases in the original query and phrases
+            matched_pattern_phrases = []
+            for phrase in query_phrases:
+                for p_phrase in pattern_phrases:
+                    if p_phrase in phrase.lower():
+                        matched_pattern_phrases.append(p_phrase)
             
             # Extract color and pattern terms from the query
             color_terms = [term for term in query_terms if term in color_names]
@@ -283,10 +303,16 @@ class SearchEngine:
             # Filter results based on color/pattern/other terms
             scored_results = []
             
-            for path, metadata in self.metadata.items():
+            # Process each metadata entry
+            for i, (path, metadata) in enumerate(self.metadata.items()):
+                logger.info(f"Processing image {i+1}/{len(self.metadata)}: {path}")
+                
                 # Initialize score components
                 color_score = 0.0
                 pattern_score = 0.0
+                content_score = 0.0
+                style_score = 0.0
+                theme_score = 0.0
                 other_score = 0.0
                 confidence_boost = 0.0
                 proportion_boost = 0.0
@@ -295,19 +321,131 @@ class SearchEngine:
                 if 'patterns' in metadata and metadata['patterns']:
                     patterns = metadata['patterns']
                     
-                    # Primary pattern match is weighted heavily
+                    # NEW: Main theme matching (highest weight)
+                    main_theme = patterns.get('main_theme', '').lower()
+                    if main_theme and main_theme != 'unknown':
+                        main_theme_conf = patterns.get('main_theme_confidence', 0.5)
+                        
+                        # Check for exact and partial main theme matches against pattern terms and other terms
+                        for pattern_term in pattern_terms:
+                            if pattern_term == main_theme:
+                                # Exact match with high confidence
+                                theme_score += 14.0 * main_theme_conf
+                                logger.info(f"  Exact main_theme match: '{pattern_term}' in '{main_theme}' with score={14.0 * main_theme_conf:.2f}")
+                            elif pattern_term in main_theme or main_theme in pattern_term:
+                                # Partial match
+                                theme_score += 7.0 * main_theme_conf
+                                logger.info(f"  Partial main_theme match: '{pattern_term}' in '{main_theme}' with score={7.0 * main_theme_conf:.2f}")
+                        
+                        # Also check main theme against general terms
+                        for term in other_terms:
+                            if term.strip() and (term == main_theme or term in main_theme or main_theme in term):
+                                theme_score += 10.0 * main_theme_conf
+                                logger.info(f"  General main_theme match: '{term}' in '{main_theme}' with score={10.0 * main_theme_conf:.2f}")
+                        
+                        # Special handling for multi-word phrases in main_theme
+                        for phrase in query_phrases:
+                            if len(phrase.split()) > 1 and phrase in main_theme:
+                                theme_score += 12.0 * main_theme_conf
+                                logger.info(f"  Multi-word phrase match in main_theme: '{phrase}' in '{main_theme}' with score={12.0 * main_theme_conf:.2f}")
+                    
+                    # NEW: Check content_details with high weight
+                    content_details = patterns.get('content_details', [])
+                    if content_details:
+                        logger.info(f"  Checking {len(content_details)} content details")
+                        
+                    for content in content_details:
+                        if not isinstance(content, dict):
+                            continue
+                            
+                        content_name = content.get('name', '').lower()
+                        content_conf = content.get('confidence', 0.5)
+                        
+                        if not content_name:
+                            continue
+                            
+                        # Check content details against pattern terms
+                        for pattern_term in pattern_terms:
+                            if pattern_term == content_name:
+                                # Exact match
+                                content_score += 12.0 * content_conf
+                                logger.info(f"  Exact content match: '{pattern_term}' in '{content_name}' with score={12.0 * content_conf:.2f}")
+                            elif pattern_term in content_name or content_name in pattern_term:
+                                # Partial match
+                                content_score += 6.0 * content_conf
+                                logger.info(f"  Partial content match: '{pattern_term}' in '{content_name}' with score={6.0 * content_conf:.2f}")
+                        
+                        # Check content details against other terms
+                        for term in other_terms:
+                            if term.strip() and (term == content_name or term in content_name or content_name in term):
+                                content_score += 8.0 * content_conf
+                                logger.info(f"  General content match: '{term}' in '{content_name}' with score={8.0 * content_conf:.2f}")
+                                
+                        # Multi-word phrase matching in content_details
+                        for phrase in query_phrases:
+                            if len(phrase.split()) > 1 and phrase in content_name:
+                                content_score += 10.0 * content_conf
+                                logger.info(f"  Multi-word phrase match in content_details: '{phrase}' in '{content_name}' with score={10.0 * content_conf:.2f}")
+                    
+                    # NEW: Check stylistic_attributes
+                    stylistic_attrs = patterns.get('stylistic_attributes', [])
+                    if stylistic_attrs:
+                        logger.info(f"  Checking {len(stylistic_attrs)} stylistic attributes")
+                        
+                    for style in stylistic_attrs:
+                        if not isinstance(style, dict):
+                            continue
+                            
+                        style_name = style.get('name', '').lower()
+                        style_conf = style.get('confidence', 0.5)
+                        
+                        if not style_name:
+                            continue
+                            
+                        # Check style against other terms primarily
+                        for term in other_terms:
+                            if term.strip() and (term == style_name or term in style_name or style_name in term):
+                                style_score += 7.0 * style_conf
+                                logger.info(f"  Style match: '{term}' in '{style_name}' with score={7.0 * style_conf:.2f}")
+                        
+                        # Also check against pattern terms with lower weight
+                        for pattern_term in pattern_terms:
+                            if pattern_term == style_name or pattern_term in style_name or style_name in pattern_term:
+                                style_score += 4.0 * style_conf
+                                logger.info(f"  Style-pattern match: '{pattern_term}' in '{style_name}' with score={4.0 * style_conf:.2f}")
+                                
+                        # Multi-word phrase matching in stylistic_attributes
+                        for phrase in query_phrases:
+                            if len(phrase.split()) > 1 and phrase in style_name:
+                                style_score += 8.0 * style_conf
+                                logger.info(f"  Multi-word phrase match in stylistic_attributes: '{phrase}' in '{style_name}' with score={8.0 * style_conf:.2f}")
+                    
+                    # Pattern matching - check for complex pattern phrases in the pattern.primary_pattern field
                     primary_pattern = patterns.get('primary_pattern', '').lower()
                     if primary_pattern and primary_pattern != 'unknown':
                         primary_confidence = patterns.get('pattern_confidence', 0.5)
                         
-                        # Check for exact primary pattern matches
-                        for pattern_term in pattern_terms:
-                            if pattern_term == primary_pattern:
-                                # Exact match with high confidence
-                                pattern_score += 10.0 * primary_confidence
-                            elif pattern_term in primary_pattern or primary_pattern in pattern_term:
-                                # Partial match
-                                pattern_score += 5.0 * primary_confidence
+                        # First check for full pattern phrases
+                        for pattern_phrase in matched_pattern_phrases:
+                            if pattern_phrase in primary_pattern:
+                                pattern_score += 8.0 * primary_confidence
+                                logger.info(f"  Pattern phrase match: '{pattern_phrase}' in '{primary_pattern}' with score={8.0 * primary_confidence:.2f}")
+                        
+                        # Give extra boost to paisley patterns when searching for "paisley"
+                        if "paisley" in primary_pattern and any("paisley" in term.lower() for term in query_terms):
+                            pattern_score += 8.0 * primary_confidence
+                            logger.info(f"  Paisley pattern match: '{primary_pattern}' with score={8.0 * primary_confidence:.2f}")
+                        else:
+                            # Check for exact primary pattern matches
+                            for pattern_term in pattern_terms:
+                                if pattern_term == primary_pattern:
+                                    # Exact match with high confidence
+                                    pattern_score += 8.0 * primary_confidence
+                                    logger.info(f"  Exact primary_pattern match: '{pattern_term}' in '{primary_pattern}' with score={8.0 * primary_confidence:.2f}")
+                                elif pattern_term in primary_pattern or primary_pattern in pattern_term:
+                                    # Partial match
+                                    pattern_score += 4.0 * primary_confidence
+                                    logger.info(f"  Partial primary_pattern match: '{pattern_term}' in '{primary_pattern}' with score={4.0 * primary_confidence:.2f}")
                     
                     # Check secondary patterns
                     secondary_patterns = patterns.get('secondary_patterns', [])
@@ -319,9 +457,11 @@ class SearchEngine:
                             if pattern_term == sec_name:
                                 # Exact match in secondary pattern
                                 pattern_score += 3.0 * sec_confidence
+                                logger.info(f"  Exact secondary_pattern match: '{pattern_term}' in '{sec_name}' with score={3.0 * sec_confidence:.2f}")
                             elif pattern_term in sec_name or sec_name in pattern_term:
                                 # Partial match in secondary pattern
                                 pattern_score += 1.5 * sec_confidence
+                                logger.info(f"  Partial secondary_pattern match: '{pattern_term}' in '{sec_name}' with score={1.5 * sec_confidence:.2f}")
                     
                     # Check elements for pattern matches
                     elements = patterns.get('elements', [])
@@ -334,16 +474,29 @@ class SearchEngine:
                             element_name = str(element).lower()
                             element_confidence = 0.5
                         
+                        if not element_name:
+                            continue
+                            
                         for pattern_term in pattern_terms:
                             if pattern_term in element_name:
                                 pattern_score += 2.0 * element_confidence
+                                logger.info(f"  Element match: '{pattern_term}' in '{element_name}' with score={2.0 * element_confidence:.2f}")
                     
                     # Check the final prompt for pattern terms
                     if 'prompt' in patterns and 'final_prompt' in patterns['prompt']:
                         prompt_text = patterns['prompt']['final_prompt'].lower()
+                        
+                        # Check for pattern phrases in the prompt
+                        for pattern_phrase in matched_pattern_phrases:
+                            if pattern_phrase in prompt_text:
+                                pattern_score += 3.0
+                                logger.info(f"  Pattern phrase in prompt: '{pattern_phrase}' - adding 3.0 points")
+                        
+                        # Check for individual pattern terms
                         for pattern_term in pattern_terms:
                             if pattern_term in prompt_text:
                                 pattern_score += 0.5
+                                logger.info(f"  Prompt match: '{pattern_term}' in prompt with score=0.5")
                 
                 # COLOR MATCHING
                 if 'colors' in metadata and metadata['colors']:
@@ -360,6 +513,7 @@ class SearchEngine:
                                 # Weight by the color's proportion in the image
                                 color_score += 5.0 * proportion
                                 proportion_boost += proportion
+                                logger.info(f"  Color match: '{color_term}' in '{color_name}' with score={5.0 * proportion:.2f}")
                     
                     # Also check shades for more subtle color matches
                     for color_data in dominant_colors:
@@ -369,6 +523,7 @@ class SearchEngine:
                             for color_term in color_terms:
                                 if color_term in shade_name:
                                     color_score += 1.0 * color_data.get('proportion', 0.1)
+                                    logger.info(f"  Shade match: '{color_term}' in '{shade_name}' with score={1.0 * color_data.get('proportion', 0.1):.2f}")
                 
                 # OTHER TERMS MATCHING (for any other descriptive terms)
                 if 'patterns' in metadata and metadata['patterns']:
@@ -384,6 +539,7 @@ class SearchEngine:
                             # or if the keyword contains the term
                             if (term.strip() and (term == keyword or term in keyword)):
                                 other_score += 2.0
+                                logger.info(f"  Style keyword match: '{term}' in '{keyword}' with score=2.0")
                     
                     # Check cultural influence
                     if 'cultural_influence' in patterns:
@@ -392,6 +548,7 @@ class SearchEngine:
                         for term in other_terms:
                             if term.strip() and term in cultural:
                                 other_score += 1.5 * cultural_conf
+                                logger.info(f"  Cultural match: '{term}' in '{cultural}' with score={1.5 * cultural_conf:.2f}")
                     
                     # Check mood
                     if 'mood' in patterns:
@@ -400,26 +557,48 @@ class SearchEngine:
                         for term in other_terms:
                             if term.strip() and term in mood:
                                 other_score += 1.5 * mood_conf
+                                logger.info(f"  Mood match: '{term}' in '{mood}' with score={1.5 * mood_conf:.2f}")
                     
                     # Check the prompt text for any other terms - this is important for general searches
                     if 'prompt' in patterns and 'final_prompt' in patterns['prompt']:
                         prompt_text = patterns['prompt']['final_prompt'].lower()
+                        
+                        # Check if the entire original query is in the prompt text
+                        original_query = query.lower().strip()
+                        if len(original_query) > 5 and original_query in prompt_text:
+                            other_score += 10.0
+                            logger.info(f"  Full query match in prompt: '{original_query}' - adding 10.0 points")
+                        
+                        # Check each phrase separately
+                        for phrase in query_phrases:
+                            if len(phrase) > 5 and phrase in prompt_text:
+                                other_score += 5.0
+                                logger.info(f"  Full phrase match in prompt: '{phrase}' - adding 5.0 points")
+                        
+                        # Check individual terms
                         for term in other_terms:
                             if term.strip() and term in prompt_text:
                                 # Give higher weight to full phrase matches in the prompt
                                 if len(term.split()) > 1:
                                     other_score += 3.0
+                                    logger.info(f"  Multi-word prompt match: '{term}' in prompt with score=3.0")
                                 else:
                                     other_score += 1.0
+                                    logger.info(f"  Single-word prompt match: '{term}' in prompt with score=1.0")
                 
                 # Calculate final score (weighted sum)
                 final_score = 0.0
                 
-                # Weight pattern matches most heavily when pattern terms are present
-                if pattern_terms:
-                    final_score += pattern_score * 2.0
+                # Add new field scores with high weights
+                final_score += theme_score * 2.5
+                final_score += content_score * 2.0
+                final_score += style_score * 1.8
                 
-                # Weight color matches heavily when color terms are present 
+                # Weight pattern matches when pattern terms are present
+                if pattern_terms:
+                    final_score += pattern_score * 1.5
+                
+                # Weight color matches when color terms are present 
                 if color_terms:
                     final_score += color_score * 1.5
                 
@@ -428,28 +607,38 @@ class SearchEngine:
                 
                 # Normalize score based on number of query terms to avoid bias toward longer queries
                 if query_terms:  # Prevent division by zero
-                    final_score = final_score / (len(query_terms) * 3)  # Normalize to roughly 0-1 range
+                    final_score = final_score / (len(query_terms) * 5)  # Normalize to roughly 0-1 range
                 
                 # Only include results with non-zero scores
                 if final_score > 0:
+                    logger.info(f"  Final score for {path}: {final_score:.4f}")
                     scored_results.append({
                         **metadata, 
                         'similarity': min(final_score, 1.0),  # Cap at 1.0
+                        'theme_score': theme_score,
+                        'content_score': content_score,
+                        'style_score': style_score,
                         'pattern_score': pattern_score,
                         'color_score': color_score,
                         'other_score': other_score
                     })
+                else:
+                    logger.info(f"  No match for {path}, skipping")
             
             # Sort results by similarity score (descending)
             scored_results.sort(key=lambda x: x['similarity'], reverse=True)
             
-            # Log search results for debugging
+            # Log search performance
+            query_time = import_time.time() - search_start_time
+            logger.info(f"Total search process for '{query}' completed in {query_time:.2f}s")
             logger.info(f"Search for '{query}' found {len(scored_results)} results")
+            logger.info("===== IN-MEMORY SEARCH PROCESS END =====")
             
             return scored_results[:k]  # Return top k results
             
         except Exception as e:
             logger.error(f"Error in search: {e}", exc_info=True)
+            logger.info("===== IN-MEMORY SEARCH PROCESS FAILED =====")
             return []
 
     def get_image_metadata(self, image_path: str) -> Dict[str, Any]:

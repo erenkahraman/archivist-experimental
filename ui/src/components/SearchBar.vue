@@ -116,12 +116,18 @@ watch(() => imageStore.searchQuery, (newVal) => {
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) return
   
-  await imageStore.search({
+  console.log("Starting search for:", searchQuery.value);
+  
+  const results = await imageStore.search({
     query: searchQuery.value,
     type: searchType.value,
     k: parseInt(resultCount.value),
     minSimilarity: parseFloat(minSimilarity.value)
-  })
+  });
+  
+  console.log("Search returned:", results.length, "results");
+  console.log("Raw results:", results);
+  console.log("Displayed images:", imageStore.getValidImages().length);
 }
 
 const clearSearch = () => {

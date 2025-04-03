@@ -30,7 +30,7 @@ export const useImageStore = defineStore('images', () => {
   const isValidImage = (img) => {
     if (!img) return false
     if (img.isUploading) return true
-    return img.thumbnail_path && img.original_path
+    return img.thumbnail_path || img.path || img.original_path
   }
 
   // Clean filename helper

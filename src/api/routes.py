@@ -1,4 +1,4 @@
-from flask import request, jsonify, send_from_directory, Blueprint
+from flask import request, jsonify, send_from_directory, Blueprint, make_response
 from pathlib import Path
 import os
 from werkzeug.utils import secure_filename
@@ -9,6 +9,13 @@ import dotenv
 import logging
 import time
 import uuid
+
+# Import Elasticsearch client if available
+try:
+    from src.search.elasticsearch_client import ElasticsearchClient
+    ELASTICSEARCH_AVAILABLE = True
+except ImportError:
+    ELASTICSEARCH_AVAILABLE = False
 
 # Configure logging for production
 logging.basicConfig(
@@ -50,6 +57,37 @@ else:
 
 # Initialize search engine with Gemini API key
 search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
+
+# Initialize Elasticsearch client if available
+es_client = None
+if ELASTICSEARCH_AVAILABLE:
+    # Get Elasticsearch configuration from environment variables
+    ES_HOSTS = os.environ.get('ELASTICSEARCH_HOSTS', 'http://localhost:9200').split(',')
+    ES_CLOUD_ID = os.environ.get('ELASTICSEARCH_CLOUD_ID')
+    ES_API_KEY = os.environ.get('ELASTICSEARCH_API_KEY')
+    ES_USERNAME = os.environ.get('ELASTICSEARCH_USERNAME')
+    ES_PASSWORD = os.environ.get('ELASTICSEARCH_PASSWORD')
+    
+    # Initialize Elasticsearch client
+    try:
+        es_client = ElasticsearchClient(
+            hosts=ES_HOSTS,
+            cloud_id=ES_CLOUD_ID,
+            api_key=ES_API_KEY,
+            username=ES_USERNAME,
+            password=ES_PASSWORD
+        )
+        
+        if es_client.is_connected():
+            logger.info("Connected to Elasticsearch successfully")
+            # Create the index if it doesn't exist
+            es_client.create_index()
+        else:
+            logger.warning("Elasticsearch client initialized but not connected")
+            es_client = None
+    except Exception as e:
+        logger.error(f"Failed to initialize Elasticsearch client: {str(e)}")
+        es_client = None
 
 # Configure upload folder
 UPLOAD_FOLDER = Path(__file__).parent.parent.parent / "uploads"
@@ -105,28 +143,26 @@ def set_gemini_key():
 @api.route('/upload', methods=['POST'])
 def upload_file():
     """
-    Handle file upload with proper validation and error handling.
+    Upload and process a new image file.
     
     Expects:
-        - file: The image file to upload
+        - file: The image file to upload (multipart/form-data)
         
     Returns:
-        JSON response with metadata
+        - JSON response with processed image metadata
     """
     try:
         # Check if the post request has the file part
         if 'file' not in request.files:
-            logger.error("No file part in request")
-            return jsonify({'error': 'No file part'}), 400
-            
+            return jsonify({'error': 'No file part in the request'}), 400
+        
         file = request.files['file']
         
-        # If user does not select file, browser also
-        # submit an empty part without filename
+        # If the user does not select a file, the browser submits an empty file
         if file.filename == '':
-            logger.error("No selected file")
-            return jsonify({'error': 'No selected file'}), 400
-            
+            return jsonify({'error': 'No file selected'}), 400
+        
+        # Check if the file is allowed
         if file and allowed_file(file.filename):
             # Generate a unique filename to avoid collisions
             import uuid
@@ -156,6 +192,22 @@ def upload_file():
                 # Also add a relative path for frontend use
                 if 'path' not in metadata:
                     metadata['path'] = f"uploads/{unique_filename}"
+                
+                # Index to Elasticsearch if available
+                if es_client and es_client.is_connected():
+                    try:
+                        # Make sure the metadata has an ID
+                        if 'id' not in metadata:
+                            metadata['id'] = metadata.get('path', str(unique_filename))
+                            
+                        # Index the document
+                        indexed = es_client.index_document(metadata)
+                        if indexed:
+                            logger.info(f"Image indexed to Elasticsearch: {metadata.get('id')}")
+                        else:
+                            logger.warning(f"Failed to index image to Elasticsearch: {metadata.get('id')}")
+                    except Exception as es_err:
+                        logger.error(f"Error indexing to Elasticsearch: {str(es_err)}")
                 
                 logger.info(f"Image processed successfully: {metadata.get('original_path')}")
                 return jsonify(metadata), 200
@@ -201,102 +253,85 @@ def get_images():
         logger.error(f"Error getting images: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/search', methods=['POST'])
+@api.route('/search', methods=['POST', 'OPTIONS'])
 def search():
     """
-    Advanced search endpoint that handles complex queries with pattern and color matching.
+    Search for images based on a query.
     
-    Accepts the following parameters:
-    - query: Main search query (required)
-      - Can include color terms (e.g., "red", "blue") 
-      - Can include pattern terms (e.g., "paisley", "floral")
-      - Can be compound queries (e.g., "red paisley", "blue floral")
-    - limit: Maximum number of results (optional, default: 20)
-    - min_similarity: Minimum similarity score threshold (optional, default: 0.1)
-    
+    Parameters:
+        query: The search query
+        limit: Maximum number of results to return (default: 20)
+        min_similarity: Minimum similarity threshold (default: 0.1)
+        force_memory_search: Force in-memory search even if Elasticsearch is available (default: false)
+        
     Returns:
-    - List of metadata with similarity scores, sorted by relevance
+        JSON response with search results
     """
+    # Handle CORS preflight request
+    if request.method == 'OPTIONS':
+        response = make_response()
+        response.headers.add('Access-Control-Allow-Origin', '*')
+        response.headers.add('Access-Control-Allow-Headers', 'Content-Type')
+        response.headers.add('Access-Control-Allow-Methods', 'POST')
+        return response
+        
     try:
-        # Get search parameters
-        data = request.json or {}
+        # Get parameters from request
+        data = request.get_json() or {}
         query = data.get('query', '').strip()
-        limit = min(int(data.get('limit', 20)), 100)  # Cap at 100 results
-        min_similarity = max(0.0, min(float(data.get('min_similarity', 0.1)), 1.0))  # Between 0 and 1
+        limit = int(data.get('limit', 20))
+        min_similarity = float(data.get('min_similarity', 0.1))
+        force_memory_search = data.get('force_memory_search', False)
         
-        # Validate query
+        # Check if query is provided
         if not query:
-            return jsonify({'error': 'Search query is required'}), 400
+            return jsonify({
+                'error': 'Missing query parameter',
+                'status': 'error'
+            }), 400
             
-        # Log search request
-        if DEBUG:
-            logger.info(f"Search request: query='{query}', limit={limit}, min_similarity={min_similarity}")
+        logger.info(f"Search request: query='{query}', limit={limit}, min_similarity={min_similarity}")
         
-        # Perform search using the enhanced search function
-        results = search_engine.search(query, k=limit)
+        # Perform search using Elasticsearch if available and not forced to use memory search
+        start_time = time.time()
+        search_method = "in-memory"
         
-        # Filter by minimum similarity if specified
-        if min_similarity > 0:
-            results = [r for r in results if r.get('similarity', 0) >= min_similarity]
+        if es_client and es_client.is_connected() and not force_memory_search:
+            logger.info(f"Using Elasticsearch for search: '{query}'")
+            search_method = "elasticsearch"
+            results = es_client.search(query, limit, min_similarity)
+        else:
+            logger.info(f"Using in-memory search for: '{query}'")
+            results = search_engine.search(query, limit)
+            
+        # Filter results based on minimum similarity threshold
+        results = [r for r in results if r.get('similarity', 0) >= min_similarity]
         
-        # Format the results for the response
+        # Format results for API response
         formatted_results = []
         for result in results:
-            # Create a clean copy without internal fields
-            item = {
-                'id': result.get('id'),
-                'filename': result.get('filename'),
-                'path': result.get('path'),
-                'thumbnail_path': result.get('thumbnail_path'),
-                'similarity': result.get('similarity', 0.0),
-                'timestamp': result.get('timestamp'),
-            }
-            
-            # Include pattern information
-            if 'patterns' in result:
-                item['pattern'] = {
-                    'primary': result['patterns'].get('primary_pattern', 'Unknown'),
-                    'confidence': result['patterns'].get('pattern_confidence', 0.0),
-                    'secondary': [p.get('name') for p in result['patterns'].get('secondary_patterns', [])],
-                    'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in result['patterns'].get('elements', [])]
-                }
-                
-                # Include style keywords
-                item['style_keywords'] = result['patterns'].get('style_keywords', [])
-                
-                # Include prompt if available
-                if 'prompt' in result['patterns'] and 'final_prompt' in result['patterns']['prompt']:
-                    item['prompt'] = result['patterns']['prompt']['final_prompt']
-            
-            # Include color information
-            if 'colors' in result:
-                item['colors'] = []
-                for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
-                    item['colors'].append({
-                        'name': color.get('name', ''),
-                        'hex': color.get('hex', ''),
-                        'proportion': color.get('proportion', 0.0)
-                    })
-            
-            # Add score components if available (for debugging)
-            if DEBUG and 'pattern_score' in result and 'color_score' in result and 'other_score' in result:
-                item['score_components'] = {
-                    'pattern_score': result.get('pattern_score', 0.0),
-                    'color_score': result.get('color_score', 0.0),
-                    'other_score': result.get('other_score', 0.0)
-                }
-                
-            formatted_results.append(item)
+            # Format metadata
+            formatted_result = format_search_result(result)
+            formatted_results.append(formatted_result)
         
+        execution_time = time.time() - start_time
+        
+        # Return results
         return jsonify({
             'query': query,
             'result_count': len(formatted_results),
+            'min_similarity': min_similarity,
+            'execution_time': execution_time,
+            'search_method': search_method,
             'results': formatted_results
         })
         
     except Exception as e:
         logger.error(f"Error in search: {str(e)}", exc_info=True)
-        return jsonify({'error': str(e)}), 500
+        return jsonify({
+            'error': str(e),
+            'status': 'error'
+        }), 500
 
 @api.route('/generate-prompt', methods=['POST'])
 def generate_prompt():
@@ -357,6 +392,11 @@ def delete_image(filename):
             if DEBUG:
                 logger.info(f"Deleted thumbnail: {thumbnail_path}")
             
+        # Get metadata before removing it
+        metadata = None
+        if filename in search_engine.metadata:
+            metadata = search_engine.metadata.get(filename)
+            
         # Remove metadata if it exists
         if filename in search_engine.metadata:
             del search_engine.metadata[filename]
@@ -365,6 +405,20 @@ def delete_image(filename):
             
         # Save metadata
         search_engine.save_metadata()
+        
+        # Delete from Elasticsearch if available
+        if es_client and es_client.is_connected() and metadata:
+            try:
+                # Try to delete using ID if available, otherwise use filename
+                doc_id = metadata.get('id', filename)
+                deleted = es_client.delete_document(doc_id)
+                
+                if deleted:
+                    logger.info(f"Deleted document from Elasticsearch: {doc_id}")
+                else:
+                    logger.warning(f"Document not found in Elasticsearch: {doc_id}")
+            except Exception as es_err:
+                logger.error(f"Error deleting from Elasticsearch: {str(es_err)}")
         
         return jsonify({'status': 'success'}), 200
     except Exception as e:
@@ -395,6 +449,20 @@ def purge_all_images():
             if file.is_file():
                 os.remove(file)
         
+        # If Elasticsearch is available, delete the index and recreate it
+        if es_client and es_client.is_connected():
+            try:
+                # Delete the index
+                if es_client.client.indices.exists(index=es_client.index_name):
+                    es_client.client.indices.delete(index=es_client.index_name)
+                    logger.info(f"Deleted Elasticsearch index: {es_client.index_name}")
+                    
+                # Recreate the index
+                es_client.create_index()
+                logger.info(f"Recreated Elasticsearch index: {es_client.index_name}")
+            except Exception as es_err:
+                logger.error(f"Error purging Elasticsearch: {str(es_err)}")
+        
         logger.info("All images and metadata purged successfully")
         return jsonify({'status': 'success', 'message': 'All images and metadata purged'}), 200
     except Exception as e:
@@ -404,4 +472,474 @@ def purge_all_images():
 # Basic test route
 @api.route('/')
 def home():
-    return 'API is running' 
+    return 'API is running'
+
+@api.route('/admin/index-to-elasticsearch', methods=['POST'])
+def index_to_elasticsearch():
+    """
+    Admin endpoint to index all existing metadata into Elasticsearch.
+    
+    This is useful for initially populating Elasticsearch with existing data.
+    
+    Returns:
+        JSON response with results
+    """
+    try:
+        if not es_client:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Elasticsearch client not available'
+            }), 400
+        
+        if not es_client.is_connected():
+            return jsonify({
+                'status': 'error', 
+                'message': 'Elasticsearch client not connected'
+            }), 400
+        
+        # Get metadata from search engine
+        metadata = search_engine.metadata
+        
+        if not metadata:
+            return jsonify({
+                'status': 'warning', 
+                'message': 'No metadata available to index'
+            }), 200
+        
+        # Prepare documents for bulk indexing
+        documents = []
+        for path, data in metadata.items():
+            # Skip any items without valid data
+            if not data:
+                continue
+                
+            # Use ID or path as document ID
+            if 'id' not in data:
+                data['id'] = path
+                
+            documents.append(data)
+        
+        logger.info(f"Indexing {len(documents)} documents to Elasticsearch")
+        
+        # Bulk index documents
+        success = es_client.bulk_index(documents)
+        
+        if success:
+            return jsonify({
+                'status': 'success',
+                'message': f'Successfully indexed {len(documents)} documents to Elasticsearch'
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Failed to index documents to Elasticsearch'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error indexing to Elasticsearch: {str(e)}", exc_info=True)
+        return jsonify({
+            'status': 'error', 
+            'message': f'Error: {str(e)}'
+        }), 500
+
+@api.route('/admin/rebuild-elasticsearch-index', methods=['POST'])
+def rebuild_elasticsearch_index():
+    """
+    Admin endpoint to rebuild the Elasticsearch index with new mappings.
+    
+    This is useful after updating analyzers or mappings.
+    All documents will be reindexed with the new mappings.
+    
+    Returns:
+        JSON response with results
+    """
+    try:
+        if not es_client:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Elasticsearch client not available'
+            }), 400
+        
+        if not es_client.is_connected():
+            return jsonify({
+                'status': 'error', 
+                'message': 'Elasticsearch client not connected'
+            }), 400
+        
+        logger.info("Rebuilding Elasticsearch index with updated mappings")
+        
+        # Rebuild index
+        success = es_client.rebuild_index()
+        
+        if success:
+            # Also invalidate cache
+            if hasattr(search_engine, 'cache'):
+                search_engine.cache.invalidate_all()
+                
+            return jsonify({
+                'status': 'success',
+                'message': 'Successfully rebuilt Elasticsearch index with new mappings'
+            }), 200
+        else:
+            return jsonify({
+                'status': 'error', 
+                'message': 'Failed to rebuild Elasticsearch index'
+            }), 500
+            
+    except Exception as e:
+        logger.error(f"Error rebuilding Elasticsearch index: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error: {str(e)}'
+        }), 500
+
+@api.route('/admin/cleanup-metadata', methods=['POST'])
+def cleanup_metadata():
+    """
+    Admin endpoint to check for and cleanup orphaned metadata.
+    
+    This ensures consistency between:
+    1. Files on disk
+    2. In-memory metadata
+    3. Elasticsearch index
+    
+    Returns:
+        JSON response with results
+    """
+    try:
+        from pathlib import Path
+        
+        # Check if Elasticsearch is available
+        es_available = es_client and es_client.is_connected()
+        
+        # Structure to store results
+        results = {
+            'orphaned_metadata': [],
+            'orphaned_es_docs': [],
+            'fixed_count': 0,
+            'total_files': 0,
+            'total_metadata': len(search_engine.metadata) if search_engine.metadata else 0,
+            'total_es_docs': 0
+        }
+        
+        # Get all actual files in upload directory
+        upload_dir = config.UPLOAD_DIR
+        existing_files = set()
+        
+        for file_path in upload_dir.glob('*'):
+            if file_path.is_file():
+                # Store the relative path
+                rel_path = str(file_path.relative_to(upload_dir))
+                existing_files.add(rel_path)
+                results['total_files'] += 1
+        
+        logger.info(f"Found {results['total_files']} files on disk")
+        
+        # Find orphaned metadata (metadata with no corresponding file)
+        if search_engine.metadata:
+            for path, data in list(search_engine.metadata.items()):
+                # Check if the path exists in the list of actual files
+                if path not in existing_files:
+                    results['orphaned_metadata'].append({
+                        'path': path, 
+                        'id': data.get('id', 'unknown')
+                    })
+                    
+                    # Remove from in-memory metadata
+                    del search_engine.metadata[path]
+                    results['fixed_count'] += 1
+                    logger.info(f"Removed orphaned metadata entry: {path}")
+        
+        # Check Elasticsearch if available
+        if es_available:
+            # Get total document count
+            count_result = es_client.client.count(index=es_client.index_name)
+            results['total_es_docs'] = count_result["count"]
+            
+            # Use scroll API to get all documents
+            query_body = {
+                "query": {
+                    "match_all": {}
+                },
+                "_source": ["id", "path", "filename"]
+            }
+            
+            scroll_response = es_client.client.search(
+                index=es_client.index_name, 
+                body=query_body,
+                scroll="2m",
+                size=100
+            )
+            
+            scroll_id = scroll_response["_scroll_id"]
+            hits = scroll_response["hits"]["hits"]
+            
+            while len(hits) > 0:
+                for hit in hits:
+                    doc = hit["_source"]
+                    doc_id = hit["_id"]
+                    
+                    # Check if file exists
+                    file_exists = False
+                    
+                    if "path" in doc:
+                        file_path = Path(upload_dir) / doc["path"]
+                        if file_path.exists():
+                            file_exists = True
+                    
+                    if not file_exists and "filename" in doc:
+                        # Try to find by filename (less reliable)
+                        file_path = Path(upload_dir) / doc["filename"]
+                        if file_path.exists():
+                            file_exists = True
+                    
+                    if not file_exists:
+                        # Document doesn't correspond to a file
+                        results['orphaned_es_docs'].append({
+                            'id': doc_id,
+                            'path': doc.get('path', 'unknown'),
+                            'filename': doc.get('filename', 'unknown')
+                        })
+                        
+                        # Delete from Elasticsearch
+                        es_client.delete_document(doc_id)
+                        results['fixed_count'] += 1
+                        logger.info(f"Deleted orphaned Elasticsearch document: {doc_id}")
+                
+                # Get next batch
+                scroll_response = es_client.client.scroll(
+                    scroll_id=scroll_id,
+                    scroll="2m"
+                )
+                
+                scroll_id = scroll_response["_scroll_id"]
+                hits = scroll_response["hits"]["hits"]
+            
+            # Clear the scroll to free resources
+            es_client.client.clear_scroll(scroll_id=scroll_id)
+        
+        # Save the updated metadata
+        search_engine.save_metadata()
+        
+        # Invalidate cache
+        if hasattr(search_engine, 'cache'):
+            search_engine.cache.invalidate_all()
+        
+        # Prepare summary
+        orphaned_count = len(results['orphaned_metadata']) + len(results['orphaned_es_docs'])
+        
+        if orphaned_count > 0:
+            message = f"Cleaned up {orphaned_count} orphaned metadata entries"
+        else:
+            message = "No orphaned metadata found - everything is consistent"
+        
+        return jsonify({
+            'status': 'success',
+            'message': message,
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during metadata cleanup: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error: {str(e)}'
+        }), 500
+        
+@api.route('/admin/diagnose-paisley-issue', methods=['GET'])
+def diagnose_paisley_issue():
+    """
+    Special diagnostic endpoint to understand the "paisley" search issue.
+    
+    This will:
+    1. Check direct search results for "paisley" 
+    2. Show how results match (which fields)
+    3. Check if files exist
+    
+    Returns:
+        JSON response with diagnostic information
+    """
+    try:
+        results = {
+            'paisley_matches': [],
+            'all_files': [],
+            'metadata_count': len(search_engine.metadata) if search_engine.metadata else 0,
+            'es_count': 0,
+            'diagnosis': ""
+        }
+        
+        # Get all files
+        upload_dir = config.UPLOAD_DIR
+        for file_path in upload_dir.glob('*'):
+            if file_path.is_file():
+                results['all_files'].append(str(file_path.name))
+        
+        # Get metadata count
+        if es_client and es_client.is_connected():
+            # Get total document count
+            count_result = es_client.client.count(index=es_client.index_name)
+            results['es_count'] = count_result["count"]
+            
+            # Perform search for "paisley"
+            search_results = es_client.search(query="paisley", limit=20)
+            
+            # Analyze each result
+            for result in search_results:
+                match_info = {
+                    'id': result.get('id', 'unknown'),
+                    'filename': result.get('filename', 'unknown'),
+                    'path': result.get('path', 'unknown'),
+                    'match_fields': [],
+                    'file_exists': False,
+                    'score': result.get('similarity', 0),
+                    'raw_score': result.get('_score', 0)
+                }
+                
+                # Check if file exists
+                if 'path' in result:
+                    file_path = Path(upload_dir) / result['path']
+                    match_info['file_exists'] = file_path.exists()
+                
+                # Check which fields matched
+                if 'patterns' in result:
+                    patterns = result['patterns']
+                    
+                    # Check main theme
+                    if 'main_theme' in patterns and 'paisley' in patterns['main_theme'].lower():
+                        match_info['match_fields'].append('main_theme')
+                    
+                    # Check primary pattern
+                    if 'primary_pattern' in patterns and 'paisley' in patterns['primary_pattern'].lower():
+                        match_info['match_fields'].append('primary_pattern')
+                    
+                    # Check secondary patterns
+                    if 'secondary_patterns' in patterns:
+                        for pattern in patterns['secondary_patterns']:
+                            if isinstance(pattern, dict) and 'name' in pattern and 'paisley' in pattern['name'].lower():
+                                match_info['match_fields'].append('secondary_patterns')
+                                break
+                    
+                    # Check content details
+                    if 'content_details' in patterns:
+                        for detail in patterns['content_details']:
+                            if isinstance(detail, dict) and 'name' in detail and 'paisley' in detail['name'].lower():
+                                match_info['match_fields'].append('content_details')
+                                break
+                    
+                    # Check prompt
+                    if 'prompt' in patterns and 'final_prompt' in patterns['prompt'] and 'paisley' in patterns['prompt']['final_prompt'].lower():
+                        match_info['match_fields'].append('prompt')
+                    
+                    # Check style keywords
+                    if 'style_keywords' in patterns and any('paisley' in kw.lower() for kw in patterns['style_keywords']):
+                        match_info['match_fields'].append('style_keywords')
+                
+                results['paisley_matches'].append(match_info)
+        
+        # Diagnose the issue
+        if len(results['paisley_matches']) > len(results['all_files']):
+            results['diagnosis'] = "There are more search results than actual files. This indicates orphaned metadata in the search index."
+        elif any(not match['file_exists'] for match in results['paisley_matches']):
+            results['diagnosis'] = "Some search results point to files that don't exist on disk. These need to be cleaned up."
+        elif results['metadata_count'] != len(results['all_files']):
+            results['diagnosis'] = "The number of metadata entries doesn't match the number of files. This suggests inconsistency."
+        elif results['es_count'] != len(results['all_files']):
+            results['diagnosis'] = "The number of Elasticsearch documents doesn't match the number of files. This suggests inconsistency."
+        else:
+            results['diagnosis'] = "Unclear why 'paisley' matches aren't showing in the gallery. This might be a frontend issue or a cache problem."
+        
+        return jsonify({
+            'status': 'success',
+            'message': 'Diagnostic information gathered',
+            'results': results
+        }), 200
+        
+    except Exception as e:
+        logger.error(f"Error during paisley diagnosis: {str(e)}")
+        return jsonify({
+            'status': 'error',
+            'message': f'Error: {str(e)}'
+        }), 500
+
+# Add helper function at the top before routes
+def format_search_result(result):
+    """
+    Format a search result for API response
+    
+    Args:
+        result: Raw search result
+        
+    Returns:
+        Formatted result dictionary
+    """
+    # Create a clean copy without internal fields
+    item = {
+        'id': result.get('id'),
+        'filename': result.get('filename'),
+        'path': result.get('path'),
+        'thumbnail_path': result.get('thumbnail_path'),
+        'similarity': result.get('similarity', 0.0),
+        'timestamp': result.get('timestamp'),
+    }
+    
+    # Include pattern information
+    if 'patterns' in result:
+        patterns = result['patterns']
+        
+        # New detailed fields
+        item['pattern'] = {
+            'main_theme': patterns.get('main_theme', 'Unknown'),
+            'main_theme_confidence': patterns.get('main_theme_confidence', 0.0),
+            'primary': patterns.get('primary_pattern', 'Unknown'),
+            'confidence': patterns.get('pattern_confidence', 0.0),
+            'secondary': [p.get('name') for p in patterns.get('secondary_patterns', []) if isinstance(p, dict) and 'name' in p],
+            'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in patterns.get('elements', [])],
+        }
+        
+        # Content details
+        item['content_details'] = []
+        for content in patterns.get('content_details', []):
+            if isinstance(content, dict) and 'name' in content:
+                item['content_details'].append({
+                    'name': content.get('name', ''),
+                    'confidence': content.get('confidence', 0.0)
+                })
+        
+        # Stylistic attributes
+        item['stylistic_attributes'] = []
+        for style in patterns.get('stylistic_attributes', []):
+            if isinstance(style, dict) and 'name' in style:
+                item['stylistic_attributes'].append({
+                    'name': style.get('name', ''),
+                    'confidence': style.get('confidence', 0.0)
+                })
+        
+        # Include style keywords
+        item['style_keywords'] = patterns.get('style_keywords', [])
+        
+        # Include prompt if available
+        if 'prompt' in patterns and 'final_prompt' in patterns['prompt']:
+            item['prompt'] = patterns['prompt']['final_prompt']
+    
+    # Include color information
+    if 'colors' in result:
+        item['colors'] = []
+        for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
+            item['colors'].append({
+                'name': color.get('name', ''),
+                'hex': color.get('hex', ''),
+                'proportion': color.get('proportion', 0.0)
+            })
+    
+    # Add score components if available
+    if all(k in result for k in ['theme_score', 'content_score', 'style_score', 'pattern_score', 'color_score', 'other_score']):
+        item['score_components'] = {
+            'theme_score': result.get('theme_score', 0.0),
+            'content_score': result.get('content_score', 0.0),
+            'style_score': result.get('style_score', 0.0),
+            'pattern_score': result.get('pattern_score', 0.0),
+            'color_score': result.get('color_score', 0.0),
+            'other_score': result.get('other_score', 0.0)
+        }
+    
+    return item 
