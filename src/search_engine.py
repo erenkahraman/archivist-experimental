@@ -6,699 +6,937 @@ import json
 from PIL import Image
 import numpy as np
 import logging
-from sklearn.cluster import KMeans
-import colorsys
+import time as import_time
+import os
 
 # Relative imports from the same package
-from .analyzers.pattern_analyzer import PatternAnalyzer
 from .analyzers.color_analyzer import ColorAnalyzer
-from .search.searcher import ImageSearcher
+from .gemini_analyzer import GeminiAnalyzer
+from .search.elasticsearch_client import ElasticsearchClient
+from .utils.cache import SearchCache
 import config
-from .prompt_builder import PromptBuilder
-from .embedding_extractor import EmbeddingExtractor
-from .config_prompts import THRESHOLDS
-from .text_refiner import refine_text
 
-# Sadece önemli logları göster
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
 
-# Werkzeug loglarını kapat
+# Suppress less important logs
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.ERROR)
 
 class SearchEngine:
-    def __init__(self):
+    def __init__(self, gemini_api_key=None):
         logger.info("Initializing SearchEngine...")
         try:
-            # Load models and move to GPU if available
-            logger.info("Loading CLIP model: openai/clip-vit-large-patch14")
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            self.model = CLIPModel.from_pretrained("openai/clip-vit-large-patch14").to(self.device)
-            logger.info("CLIP model loaded successfully")
-            self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
-            logger.info("CLIP processor loaded successfully")
+            # Initialize analyzers with API key
+            if gemini_api_key:
+                # Mask the key for logging
+                masked_key = self._mask_api_key(gemini_api_key)
+                logger.info(f"Using Gemini API key: {masked_key}")
             
-            # Initialize analyzers
-            self.pattern_analyzer = PatternAnalyzer(self.model, self.processor, self.device)
-            self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS)
-            self.searcher = ImageSearcher(self.model, self.processor, self.device)
+            # Initialize analyzers without storing the key in this class
+            self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
+            self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
             
-            # Initialize embedding extractor
-            self.embedding_extractor = EmbeddingExtractor(self.model, self.processor, self.device)
+            # Initialize Elasticsearch client
+            self.use_elasticsearch = self._init_elasticsearch()
             
-            # Initialize other components
-            self.metadata_file = config.BASE_DIR / "metadata.json"
+            # Initialize Redis cache
+            self.cache = SearchCache()
+            
+            # Load existing metadata if available
             self.metadata = self.load_metadata()
             
-            # Add max_clusters attribute
-            self.max_clusters = config.N_CLUSTERS
+            # Initialize search analytics
+            self.search_logs = self._load_search_logs()
+            
+            # If using Elasticsearch, ensure all metadata is indexed
+            if self.use_elasticsearch and self.metadata:
+                self._index_all_metadata()
             
             logger.info("SearchEngine initialization completed")
         except Exception as e:
-            logger.error(f"Error initializing SearchEngine: {str(e)}")
-            logger.error("Stack trace:")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error initializing SearchEngine: {e}")
             raise
 
+    def _init_elasticsearch(self) -> bool:
+        """Initialize Elasticsearch client and check connection"""
+        try:
+            # Initialize Elasticsearch client
+            self.es_client = ElasticsearchClient(
+                hosts=config.ELASTICSEARCH_HOSTS,
+                cloud_id=config.ELASTICSEARCH_CLOUD_ID,
+                api_key=config.ELASTICSEARCH_API_KEY,
+                username=config.ELASTICSEARCH_USERNAME,
+                password=config.ELASTICSEARCH_PASSWORD
+            )
+            
+            # Check if connected
+            if self.es_client.is_connected():
+                logger.info("Successfully connected to Elasticsearch")
+                
+                # Create index if it doesn't exist
+                self.es_client.create_index()
+                return True
+            else:
+                logger.warning("Failed to connect to Elasticsearch, using in-memory search instead")
+                return False
+        except Exception as e:
+            logger.error(f"Error initializing Elasticsearch: {e}")
+            return False
+
+    def _index_all_metadata(self):
+        """Index all metadata into Elasticsearch"""
+        try:
+            if not self.metadata:
+                logger.info("No metadata to index")
+                return
+                
+            # Collect all metadata as documents
+            documents = list(self.metadata.values())
+            
+            # Bulk index documents
+            result = self.es_client.bulk_index(documents)
+            if result:
+                logger.info(f"Successfully indexed {len(documents)} documents in Elasticsearch")
+            else:
+                logger.error("Failed to index documents in Elasticsearch")
+        except Exception as e:
+            logger.error(f"Error indexing metadata: {e}")
+
+    def _mask_api_key(self, key):
+        if not key or len(key) < 8:
+            return "INVALID_KEY"
+        # Show only first 4 and last 4 characters
+        return f"{key[:4]}...{key[-4:]}"
+
     def load_metadata(self) -> Dict:
-        """Load metadata from file if it exists."""
-        if self.metadata_file.exists():
-            with open(self.metadata_file, 'r') as f:
-                return json.load(f)
-        return {}
+        """Load metadata from file."""
+        try:
+            metadata_path = config.BASE_DIR / "metadata.json"
+            if metadata_path.exists():
+                with open(metadata_path, 'r') as f:
+                    return json.load(f)
+            return {}
+        except Exception as e:
+            logger.error(f"Error loading metadata: {e}")
+            return {}
 
     def save_metadata(self):
         """Save metadata to file."""
-        with open(self.metadata_file, 'w') as f:
-            json.dump(self.metadata, f)
-
-    def detect_patterns(self, image_path: Path) -> Dict:
-        """Detect patterns in an image and generate a detailed description."""
         try:
-            # Load and preprocess the image
-            image_features = self.embedding_extractor.extract_features(image_path)
-            
-            # Analyze patterns
-            pattern_info = self.pattern_analyzer._analyze_patterns(image_features)
-            
-            # Add detailed style analysis
-            style_info = self._analyze_detailed_style(image_features, pattern_info)
-            pattern_info['style'] = style_info  # Add style results to pattern_info
-            
-            # Load image for color analysis
-            image = Image.open(image_path)
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image_array = np.array(image)
-            
-            # Analyze colors with the image array
-            color_info = self.color_analyzer.analyze_colors(image_array)
-            
-            # Generate detailed prompt
-            prompt_data = self.generate_detailed_prompt(image_features, pattern_info, color_info)
-            
-            return {
-                "pattern_info": pattern_info,
-                "color_info": color_info,
-                "prompt": prompt_data
-            }
+            metadata_path = config.BASE_DIR / "metadata.json"
+            with open(metadata_path, 'w') as f:
+                json.dump(self.metadata, f)
         except Exception as e:
-            logger.error(f"Error detecting patterns: {str(e)}")
-            return {"error": str(e)}
+            logger.error(f"Error saving metadata: {e}")
 
-    def search(self, query: str, k: int = 10) -> List[Dict]:
-        """Search for images based on query."""
-        return self.searcher.search(query, list(self.metadata.values()), k)
-
-    def _get_default_pattern_info(self) -> Dict:
-        """Return default pattern info when analysis fails."""
-        return {
-            'category': 'Unknown',
-            'category_confidence': 0.0,
-            'primary_pattern': 'Unknown',
-            'pattern_confidence': 0.0,
-            'secondary_patterns': [],
-            'layout': {'type': 'balanced', 'confidence': 0.0},
-            'repeat_type': {'type': 'regular', 'confidence': 0.0},
-            'scale': {'type': 'medium', 'confidence': 0.0},
-            'texture_type': {'type': 'smooth', 'confidence': 0.0},
-            'cultural_influence': {'type': 'contemporary', 'confidence': 0.0},
-            'historical_period': {'type': 'modern', 'confidence': 0.0},
-            'mood': {'type': 'balanced', 'confidence': 0.0},
-            'style_keywords': ['balanced'],
-            'prompt': {
-                'final_prompt': 'Unable to analyze pattern',
-                'components': {},
-                'completeness_score': 0
-            }
-        }
-
-    def _analyze_patterns(self, image_features) -> Dict:
-        """Analyze patterns in the image features."""
-        try:
-            logger.info("Starting pattern analysis...")
+    def set_gemini_api_key(self, api_key: str):
+        """Set or update the Gemini API key"""
+        if api_key:
+            # Mask the key for logging
+            masked_key = self._mask_api_key(api_key)
+            logger.info(f"Updating Gemini API key: {masked_key}")
             
-            # Basic pattern categories
-            pattern_categories = [
-                "geometric", "floral", "abstract", "stripes", "polka dots", 
-                "chevron", "paisley", "plaid", "animal print", "tribal",
-                "damask", "herringbone", "houndstooth", "ikat", "lattice",
-                "medallion", "moroccan", "ogee", "quatrefoil", "trellis"
-            ]
-            
-            # Analyze pattern categories
-            scores = {}
-            with torch.no_grad():
-                for category in pattern_categories:
-                    text_inputs = self.processor(
-                        text=[f"this is a {category} pattern"],
-                        return_tensors="pt",
-                        padding=True
-                    ).to(self.device)
-                    
-                    text_features = self.model.get_text_features(**text_inputs)
-                    similarity = torch.nn.functional.cosine_similarity(
-                        image_features.to(self.device),
-                        text_features,
-                        dim=1
-                    )
-                    scores[category] = float(similarity[0].cpu())
-
-            # Find highest scoring category
-            primary_pattern = max(scores.items(), key=lambda x: x[1])
-            
-            # Find secondary patterns (above threshold)
-            threshold = 0.2
-            secondary_patterns = [
-                {"name": pattern, "confidence": score}
-                for pattern, score in scores.items()
-                if score > threshold and pattern != primary_pattern[0]
-            ]
-            
-            # Return results
-            return {
-                "category": primary_pattern[0],
-                "category_confidence": float(primary_pattern[1]),
-                "secondary_patterns": sorted(secondary_patterns, 
-                                          key=lambda x: x["confidence"], 
-                                          reverse=True)[:3]  # Top 3 secondary patterns
-            }
-
-        except Exception as e:
-            logger.error(f"Error in pattern analysis: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return {
-                "category": "Unknown",
-                "category_confidence": 0.0,
-                "secondary_patterns": []
-            }
-
-    def _analyze_detailed_style(self, image_features, pattern_info):
-        """Analyze detailed style aspects of the pattern with improved accuracy."""
-        try:
-            pattern_type = pattern_info.get('category', 'unknown')
-            
-            aspects = {
-                'layout': [
-                    'scattered', 'aligned', 'symmetrical', 'repeating', 
-                    'random', 'clustered', 'all-over', 'border', 'trailing'
-                ],
-                'scale': [
-                    'large', 'medium', 'small', 'varied', 'proportional', 
-                    'oversized', 'miniature', 'mixed'
-                ],
-                'texture_type': [
-                    'smooth', 'textured', 'raised', 'flat', 'embossed', 
-                    'dimensional', 'woven', 'printed'
-                ]
-            }
-            
-            results = {}
-            
-            for aspect, attributes in aspects.items():
-                logger.info(f"Analyzing {aspect} for pattern type: {pattern_type}")
-                
-                best_attribute = None
-                best_score = 0.0
-                all_scores = {}  # Store all scores for logging
-                
-                for attr in attributes:
-                    phrasings = [
-                        f"a {pattern_type} pattern with {attr} {aspect}",
-                        f"{attr} {aspect} in a {pattern_type} pattern",
-                        f"textile with {attr} {aspect}",
-                        f"{pattern_type} design with {attr} {aspect}"
-                    ]
-                    
-                    attr_score = 0.0
-                    valid_checks = 0
-                    phrase_scores = []  # Store individual phrase scores
-                    
-                    with torch.no_grad():
-                        for phrase in phrasings:
-                            text_inputs = self.processor(
-                                text=[phrase],
-                                return_tensors="pt",
-                                padding=True
-                            ).to(self.device)
-                            
-                            text_features = self.model.get_text_features(**text_inputs)
-                            similarity = torch.nn.functional.cosine_similarity(
-                                image_features.to(self.device),
-                                text_features,
-                                dim=1
-                            )
-                            score = float(similarity[0].cpu())
-                            phrase_scores.append((phrase, score))
-                            
-                            # Use threshold from config
-                            aspect_key = aspect.split('_')[0]  # Handle texture_type -> texture
-                            threshold = THRESHOLDS.get(aspect_key, 0.2)
-                            
-                            if score > threshold:
-                                attr_score += score
-                                valid_checks += 1
-                    
-                    # Log all phrase scores for debugging
-                    logger.debug(f"Phrase scores for {attr}: {phrase_scores}")
-                    
-                    if valid_checks > 0:
-                        avg_score = attr_score / valid_checks
-                        all_scores[attr] = avg_score
-                        logger.info(f"Average score for {attr}: {avg_score:.4f}")
-                        if avg_score > best_score:
-                            best_score = avg_score
-                            best_attribute = attr
-                            logger.info(f"New best attribute for {aspect}: {attr} (score: {avg_score:.4f})")
-
-                # Log all attribute scores for this aspect
-                logger.debug(f"All {aspect} scores: {all_scores}")
-                
-                results[aspect] = {
-                    'type': best_attribute or 'balanced',
-                    'confidence': best_score,
-                    'all_scores': all_scores  # Include all scores for potential UI display
-                }
-                logger.info(f"Final {aspect} result: {best_attribute or 'balanced'} (confidence: {best_score:.4f})")
-
-            return results
-
-        except Exception as e:
-            logger.error(f"Error in _analyze_detailed_style: {str(e)}")
-            logger.error("Stack trace:")
-            import traceback
-            traceback.print_exc()
-            return {}
-
-    def generate_detailed_prompt(self, image_features, pattern_info, color_info):
-        """Generate precise, descriptive prompts using the PromptBuilder."""
-        try:
-            # Initialize the prompt builder
-            prompt_builder = PromptBuilder()
-            
-            # Extract style info if available
-            style_info = pattern_info.get('style', {})
-            
-            # Build the prompt with style information
-            prompt_result = prompt_builder.build_prompt(pattern_info, color_info, style_info)
-            
-            # Refine the prompt text
-            final_prompt = prompt_result.get("final_prompt", "")
-            refined_prompt = refine_text(final_prompt)
-            prompt_result["final_prompt"] = refined_prompt
-            
-            return prompt_result
-        
-        except Exception as e:
-            logger.error(f"Error generating detailed prompt: {str(e)}")
-            return {
-                "final_prompt": "Unable to generate detailed prompt",
-                "components": {},
-                "completeness_score": 0
-            }
-
-    def get_color_name(self, hsv):
-        """Get color name from HSV values."""
-        h, s, v = hsv
-        
-        if s < 0.1 and v > 0.9:
-            return "White"
-        if s < 0.1 and v < 0.1:
-            return "Black"
-        if s < 0.1:
-            return "Gray"
-
-        h *= 360
-        if h < 30:
-            return "Red"
-        elif h < 90:
-            return "Yellow"
-        elif h < 150:
-            return "Green"
-        elif h < 210:
-            return "Cyan"
-        elif h < 270:
-            return "Blue"
-        elif h < 330:
-            return "Magenta"
+            # Update in analyzers without storing the key in this class
+            self.gemini_analyzer.set_api_key(api_key)
+            self.color_analyzer.set_api_key(api_key)
+            logger.info("Gemini API key updated in SearchEngine")
         else:
-            return "Red"
-
-    def analyze_colors(self, image: np.ndarray) -> Dict:
-        """Enhanced color analysis with better color naming."""
-        try:
-            # Convert image to RGB if it's not
-            if len(image.shape) == 2:  # Grayscale
-                image = np.stack((image,) * 3, axis=-1)
-            elif image.shape[2] == 4:  # RGBA
-                image = image[:, :, :3]
-
-            # Reshape image for clustering
-            pixels = image.reshape(-1, 3)
-            
-            # Determine optimal number of clusters
-            n_colors = min(max(3, len(np.unique(pixels, axis=0)) // 100), self.max_clusters)
-            
-            # Perform k-means clustering
-            kmeans = KMeans(n_clusters=n_colors, random_state=42)
-            kmeans.fit(pixels)
-            
-            # Get cluster centers and their proportions
-            colors = kmeans.cluster_centers_
-            labels = kmeans.labels_
-            
-            # Calculate color proportions
-            unique_labels, counts = np.unique(labels, return_counts=True)
-            proportions = counts / len(labels)
-
-            # Define basic color references with their RGB values
-            color_references = {
-                'Red': (255, 0, 0),
-                'Dark Red': (139, 0, 0),
-                'Pink': (255, 192, 203),
-                'Orange': (255, 165, 0),
-                'Yellow': (255, 255, 0),
-                'Green': (0, 128, 0),
-                'Light Green': (144, 238, 144),
-                'Blue': (0, 0, 255),
-                'Light Blue': (173, 216, 230),
-                'Purple': (128, 0, 128),
-                'Brown': (165, 42, 42),
-                'Gray': (128, 128, 128),
-                'Light Gray': (211, 211, 211),
-                'Black': (0, 0, 0),
-                'White': (255, 255, 255),
-                'Beige': (245, 245, 220),
-                'Navy': (0, 0, 128),
-                'Teal': (0, 128, 128),
-                'Maroon': (128, 0, 0),
-                'Gold': (255, 215, 0)
-            }
-
-            # Function to convert RGB to HSV
-            def rgb_to_hsv(rgb):
-                return colorsys.rgb_to_hsv(rgb[0]/255, rgb[1]/255, rgb[2]/255)
-
-            # Function to find closest color name
-            def get_color_name(rgb):
-                min_distance = float('inf')
-                closest_color = 'Unknown'
-                
-                # Convert target color to HSV
-                hsv = rgb_to_hsv(rgb)
-                
-                for name, ref_rgb in color_references.items():
-                    # Convert reference color to HSV
-                    ref_hsv = rgb_to_hsv(ref_rgb)
-                    
-                    # Calculate distance in HSV space with weighted components
-                    h_diff = min(abs(hsv[0] - ref_hsv[0]), 1 - abs(hsv[0] - ref_hsv[0])) * 2.0
-                    s_diff = abs(hsv[1] - ref_hsv[1])
-                    v_diff = abs(hsv[2] - ref_hsv[2])
-                    
-                    distance = (h_diff * 2) + (s_diff * 1) + (v_diff * 1)
-                    
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_color = name
-
-                return closest_color
-
-            # Process each dominant color
-            dominant_colors = []
-            for color, proportion in zip(colors, proportions):
-                rgb = color.astype(int)
-                hex_color = '#{:02x}{:02x}{:02x}'.format(*rgb)
-                color_name = get_color_name(rgb)
-                
-                dominant_colors.append({
-                    'rgb': rgb.tolist(),
-                    'hex': hex_color,
-                    'name': color_name,
-                    'proportion': float(proportion)
-                })
-
-            # Sort colors by proportion
-            dominant_colors.sort(key=lambda x: x['proportion'], reverse=True)
-
-            # Calculate overall brightness
-            brightness = np.mean(image) / 255.0
-
-            # Calculate color contrast
-            contrast = np.std(image) / 255.0
-
-            return {
-                'dominant_colors': dominant_colors,
-                'overall_brightness': float(brightness),
-                'color_contrast': float(contrast)
-            }
-
-        except Exception as e:
-            logger.error(f"Error in analyze_colors: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
-
-    def create_thumbnail(self, image_path: Path) -> Path:
-        """Create a thumbnail for the image."""
-        try:
-            from PIL import Image
-            
-            # Open image
-            img = Image.open(image_path)
-            
-            # Calculate new dimensions
-            aspect_ratio = img.width / img.height
-            new_width = min(400, img.width)
-            new_height = int(new_width / aspect_ratio)
-            
-            # Resize image
-            thumbnail = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-            
-            # Save thumbnail
-            thumbnail_path = config.THUMBNAIL_DIR / image_path.name
-            thumbnail.save(thumbnail_path, 'JPEG', quality=85)
-            
-            return thumbnail_path
-            
-        except Exception as e:
-            logger.error(f"Error creating thumbnail: {str(e)}")
-            return None
-
-    def process_images(self, image_paths: List[Path]) -> List[Dict]:
-        """Process multiple images and return their metadata."""
-        results = []
-        for path in image_paths:
-            try:
-                metadata = self.process_image(path)
-                if metadata:
-                    results.append(metadata)
-            except Exception as e:
-                logger.error(f"Error processing {path}: {str(e)}")
-                continue
-        return results
+            logger.warning("Attempted to set empty API key")
 
     def process_image(self, image_path: Path) -> Dict[str, Any]:
-        """
-        Process a single image and extract its patterns and metadata.
-        
-        Args:
-            image_path (Path): Path to the image file
-            
-        Returns:
-            Dict[str, Any]: Processed image metadata including patterns and colors
-        """
+        """Process an image and extract metadata including patterns and colors."""
         try:
-            logger.info(f"\n=== Processing image: {image_path} ===")
+            logger.info(f"Processing image: {image_path}")
             
-            # Check if image exists
+            # Check if file exists
             if not image_path.exists():
-                logger.error(f"Error: Image file not found at {image_path}")
+                logger.error(f"Image file not found: {image_path}")
                 return None
                 
             # Create thumbnail
             thumbnail_path = self.create_thumbnail(image_path)
             if not thumbnail_path:
-                logger.error(f"Error: Failed to create thumbnail for {image_path}")
+                logger.error(f"Failed to create thumbnail for: {image_path}")
                 return None
                 
-            # Open and process the image
-            try:
-                image = Image.open(image_path)
-                # Convert to RGB if needed (for PNG with transparency)
-                if image.mode != 'RGB':
-                    image = image.convert('RGB')
-            except Exception as e:
-                logger.error(f"Error opening image: {str(e)}")
-                return None
+            # Get relative paths for storage
+            rel_image_path = image_path.relative_to(config.UPLOAD_DIR)
+            rel_thumbnail_path = thumbnail_path.relative_to(config.THUMBNAIL_DIR)
+            
+            # Open the image for analysis - use a lower resolution for analysis
+            image = Image.open(image_path).convert('RGB')
+            
+            # Resize for faster processing if image is large
+            width, height = image.size
+            target_pixels = 100_000  # Target pixel count for analysis
+            if width * height > target_pixels:
+                ratio = (target_pixels / (width * height)) ** 0.5
+                new_width = int(width * ratio)
+                new_height = int(height * ratio)
+                image = image.resize((new_width, new_height), Image.LANCZOS)
+            
+            # Convert to numpy array for color analysis
+            image_np = np.array(image)
+            
+            # First perform color analysis since it can be done locally
+            color_info = self.analyze_colors(image_np)
+            
+            # Then use Gemini for pattern analysis
+            pattern_info = self.gemini_analyzer.analyze_image(str(image_path))
+            
+            # Ensure pattern_info has the required fields
+            if pattern_info.get('primary_pattern') is None:
+                pattern_info['primary_pattern'] = pattern_info.get('category', 'Unknown')
+            
+            if pattern_info.get('pattern_confidence') is None:
+                pattern_info['pattern_confidence'] = pattern_info.get('category_confidence', 0.8)
                 
-            # Extract patterns
-            pattern_data = self.detect_patterns(image_path)
-            if not pattern_data or "error" in pattern_data:
-                logger.warning(f"Warning: No patterns detected in {image_path}")
-                pattern_data = {
-                    "pattern_info": {
-                        "category": "Unknown",
-                        "category_confidence": 0.0
-                    },
-                    "prompt": {"final_prompt": "No pattern detected"}
-                }
+            # Add new structured fields if they're missing
+            if pattern_info.get('main_theme') is None:
+                pattern_info['main_theme'] = pattern_info.get('primary_pattern', pattern_info.get('category', 'Unknown'))
+                
+            if pattern_info.get('main_theme_confidence') is None:
+                pattern_info['main_theme_confidence'] = pattern_info.get('pattern_confidence', pattern_info.get('category_confidence', 0.8))
+                
+            # Ensure content_details exists
+            if not pattern_info.get('content_details'):
+                # Create from elements if available
+                pattern_info['content_details'] = []
+                for element in pattern_info.get('elements', []):
+                    if isinstance(element, dict) and element.get('name'):
+                        pattern_info['content_details'].append({
+                            'name': element.get('name', ''),
+                            'confidence': element.get('confidence', 0.8)
+                        })
+                        
+            # Ensure stylistic_attributes exists
+            if not pattern_info.get('stylistic_attributes'):
+                # Create from style_keywords if available
+                pattern_info['stylistic_attributes'] = []
+                for keyword in pattern_info.get('style_keywords', []):
+                    pattern_info['stylistic_attributes'].append({
+                        'name': keyword,
+                        'confidence': 0.8
+                    })
             
-            # Extract the pattern info and prompt from the pattern_data
-            pattern_info = pattern_data.get("pattern_info", {})
-            prompt_data = pattern_data.get("prompt", {"final_prompt": "No pattern detected"})
-            color_info = pattern_data.get("color_info", {})
-            
-            # Get the final prompt text
-            prompt_text = prompt_data.get("final_prompt", "No pattern detected")
-            
-            # Create metadata with the structure expected by the frontend
+            # Generate metadata
             metadata = {
-                "original_path": str(image_path),
-                "thumbnail_path": str(thumbnail_path.name),
-                "patterns": {
-                    "primary_pattern": pattern_info.get("category", "Unknown"),
-                    "confidence": pattern_info.get("category_confidence", 0.0),
-                    "elements": [e["name"] for e in pattern_info.get("elements", [])[:3]],
-                    "style": pattern_info.get("style", {}),
-                    "prompt": prompt_text,
-                    "secondary_patterns": pattern_info.get("secondary_patterns", [])
-                },
-                "colors": color_info,
-                "timestamp": str(Path(image_path).stat().st_mtime)
+                'id': str(image_path.stem),
+                'filename': image_path.name,
+                'path': str(rel_image_path),
+                'thumbnail_path': str(rel_thumbnail_path),
+                'patterns': pattern_info,
+                'colors': color_info,
+                'timestamp': import_time.time()
             }
             
-            # Log the prompt for debugging
-            logger.info(f"Generated prompt: {prompt_text}")
-            
-            # Save to metadata store
-            self.metadata[str(image_path)] = metadata
+            # Store metadata in memory
+            self.metadata[str(rel_image_path)] = metadata
             self.save_metadata()
             
-            logger.info(f"Successfully processed image: {image_path}")
+            # Index in Elasticsearch if enabled
+            if self.use_elasticsearch:
+                indexing_successful = self.es_client.index_document(metadata)
+                if indexing_successful:
+                    logger.info(f"Successfully indexed {image_path.name} in Elasticsearch")
+                else:
+                    logger.warning(f"Failed to index {image_path.name} in Elasticsearch")
+            
+            logger.info(f"Image processed successfully: {image_path}")
             return metadata
             
         except Exception as e:
-            logger.error(f"Error processing image {image_path}: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error processing image: {e}", exc_info=True)
             return None
 
-    def _analyze_style(self, image_features) -> Dict:
-        """Analyze style attributes of the pattern."""
-        style_types = ["traditional", "modern", "abstract", "naturalistic", 
-                      "geometric", "organic", "minimalist", "ornate"]
-        return self._analyze_attributes(image_features, style_types)
-
-    def _analyze_layout(self, image_features) -> Dict:
-        """Analyze layout of the pattern."""
-        layout_types = ["regular", "random", "directional", "symmetrical", 
-                       "all-over", "border", "central", "scattered"]
-        return self._analyze_attributes(image_features, layout_types)
-
-    def _analyze_repetition_type(self, image_features) -> Dict:
-        """Analyze pattern repetition type."""
-        repeat_types = ["block repeat", "half-drop", "mirror repeat", 
-                       "brick repeat", "diamond repeat", "ogee repeat"]
-        return self._analyze_attributes(image_features, repeat_types)
-
-    def _analyze_scale(self, image_features) -> Dict:
-        """Analyze scale of the pattern."""
-        scale_types = ["small-scale", "medium-scale", "large-scale", 
-                      "multi-scale", "micro pattern", "oversized"]
-        return self._analyze_attributes(image_features, scale_types)
-
-    def _analyze_texture(self, image_features) -> Dict:
-        """Analyze texture characteristics."""
-        texture_types = ["smooth", "textured", "dimensional", "flat", 
-                        "embossed", "woven", "printed"]
-        return self._analyze_attributes(image_features, texture_types)
-
-    def _analyze_cultural_context(self, image_features) -> Dict:
-        """Analyze cultural influences."""
-        cultural_styles = ["western", "eastern", "tribal", "contemporary", 
-                         "traditional", "fusion", "ethnic"]
-        return self._analyze_attributes(image_features, cultural_styles)
-
-    def _analyze_historical_context(self, image_features) -> Dict:
-        """Analyze historical context."""
-        historical_periods = ["classical", "modern", "contemporary", 
-                            "vintage", "retro", "timeless"]
-        return self._analyze_attributes(image_features, historical_periods)
-
-    def _suggest_use_cases(self, image_features) -> Dict:
-        """Suggest potential use cases."""
-        use_cases = ["apparel", "upholstery", "accessories", 
-                    "home decor", "wallcovering", "technical"]
-        return self._analyze_attributes(image_features, use_cases)
-
-    def _suggest_applications(self, image_features) -> Dict:
-        """Suggest specific applications."""
-        applications = ["fashion", "interior design", "textile art", 
-                       "commercial", "residential", "industrial"]
-        return self._analyze_attributes(image_features, applications)
-
-    def _analyze_mood(self, image_features) -> Dict:
-        """Analyze emotional mood."""
-        moods = ["elegant", "playful", "sophisticated", "casual", 
-                "dramatic", "serene", "energetic"]
-        return self._analyze_attributes(image_features, moods)
-
-    def _extract_style_keywords(self, image_features) -> List[str]:
-        """Extract key style descriptors."""
-        style_words = ["refined", "bold", "delicate", "dynamic", 
-                      "balanced", "harmonious", "striking"]
-        results = self._analyze_attributes(image_features, style_words)
-        return [results['type']] if results else []
-
-    def _analyze_attributes(self, features, attributes) -> Dict:
-        """Generic method to analyze pattern attributes."""
+    def create_thumbnail(self, image_path: Path) -> Path:
+        """Create a thumbnail for an image."""
         try:
-            scores = {}
-            for attr in attributes:
-                text_inputs = self.processor(
-                    text=[f"this pattern is {attr}", f"this pattern is not {attr}"],
-                    return_tensors="pt",
-                    padding=True
-                ).to(self.device)  # Move text inputs to GPU
-                
-                with torch.no_grad():
-                    text_features = self.model.get_text_features(**text_inputs)
-                    similarity = torch.nn.functional.cosine_similarity(
-                        features.to(self.device),  # Move features to GPU
-                        text_features,
-                        dim=1
-                    )
-                    scores[attr] = float(similarity[0].cpu())  # Move result back to CPU
-
-            # Get the most likely attribute
-            top_attr = max(scores.items(), key=lambda x: x[1])
-            return {
-                'type': top_attr[0],
-                'confidence': top_attr[1]
-            }
-
+            # Open the image
+            image = Image.open(image_path)
+            
+            # Convert to RGB if needed
+            if image.mode != 'RGB':
+                image = image.convert('RGB')
+            
+            # Resize to thumbnail size
+            image.thumbnail((config.IMAGE_SIZE, config.IMAGE_SIZE))
+            
+            # Create thumbnail path
+            thumbnail_path = config.THUMBNAIL_DIR / image_path.name
+            
+            # Save thumbnail
+            image.save(thumbnail_path)
+            
+            return thumbnail_path
         except Exception as e:
-            logger.error(f"Error in _analyze_attributes: {str(e)}")
+            logger.error(f"Error creating thumbnail: {e}")
+            return None
+
+    def analyze_colors(self, image_array: np.ndarray) -> Dict:
+        """Analyze colors in an image."""
+        try:
+            return self.color_analyzer.analyze_colors(image_array)
+        except Exception as e:
+            logger.error(f"Error analyzing colors: {e}")
             return {
-                'type': 'unknown',
-                'confidence': 0.0
+                "dominant_colors": [],
+                "color_palette": [],
+                "color_distribution": {}
             }
 
-    def _get_attributes_for_aspect(self, aspect):
-        """Get possible attributes for a given aspect."""
-        logger.info(f"\nGetting attributes for aspect: {aspect}")
-        attributes = {
-            'layout': ["balanced", "asymmetric", "radial", "linear", "scattered", "grid-like", "concentric"],
-            'scale': ["small", "medium", "large", "varied", "proportional", "intricate", "bold"],
-            'texture': ["smooth", "rough", "layered", "flat", "dimensional", "textured", "embossed"]
-        }
-        result = attributes.get(aspect, ["balanced"])
-        logger.info(f"Available attributes: {result}")
-        return result 
+    def _load_search_logs(self) -> Dict:
+        """Load search logs from file."""
+        try:
+            logs_path = config.BASE_DIR / "search_logs.json"
+            if logs_path.exists():
+                with open(logs_path, 'r') as f:
+                    return json.load(f)
+            return {"queries": [], "clicks": []}
+        except Exception as e:
+            logger.error(f"Error loading search logs: {e}")
+            return {"queries": [], "clicks": []}
+
+    def _save_search_logs(self):
+        """Save search logs to file."""
+        try:
+            logs_path = config.BASE_DIR / "search_logs.json"
+            with open(logs_path, 'w') as f:
+                json.dump(self.search_logs, f)
+        except Exception as e:
+            logger.error(f"Error saving search logs: {e}")
+
+    def log_search_query(self, query: str, result_count: int, search_time: float, 
+                         session_id: str = None, user_id: str = None):
+        """
+        Log search query for analytics to improve search quality.
+        
+        Args:
+            query: The search query string
+            result_count: Number of results returned
+            search_time: Time taken to perform the search
+            session_id: Optional session identifier
+            user_id: Optional user identifier
+        """
+        try:
+            timestamp = import_time.time()
+            log_entry = {
+                "timestamp": timestamp,
+                "query": query,
+                "result_count": result_count,
+                "search_time": search_time,
+                "session_id": session_id,
+                "user_id": user_id,
+                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+            }
+            
+            self.search_logs["queries"].append(log_entry)
+            
+            # Trim log if it gets too large (keep last 1000 entries)
+            if len(self.search_logs["queries"]) > 1000:
+                self.search_logs["queries"] = self.search_logs["queries"][-1000:]
+                
+            # Periodically save logs (every 10 searches)
+            if len(self.search_logs["queries"]) % 10 == 0:
+                self._save_search_logs()
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error logging search query: {e}")
+            return False
+    
+    def log_result_click(self, query: str, result_id: str, rank: int, 
+                         session_id: str = None, user_id: str = None):
+        """
+        Log when a user clicks on a search result to help improve relevance.
+        
+        Args:
+            query: The search query that produced the result
+            result_id: ID of the clicked result
+            rank: Position of the result in the results list (0-based)
+            session_id: Optional session identifier
+            user_id: Optional user identifier
+        """
+        try:
+            timestamp = import_time.time()
+            log_entry = {
+                "timestamp": timestamp,
+                "query": query,
+                "result_id": result_id,
+                "rank": rank,
+                "session_id": session_id,
+                "user_id": user_id,
+                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+            }
+            
+            self.search_logs["clicks"].append(log_entry)
+            
+            # Trim log if it gets too large (keep last 1000 entries)
+            if len(self.search_logs["clicks"]) > 1000:
+                self.search_logs["clicks"] = self.search_logs["clicks"][-1000:]
+                
+            # Always save logs when a click is recorded (important feedback)
+            self._save_search_logs()
+                
+            return True
+        except Exception as e:
+            logger.error(f"Error logging result click: {e}")
+            return False
+            
+    def get_search_analytics(self, days: int = 7) -> Dict:
+        """
+        Get search analytics for the specified time range.
+        
+        Args:
+            days: Number of days to include in analytics
+            
+        Returns:
+            Dictionary with analytics data
+        """
+        try:
+            # Calculate cutoff timestamp
+            cutoff = import_time.time() - (days * 24 * 60 * 60)
+            
+            # Filter queries and clicks by time range
+            recent_queries = [q for q in self.search_logs["queries"] 
+                              if q["timestamp"] >= cutoff]
+            recent_clicks = [c for c in self.search_logs["clicks"] 
+                             if c["timestamp"] >= cutoff]
+                             
+            # Calculate top queries
+            query_counts = {}
+            for query in recent_queries:
+                q = query["query"].lower()
+                if q in query_counts:
+                    query_counts[q] += 1
+                else:
+                    query_counts[q] = 1
+                    
+            # Sort by count
+            top_queries = [(q, c) for q, c in query_counts.items()]
+            top_queries.sort(key=lambda x: x[1], reverse=True)
+            
+            # Calculate zero-result queries
+            zero_results = [q for q in recent_queries if q["result_count"] == 0]
+            
+            # Calculate click-through rate
+            query_results = {}
+            for query in recent_queries:
+                q = query["query"].lower()
+                if q not in query_results:
+                    query_results[q] = 0
+                query_results[q] += query["result_count"]
+                
+            click_counts = {}
+            for click in recent_clicks:
+                q = click["query"].lower()
+                if q in click_counts:
+                    click_counts[q] += 1
+                else:
+                    click_counts[q] = 1
+                    
+            ctr_data = []
+            for q, results in query_results.items():
+                clicks = click_counts.get(q, 0)
+                if results > 0:
+                    ctr = clicks / results
+                else:
+                    ctr = 0
+                ctr_data.append({"query": q, "results": results, "clicks": clicks, "ctr": ctr})
+                
+            # Sort by CTR (descending)
+            ctr_data.sort(key=lambda x: x["ctr"], reverse=True)
+            
+            return {
+                "period_days": days,
+                "total_queries": len(recent_queries),
+                "total_clicks": len(recent_clicks),
+                "avg_results_per_query": sum(q["result_count"] for q in recent_queries) / max(len(recent_queries), 1),
+                "avg_search_time": sum(q["search_time"] for q in recent_queries) / max(len(recent_queries), 1),
+                "top_queries": top_queries[:20],  # Top 20 queries
+                "zero_result_queries": [q["query"] for q in zero_results][:20],  # Top 20 zero-result queries
+                "ctr_by_query": ctr_data[:20]  # Top 20 by CTR
+            }
+        except Exception as e:
+            logger.error(f"Error generating search analytics: {e}")
+            return {"error": str(e)}
+
+    def search(self, query: str, k: int = 10, session_id: str = None, user_id: str = None) -> List[Dict]:
+        """
+        Advanced search for images based on pattern, color, and other metadata.
+        If Elasticsearch is enabled, use it for search, otherwise fall back to in-memory search.
+        Results are cached if Redis is available.
+        
+        Args:
+            query: Search query string (can include commas to separate distinct terms)
+            k: Maximum number of results to return
+            session_id: Optional session identifier for analytics
+            user_id: Optional user identifier for analytics
+            
+        Returns:
+            List of image metadata dictionaries with similarity scores
+        """
+        min_similarity = config.DEFAULT_MIN_SIMILARITY
+        search_start_time = import_time.time()
+        
+        # Check cache first if enabled
+        cached_results = self.cache.get(query, k, min_similarity)
+        if cached_results is not None:
+            logger.info(f"Returning cached results for query: '{query}'")
+            search_time = import_time.time() - search_start_time
+            self.log_search_query(query, len(cached_results), search_time, session_id, user_id)
+            return cached_results
+        
+        # Cache miss, perform search
+        if self.use_elasticsearch:
+            logger.info(f"Using Elasticsearch for search: '{query}'")
+            try:
+                results = self.es_client.search(
+                    query=query, 
+                    limit=k,
+                    min_similarity=min_similarity
+                )
+                
+                # Cache the results
+                self.cache.set(query, k, min_similarity, results)
+                
+                # Log the search for analytics
+                search_time = import_time.time() - search_start_time
+                self.log_search_query(query, len(results), search_time, session_id, user_id)
+                
+                return results
+            except Exception as e:
+                logger.error(f"Elasticsearch search failed, falling back to in-memory search: {e}")
+        
+        # Fall back to in-memory search
+        logger.info(f"Using in-memory search: '{query}'")
+        results = self._in_memory_search(query, k)
+        
+        # Cache the results
+        self.cache.set(query, k, min_similarity, results)
+        
+        # Log the search for analytics
+        search_time = import_time.time() - search_start_time
+        self.log_search_query(query, len(results), search_time, session_id, user_id)
+        
+        return results
+    
+    def _in_memory_search(self, query: str, k: int = 10) -> List[Dict]:
+        """
+        Original in-memory search implementation as fallback.
+        Supports compound queries with comma-separated terms like 'red paisley, flower'
+        as well as space-separated terms like 'red paisley'.
+        Results are sorted by relevance to the query.
+        
+        Args:
+            query: Search query string (can include commas to separate distinct terms)
+            k: Maximum number of results to return
+            
+        Returns:
+            List of image metadata dictionaries with similarity scores
+        """
+        try:
+            if not self.metadata:
+                logger.info("No metadata available for search")
+                return []
+
+            # Parse the query into components
+            query = query.lower().strip()
+            
+            # Log the search query for analysis
+            logger.info(f"In-memory search for: '{query}'")
+            search_start_time = import_time.time()
+            
+            # Split on commas first to get distinct search "phrases"
+            query_phrases = [phrase.strip() for phrase in query.split(',')]
+            
+            # Then split each phrase into individual terms
+            all_query_terms = []
+            for phrase in query_phrases:
+                all_query_terms.extend(phrase.split())
+            
+            # Remove duplicates while preserving order
+            query_terms = []
+            for term in all_query_terms:
+                if term not in query_terms:
+                    query_terms.append(term)
+            
+            # Common color names to help with color matching
+            basic_colors = [
+                "red", "blue", "green", "yellow", "orange", "purple", "pink", 
+                "brown", "black", "white", "gray", "grey"
+            ]
+            
+            specific_colors = [
+                "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
+                "magenta", "lavender", "violet", "indigo", "coral", "peach",
+                "crimson", "azure", "beige", "tan", "gold", "silver", "bronze"
+            ]
+            
+            # Combine color lists for easier checking
+            color_names = basic_colors + specific_colors
+            
+            # Common pattern types
+            pattern_types = [
+                "paisley", "floral", "geometric", "abstract", "animal", "stripe", 
+                "dots", "plaid", "check", "chevron", "herringbone", "tropical", 
+                "diamond", "swirl", "damask", "toile", "ikat", "medallion", "flower"
+            ]
+            
+            # Extract color and pattern terms from the query
+            color_terms = [term for term in query_terms if term in color_names]
+            pattern_terms = [term for term in query_terms if term in pattern_types]
+            
+            # Also check each phrase for pattern matches that might be multi-word
+            for phrase in query_phrases:
+                phrase = phrase.strip()
+                for pattern_type in pattern_types:
+                    if pattern_type in phrase and pattern_type not in pattern_terms:
+                        pattern_terms.append(pattern_type)
+                for color_name in color_names:
+                    if color_name in phrase and color_name not in color_terms:
+                        color_terms.append(color_name)
+            
+            # Any terms that aren't colors or patterns
+            other_terms = [term for term in query_terms 
+                          if term not in color_names 
+                          and term not in pattern_types]
+            
+            # Log what we're searching for to debug
+            logger.info(f"Searching for patterns: {pattern_terms}, colors: {color_terms}, other: {other_terms}")
+            
+            # If no specific search terms were identified, treat all terms as general
+            if not pattern_terms and not color_terms and not other_terms:
+                # Try the full phrases first
+                other_terms = query_phrases
+                
+                # Also treat individual words as search terms
+                for term in query_terms:
+                    if term not in other_terms:
+                        other_terms.append(term)
+                        
+                # Log that we're using generic search terms
+                logger.info(f"No specific pattern/color terms identified. Using general terms: {other_terms}")
+                
+            # Filter results based on color/pattern/other terms
+            scored_results = []
+            
+            for path, metadata in self.metadata.items():
+                # Initialize score components
+                main_theme_score = 0.0
+                content_details_score = 0.0
+                stylistic_attributes_score = 0.0
+                color_score = 0.0
+                pattern_score = 0.0
+                other_score = 0.0
+                confidence_boost = 0.0
+                proportion_boost = 0.0
+                
+                # MAIN THEME MATCHING (new field)
+                if 'patterns' in metadata and metadata['patterns']:
+                    patterns = metadata['patterns']
+                    
+                    # Main theme match is weighted heavily
+                    main_theme = patterns.get('main_theme', '').lower()
+                    if main_theme and main_theme != 'unknown':
+                        main_theme_confidence = patterns.get('main_theme_confidence', 0.5)
+                        
+                        # Check for exact main theme matches
+                        for pattern_term in pattern_terms:
+                            if pattern_term == main_theme:
+                                # Exact match with high confidence
+                                main_theme_score += 10.0 * main_theme_confidence
+                            elif pattern_term in main_theme or main_theme in pattern_term:
+                                # Partial match
+                                main_theme_score += 5.0 * main_theme_confidence
+                                
+                        # Also check general terms against main theme
+                        for term in other_terms:
+                            if term.strip() and (term == main_theme or term in main_theme):
+                                main_theme_score += 2.0 * main_theme_confidence
+                    
+                    # CONTENT DETAILS MATCHING (new field)
+                    content_details = patterns.get('content_details', [])
+                    for content in content_details:
+                        if isinstance(content, dict):
+                            content_name = content.get('name', '').lower()
+                            content_confidence = content.get('confidence', 0.5)
+                            
+                            # Check pattern terms against content details
+                            for pattern_term in pattern_terms:
+                                if pattern_term == content_name:
+                                    # Exact match
+                                    content_details_score += 4.0 * content_confidence
+                                elif pattern_term in content_name:
+                                    # Partial match
+                                    content_details_score += 2.0 * content_confidence
+                            
+                            # Check other terms against content details
+                            for term in other_terms:
+                                if term.strip() and (term == content_name or term in content_name):
+                                    content_details_score += 3.0 * content_confidence
+                    
+                    # STYLISTIC ATTRIBUTES MATCHING (new field)
+                    stylistic_attributes = patterns.get('stylistic_attributes', [])
+                    for attr in stylistic_attributes:
+                        if isinstance(attr, dict):
+                            attr_name = attr.get('name', '').lower()
+                            attr_confidence = attr.get('confidence', 0.5)
+                            
+                            # Check other terms against stylistic attributes
+                            for term in other_terms:
+                                if term.strip() and (term == attr_name or term in attr_name):
+                                    stylistic_attributes_score += 3.0 * attr_confidence
+                            
+                            # Also check pattern terms against stylistic attributes
+                            for pattern_term in pattern_terms:
+                                if pattern_term in attr_name:
+                                    stylistic_attributes_score += 2.0 * attr_confidence
+                    
+                    # PATTERN MATCHING (existing fields)
+                    # Primary pattern match
+                    primary_pattern = patterns.get('primary_pattern', '').lower()
+                    if primary_pattern and primary_pattern != 'unknown':
+                        primary_confidence = patterns.get('pattern_confidence', 0.5)
+                        
+                        # Check for exact primary pattern matches
+                        for pattern_term in pattern_terms:
+                            if pattern_term == primary_pattern:
+                                # Exact match with high confidence
+                                pattern_score += 8.0 * primary_confidence
+                            elif pattern_term in primary_pattern or primary_pattern in pattern_term:
+                                # Partial match
+                                pattern_score += 4.0 * primary_confidence
+                    
+                    # Check secondary patterns
+                    secondary_patterns = patterns.get('secondary_patterns', [])
+                    for secondary in secondary_patterns:
+                        sec_name = secondary.get('name', '').lower()
+                        sec_confidence = secondary.get('confidence', 0.5)
+                        
+                        for pattern_term in pattern_terms:
+                            if pattern_term == sec_name:
+                                # Exact match in secondary pattern
+                                pattern_score += 3.0 * sec_confidence
+                            elif pattern_term in sec_name or sec_name in pattern_term:
+                                # Partial match in secondary pattern
+                                pattern_score += 1.5 * sec_confidence
+                    
+                    # Check elements for pattern matches
+                    elements = patterns.get('elements', [])
+                    for element in elements:
+                        # Handle case where element might be a string instead of a dictionary
+                        if isinstance(element, dict):
+                            element_name = element.get('name', '').lower()
+                            element_confidence = element.get('confidence', 0.5)
+                        else:
+                            element_name = str(element).lower()
+                            element_confidence = 0.5
+                        
+                        for pattern_term in pattern_terms:
+                            if pattern_term in element_name:
+                                pattern_score += 2.0 * element_confidence
+                    
+                    # Check the final prompt for pattern terms
+                    if 'prompt' in patterns and 'final_prompt' in patterns['prompt']:
+                        prompt_text = patterns['prompt']['final_prompt'].lower()
+                        for pattern_term in pattern_terms:
+                            if pattern_term in prompt_text:
+                                pattern_score += 0.5
+                                
+                        # Also check other terms in the prompt
+                        for term in other_terms:
+                            if term.strip() and term in prompt_text:
+                                # Give higher weight to full phrase matches in the prompt
+                                if len(term.split()) > 1:
+                                    other_score += 2.0
+                                else:
+                                    other_score += 0.8
+                
+                # COLOR MATCHING
+                if 'colors' in metadata and metadata['colors']:
+                    colors = metadata['colors']
+                    dominant_colors = colors.get('dominant_colors', [])
+                    
+                    for color_data in dominant_colors:
+                        color_name = color_data.get('name', '').lower()
+                        # Higher weight for colors with higher proportion
+                        proportion = color_data.get('proportion', 0.1)
+                        
+                        for color_term in color_terms:
+                            # Exact match gets higher score
+                            if color_term == color_name:
+                                color_score += 6.0 * proportion
+                                proportion_boost += proportion
+                            # Partial match gets lower score
+                            elif color_term in color_name:
+                                color_score += 3.0 * proportion
+                                proportion_boost += proportion * 0.5
+                    
+                    # Also check shades for more subtle color matches
+                    for color_data in dominant_colors:
+                        shades = color_data.get('shades', [])
+                        for shade in shades:
+                            shade_name = shade.get('name', '').lower()
+                            for color_term in color_terms:
+                                if color_term in shade_name:
+                                    color_score += 1.0 * color_data.get('proportion', 0.1)
+                
+                # OTHER TERMS MATCHING (for any other descriptive terms)
+                if 'patterns' in metadata and metadata['patterns']:
+                    # Check mood, cultural influence, style keywords, etc
+                    patterns = metadata['patterns']
+                    
+                    # Check style keywords
+                    style_keywords = patterns.get('style_keywords', [])
+                    for keyword in style_keywords:
+                        keyword = keyword.lower()
+                        for term in other_terms:
+                            # Check if the term is a full phrase that appears in the keyword
+                            # or if the keyword contains the term
+                            if (term.strip() and (term == keyword or term in keyword)):
+                                other_score += 2.0
+                    
+                    # Check cultural influence
+                    if 'cultural_influence' in patterns:
+                        cultural = patterns['cultural_influence'].get('type', '').lower()
+                        cultural_conf = patterns['cultural_influence'].get('confidence', 0.5)
+                        for term in other_terms:
+                            if term.strip() and term in cultural:
+                                other_score += 1.5 * cultural_conf
+                    
+                    # Check mood
+                    if 'mood' in patterns:
+                        mood = patterns['mood'].get('type', '').lower()
+                        mood_conf = patterns['mood'].get('confidence', 0.5)
+                        for term in other_terms:
+                            if term.strip() and term in mood:
+                                other_score += 1.5 * mood_conf
+                
+                # Calculate final score (weighted sum)
+                final_score = 0.0
+                
+                # Add new field scores with high weights
+                final_score += main_theme_score * 3.0
+                final_score += content_details_score * 2.0
+                final_score += stylistic_attributes_score * 1.5
+                
+                # Weight pattern matches most heavily when pattern terms are present
+                if pattern_terms:
+                    final_score += pattern_score * 2.0
+                
+                # Weight color matches heavily when color terms are present 
+                if color_terms:
+                    final_score += color_score * 1.5
+                
+                # Add other terms score
+                final_score += other_score
+                
+                # Normalize score based on number of query terms to avoid bias toward longer queries
+                if query_terms:  # Prevent division by zero
+                    final_score = final_score / (len(query_terms) * 3)  # Normalize to roughly 0-1 range
+                
+                # Only include results with non-zero scores
+                if final_score > 0:
+                    scored_results.append({
+                        **metadata, 
+                        'similarity': min(final_score, 1.0),  # Cap at 1.0
+                        'main_theme_score': main_theme_score,
+                        'content_details_score': content_details_score,
+                        'stylistic_attributes_score': stylistic_attributes_score,
+                        'pattern_score': pattern_score,
+                        'color_score': color_score,
+                        'other_score': other_score
+                    })
+            
+            # Sort results by similarity score (descending)
+            scored_results.sort(key=lambda x: x['similarity'], reverse=True)
+            
+            # Log search performance
+            search_time = import_time.time() - search_start_time
+            logger.info(f"In-memory search for '{query}' found {len(scored_results)} results in {search_time:.2f}s")
+            
+            return scored_results[:k]  # Return top k results
+            
+        except Exception as e:
+            logger.error(f"Error in search: {e}", exc_info=True)
+            return []
+
+    def delete_image(self, image_path: str) -> bool:
+        """
+        Delete image metadata and remove from Elasticsearch if enabled.
+        Invalidates the cache to ensure consistency.
+        
+        Args:
+            image_path: Path to the image to delete (relative to upload dir)
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Remove from in-memory metadata
+            if image_path in self.metadata:
+                metadata = self.metadata.pop(image_path)
+                self.save_metadata()
+                
+                # Remove from Elasticsearch if enabled
+                if self.use_elasticsearch:
+                    doc_id = metadata.get("id", image_path)
+                    self.es_client.delete_document(doc_id)
+                    
+                # Invalidate cache
+                self.cache.invalidate_all()
+                    
+                logger.info(f"Deleted image metadata: {image_path}")
+                return True
+            else:
+                logger.warning(f"Image not found in metadata: {image_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error deleting image: {e}")
+            return False
+            
+    def update_image_metadata(self, image_path: str, new_metadata: Dict[str, Any]) -> bool:
+        """
+        Update image metadata and in Elasticsearch if enabled.
+        Invalidates the cache to ensure consistency.
+        
+        Args:
+            image_path: Path to the image to update (relative to upload dir)
+            new_metadata: New metadata to apply
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Update in-memory metadata
+            if image_path in self.metadata:
+                # Merge new metadata with existing metadata
+                self.metadata[image_path].update(new_metadata)
+                self.save_metadata()
+                
+                # Update in Elasticsearch if enabled
+                if self.use_elasticsearch:
+                    doc_id = self.metadata[image_path].get("id", image_path)
+                    self.es_client.update_document(doc_id, self.metadata[image_path])
+                    
+                # Invalidate cache
+                self.cache.invalidate_all()
+                    
+                logger.info(f"Updated image metadata: {image_path}")
+                return True
+            else:
+                logger.warning(f"Image not found in metadata: {image_path}")
+                return False
+        except Exception as e:
+            logger.error(f"Error updating image metadata: {e}")
+            return False
+            
+    def get_image_metadata(self, image_path: str) -> Dict[str, Any]:
+        """Get metadata for a specific image."""
+        return self.metadata.get(image_path, None) 

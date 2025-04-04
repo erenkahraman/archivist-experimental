@@ -1,13 +1,15 @@
 import logging
-from flask import Flask, request, jsonify, send_from_directory
+from flask import Flask
+from flask_cors import CORS
 from pathlib import Path
-import uuid
 import os
-from search_engine import SearchEngine
 import config
-from .tasks import process_image_task
-import time
-from .logging_config import configure_logging
+from src.utils.logging_config import configure_logging
+from src.core.search_engine import SearchEngine
+import dotenv
+
+# Load environment variables from .env file if it exists
+dotenv.load_dotenv()
 
 # Configure logging at application startup
 configure_logging()
@@ -26,82 +28,72 @@ logger = logging.getLogger(__name__)
 # Suppress less important logs
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('matplotlib').setLevel(logging.WARNING)
-logging.getLogger('transformers').setLevel(logging.WARNING)
 werkzeug_logger = logging.getLogger('werkzeug')
 werkzeug_logger.setLevel(logging.WARNING)
 
-# ... geri kalan app.py kodu ... 
+# Get Gemini API key from environment variable
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    # Mask API key for secure logging
+    masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
+    logger.info(f"Gemini API key found in environment variables: {masked_key}")
+else:
+    logger.warning("No Gemini API key found in environment variables")
 
-@app.route('/api/debug/metadata', methods=['GET'])
-def debug_metadata():
-    """Debug endpoint to check metadata structure"""
-    try:
-        # Get the first few items from metadata
-        sample_metadata = list(search_engine.metadata.values())[:3]
-        return jsonify({
-            "success": True,
-            "metadata_sample": sample_metadata
-        })
-    except Exception as e:
-        return jsonify({
-            "success": False,
-            "error": str(e)
-        })
+def create_app():
+    """Create and configure the Flask application."""
+    app = Flask(__name__)
+    
+    # Enable CORS for all routes
+    CORS(app, resources={
+        r"/*": {
+            "origins": ["http://localhost:3000"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
+            "expose_headers": ["Content-Type", "Authorization"],
+            "supports_credentials": True,
+            "max_age": 86400
+        }
+    })
+    
+    # Add CORS preflight route handler for all routes
+    @app.route('/', defaults={'path': ''}, methods=['OPTIONS'])
+    @app.route('/<path:path>', methods=['OPTIONS'])
+    def options_handler(path):
+        return '', 200
+    
+    # Add a root route
+    @app.route('/')
+    def home():
+        return 'Archivist server is running'
+    
+    # Import API routes
+    from src.api import api
+    
+    # Register API routes with prefix
+    app.register_blueprint(api, url_prefix='/api')
+    
+    # Ensure required directories exist
+    ensure_directories()
+    
+    return app
 
-@app.route('/api/upload', methods=['POST'])
-def upload_image():
-    """Upload and process an image."""
-    try:
-        if 'file' not in request.files:
-            return jsonify({"success": False, "error": "No file part"})
-            
-        file = request.files['file']
-        if file.filename == '':
-            return jsonify({"success": False, "error": "No selected file"})
-            
-        # Save the uploaded file
-        filename = str(uuid.uuid4()) + '_' + str(int(time.time())) + '.png'
-        image_path = config.UPLOAD_DIR / filename
-        file.save(image_path)
-        
-        # Process asynchronously
-        task = process_image_task.delay(str(image_path))
-        
-        return jsonify({
-            "success": True,
-            "message": "Image uploaded and processing started",
-            "task_id": task.id,
-            "image_path": str(image_path)
-        })
-        
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+def ensure_directories():
+    """Ensure all required directories exist."""
+    directories = [
+        config.UPLOAD_DIR,
+        config.THUMBNAIL_DIR,
+        config.METADATA_DIR
+    ]
+    
+    for directory in directories:
+        directory.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Ensured directory exists: {directory}")
 
-@app.route('/api/task/<task_id>', methods=['GET'])
-def check_task(task_id):
-    """Check the status of an async task."""
-    try:
-        task = process_image_task.AsyncResult(task_id)
-        
-        if task.state == 'PENDING':
-            response = {
-                "state": task.state,
-                "status": "Task is pending"
-            }
-        elif task.state == 'FAILURE':
-            response = {
-                "state": task.state,
-                "status": "Task failed",
-                "error": str(task.info)
-            }
-        else:
-            response = {
-                "state": task.state,
-                "status": "Task completed" if task.state == 'SUCCESS' else "Task in progress",
-                "result": task.result if task.state == 'SUCCESS' else None
-            }
-            
-        return jsonify(response)
-        
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}) 
+def start_app():
+    """Start the Flask application."""
+    app = create_app()
+    app.run(debug=True, host='0.0.0.0', port=8000)
+
+if __name__ == '__main__':
+    start_app() 
