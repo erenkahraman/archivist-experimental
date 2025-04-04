@@ -39,6 +39,10 @@ ELASTICSEARCH_API_KEY = os.environ.get("ELASTICSEARCH_API_KEY")
 ELASTICSEARCH_USERNAME = os.environ.get("ELASTICSEARCH_USERNAME")
 ELASTICSEARCH_PASSWORD = os.environ.get("ELASTICSEARCH_PASSWORD")
 
+# Search settings
+DEFAULT_SEARCH_LIMIT = 20
+DEFAULT_MIN_SIMILARITY = 0.1
+
 # Cache settings
 ENABLE_CACHE = os.environ.get("ENABLE_CACHE", "false").lower() == "true"
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")

@@ -42,6 +42,8 @@
           'is-uploading': image.isUploading,
           'is-searching': image.isSearching
         }"
+        draggable="true"
+        @dragstart="handleDragStart(image, $event)"
       >
         <!-- Uploading state -->
         <template v-if="image.isUploading">
@@ -428,11 +430,40 @@ const handleReset = async () => {
     isResetting.value = false
   }
 }
+
+// Add draggable attribute and event handler to the gallery item
+const handleDragStart = (image, event) => {
+  // Store the image ID (or path) in the drag event
+  const imageId = image.id || getFileName(image.thumbnail_path || image.path || image.original_path || '');
+  event.dataTransfer.setData('text/plain', imageId);
+  event.dataTransfer.effectAllowed = 'copy';
+  
+  // Optional: you can add a CSS class for visual feedback
+  event.target.closest('.gallery-item').classList.add('is-dragging');
+  
+  // Add a dragend event listener to remove the class when dragging ends
+  event.target.closest('.gallery-item').addEventListener('dragend', () => {
+    event.target.closest('.gallery-item').classList.remove('is-dragging');
+  }, { once: true });
+}
+
+// Helper to get filename from path
+const getFileName = (path) => {
+  if (!path) return '';
+  return path.split('/').pop();
+}
 </script>
 
 <style scoped>
 .gallery-container {
   min-height: 300px;
+}
+
+.gallery-item.is-dragging {
+  opacity: 0.7;
+  transform: scale(0.97);
+  outline: 2px dashed var(--color-primary);
+  box-shadow: 0 0 15px rgba(79, 70, 229, 0.3);
 }
 
 .gallery-placeholder,

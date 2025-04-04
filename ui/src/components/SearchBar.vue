@@ -1,5 +1,12 @@
 <template>
-  <div class="search-container">
+  <div 
+    class="search-container" 
+    :class="{ 'is-dragover': isDragover }"
+    @dragenter.prevent="handleDragEnter"
+    @dragover.prevent="handleDragOver"
+    @dragleave.prevent="handleDragLeave"
+    @drop.prevent="handleDrop"
+  >
     <div class="search-form">
       <div class="search-input-wrapper">
         <svg class="search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -92,6 +99,12 @@
       <span class="hint-icon">💡</span>
       <span class="hint-text">Use commas to separate search terms for more specific results.</span>
     </div>
+    
+    <!-- Add a drag-and-drop hint -->
+    <div class="search-hint drag-hint">
+      <span class="hint-icon">🔍</span>
+      <span class="hint-text">Drag any image from the gallery here to find similar patterns.</span>
+    </div>
   </div>
 </template>
 
@@ -105,6 +118,45 @@ const searchQuery = ref('')
 const searchType = ref('all')
 const resultCount = ref(20)
 const minSimilarity = ref(0.1)
+const isDragover = ref(false)
+
+// Drag and drop handlers
+const handleDragEnter = (event) => {
+  isDragover.value = true
+}
+
+const handleDragOver = (event) => {
+  event.dataTransfer.dropEffect = 'copy'
+  isDragover.value = true
+}
+
+const handleDragLeave = (event) => {
+  // Only set to false if we're leaving the container (not entering a child element)
+  if (!event.currentTarget.contains(event.relatedTarget)) {
+    isDragover.value = false
+  }
+}
+
+const handleDrop = async (event) => {
+  isDragover.value = false
+  
+  try {
+    // Get the image ID or filename from the dataTransfer
+    const imageId = event.dataTransfer.getData('text/plain')
+    
+    if (!imageId) {
+      console.error('No image ID received in drop')
+      return
+    }
+    
+    console.log('Image dropped with ID:', imageId)
+    
+    // Call the store method for similarity search
+    await imageStore.searchSimilarById(imageId)
+  } catch (error) {
+    console.error('Error handling image drop:', error)
+  }
+}
 
 // Watch for external search reset
 watch(() => imageStore.searchQuery, (newVal) => {
@@ -159,6 +211,20 @@ const runExampleSearch = (example) => {
 <style scoped>
 .search-container {
   margin-bottom: var(--space-4);
+}
+
+.search-container.is-dragover {
+  background-color: rgba(79, 70, 229, 0.1);
+  border: 2px dashed var(--color-primary);
+  border-radius: var(--radius-lg);
+  padding: var(--space-3);
+  animation: pulse 1.5s infinite;
+}
+
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(79, 70, 229, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
 }
 
 .search-form {
@@ -430,6 +496,16 @@ const runExampleSearch = (example) => {
   background-color: rgba(79, 70, 229, 0.1);
   padding: 2px 6px;
   border-radius: var(--radius-md);
+}
+
+.search-hint.drag-hint {
+  margin-top: var(--space-2);
+  background-color: rgba(79, 70, 229, 0.05);
+  border: 1px dashed rgba(79, 70, 229, 0.3);
+}
+
+.search-hint.drag-hint .hint-icon {
+  color: var(--color-primary-dark);
 }
 
 @media (max-width: 768px) {

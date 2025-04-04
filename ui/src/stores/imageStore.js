@@ -194,6 +194,65 @@ export const useImageStore = defineStore('images', () => {
     fetchImages()
   }
 
+  // Search for similar images by ID
+  const searchSimilarById = async (imageId, options = {}) => {
+    try {
+      if (!imageId) {
+        throw new Error('Image ID is required for similarity search')
+      }
+      
+      // Set searching state
+      isSearching.value = true
+      error.value = null
+      
+      // Extract options with defaults
+      const k = options.limit || 20
+      const minSimilarity = options.minSimilarity || 0.1
+      
+      // Log the search attempt
+      if (isDev) {
+        console.log(`Searching for images similar to: ${imageId}`)
+      }
+      
+      // Call the API endpoint for similarity search
+      const response = await fetch(`${API_BASE_URL}/similar/${encodeURIComponent(imageId)}`, {
+        method: 'GET'
+      })
+      
+      if (!response.ok) {
+        throw new Error(`Similarity search failed: ${response.statusText}`)
+      }
+      
+      // Process the search results
+      const searchData = await response.json()
+      
+      if (searchData.results && Array.isArray(searchData.results)) {
+        // Store the results
+        searchQuery.value = `Similar to: ${imageId}`
+        searchTotalResults.value = searchData.results.length
+        searchResults.value = searchData.results
+        
+        // Keep uploading images
+        const uploadingImages = images.value.filter(img => img.isUploading)
+        
+        // Set images to search results plus uploading images
+        images.value = [...uploadingImages, ...searchData.results]
+        
+        return searchResults.value
+      } else {
+        return []
+      }
+    } catch (err) {
+      error.value = err.message
+      if (isDev) {
+        console.error('Similarity search error:', err)
+      }
+      return []
+    } finally {
+      isSearching.value = false
+    }
+  }
+
   // Clear all images from the store
   const clearAllImages = () => {
     images.value = []
@@ -289,6 +348,7 @@ export const useImageStore = defineStore('images', () => {
     isValidImage,
     getFileName,
     nukeEverything,
+    searchSimilarById,
     
     // Computed
     hasError,

@@ -481,11 +481,15 @@ class SearchEngine:
         Returns:
             List of image metadata dictionaries with similarity scores
         """
+        # Use the MIN_SIMILARITY from config
         min_similarity = config.DEFAULT_MIN_SIMILARITY
         search_start_time = import_time.time()
         
+        # Create a composite cache key
+        cache_key = f"search:{query}:limit:{k}:min_sim:{min_similarity}"
+        
         # Check cache first if enabled
-        cached_results = self.cache.get(query, k, min_similarity)
+        cached_results = self.cache.get(cache_key)
         if cached_results is not None:
             logger.info(f"Returning cached results for query: '{query}'")
             search_time = import_time.time() - search_start_time
@@ -503,7 +507,7 @@ class SearchEngine:
                 )
                 
                 # Cache the results
-                self.cache.set(query, k, min_similarity, results)
+                self.cache.set(cache_key, results)
                 
                 # Log the search for analytics
                 search_time = import_time.time() - search_start_time
@@ -518,7 +522,7 @@ class SearchEngine:
         results = self._in_memory_search(query, k)
         
         # Cache the results
-        self.cache.set(query, k, min_similarity, results)
+        self.cache.set(cache_key, results)
         
         # Log the search for analytics
         search_time = import_time.time() - search_start_time

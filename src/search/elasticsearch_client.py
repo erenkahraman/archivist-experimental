@@ -1276,4 +1276,252 @@ class ElasticsearchClient:
             
         except Exception as e:
             logger.error(f"Failed to rebuild index: {str(e)}")
-            return False 
+            return False
+    
+    def find_similar(self, embedding, limit=20, min_similarity=0.1, exclude_id=None, text_query=None):
+        """
+        Find documents similar to the provided embedding vector.
+        
+        Args:
+            embedding: The vector embedding to use for similarity search
+            limit: Maximum number of results (default: 20)
+            min_similarity: Minimum similarity threshold (default: 0.1)
+            exclude_id: ID or filename to exclude from results (default: None)
+            text_query: Optional text query to combine with vector search (default: None)
+            
+        Returns:
+            List of documents sorted by similarity score
+        """
+        if not self.is_connected():
+            logger.error("Cannot search: not connected to Elasticsearch")
+            return []
+        
+        # Log search initialization with parameters
+        logger.info("===== VECTOR SIMILARITY SEARCH START =====")
+        logger.info(f"Search parameters: limit={limit}, min_similarity={min_similarity}, exclude_id={exclude_id}")
+        
+        # Start building the kNN query 
+        search_start_time = time.time()
+        
+        # Create the query body
+        query_body = {
+            "size": limit,
+            "query": {
+                "script_score": {
+                    "query": {
+                        "bool": {
+                            "must": [
+                                {"match_all": {}}
+                            ]
+                        }
+                    },
+                    "script": {
+                        "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
+                        "params": {
+                            "query_vector": embedding
+                        }
+                    }
+                }
+            }
+        }
+        
+        # Add filter to exclude the reference image if specified
+        if exclude_id:
+            # Create a bool filter to exclude by id or filename
+            exclude_filter = {
+                "bool": {
+                    "must_not": [
+                        {"terms": {"id": [exclude_id]}},
+                        {"terms": {"filename": [exclude_id]}}
+                    ]
+                }
+            }
+            query_body["query"]["script_score"]["query"]["bool"]["filter"] = exclude_filter
+        
+        # Add text query if provided (hybrid search)
+        if text_query:
+            # Parse the text query into components for hybrid search
+            parsed_query = self._parse_query_basic(text_query)
+            
+            # Add text query to the bool query
+            text_must = []
+            
+            # Add pattern terms
+            if parsed_query['patterns']:
+                pattern_query = {
+                    "multi_match": {
+                        "query": " ".join(parsed_query['patterns']),
+                        "fields": [
+                            "patterns.primary_pattern^3",
+                            "patterns.main_theme^2",
+                            "patterns.secondary_patterns.name^1.5",
+                            "patterns.elements.name",
+                            "patterns.style_keywords"
+                        ],
+                        "type": "best_fields",
+                        "operator": "or",
+                        "fuzziness": "AUTO"
+                    }
+                }
+                text_must.append(pattern_query)
+            
+            # Add color terms
+            if parsed_query['colors']:
+                color_query = {
+                    "multi_match": {
+                        "query": " ".join(parsed_query['colors']),
+                        "fields": [
+                            "colors.dominant_colors.name^2",
+                            "colors.color_palette.name"
+                        ],
+                        "type": "best_fields",
+                        "operator": "or"
+                    }
+                }
+                text_must.append(color_query)
+            
+            # Add other terms
+            if parsed_query['other']:
+                other_query = {
+                    "multi_match": {
+                        "query": " ".join(parsed_query['other']),
+                        "fields": [
+                            "patterns.description^2",
+                            "patterns.prompt.final_prompt"
+                        ],
+                        "type": "best_fields",
+                        "operator": "or",
+                        "fuzziness": "AUTO"
+                    }
+                }
+                text_must.append(other_query)
+            
+            # Add to the main query
+            if text_must:
+                query_body["query"]["script_score"]["query"]["bool"]["must"] = text_must
+        
+        # Log the query
+        self._log_query_details(query_body)
+        
+        try:
+            # Execute the search
+            logger.info("Executing vector similarity search...")
+            start_time = time.time()
+            response = self.client.search(index=self.index_name, body=query_body)
+            search_time = time.time() - start_time
+            logger.info(f"Vector search executed in {search_time:.2f}s")
+            
+            # Extract and format results
+            results = []
+            total_hits = response["hits"]["total"]["value"] if "total" in response["hits"] else len(response["hits"]["hits"])
+            logger.info(f"Search returned {total_hits} total hits")
+            
+            # Process hits
+            for i, hit in enumerate(response["hits"]["hits"]):
+                doc = hit["_source"]
+                
+                # Calculate similarity score - cosine similarity returns values from -1 to 1
+                # Scale to 0-1 range: (cosine_sim + 1) / 2
+                score = hit["_score"]
+                similarity = (score - 1.0) / 2.0  # Convert back to -1 to 1 range, then to 0 to 1 range
+                
+                # Ensure score is in valid range
+                similarity = max(0, min(similarity, 1.0))
+                
+                # Add similarity score
+                doc["similarity"] = similarity
+                
+                # Log each result with its score
+                logger.info(f"Result {i+1}: id={doc.get('id', 'unknown')}, filename={doc.get('filename', 'unknown')}, score={hit['_score']:.4f}, similarity={similarity:.4f}")
+                
+                # Only include results above min_similarity threshold
+                if similarity >= min_similarity:
+                    results.append(doc)
+                else:
+                    logger.info(f"  Skipping result {i+1} as similarity {similarity:.4f} is below threshold {min_similarity}")
+            
+            # Log search performance
+            query_time = time.time() - search_start_time
+            logger.info(f"Total vector search process completed in {query_time:.2f}s")
+            logger.info(f"Found {total_hits} hits, returning {len(results)} results after filtering by min_similarity={min_similarity}")
+            logger.info("===== VECTOR SIMILARITY SEARCH END =====")
+            
+            return results
+        except Exception as e:
+            logger.error(f"Vector search error: {str(e)}", exc_info=True)
+            logger.info("===== VECTOR SIMILARITY SEARCH FAILED =====")
+            return []
+            
+    def _parse_query_basic(self, query_string):
+        """
+        Simple version of _parse_query for similarity search use.
+        Splits query terms into patterns, colors, and other.
+        
+        Args:
+            query_string: The text query string
+            
+        Returns:
+            Dict with 'patterns', 'colors', and 'other' lists
+        """
+        # Normalize and clean the query
+        query = query_string.lower().strip()
+        
+        # Split by commas first, then spaces
+        terms = []
+        for part in query.split(','):
+            part = part.strip()
+            if ' ' in part:
+                # Multi-word term, keep it as a single unit
+                terms.append(part)
+            else:
+                # Single word
+                if part:
+                    terms.append(part)
+        
+        # Pattern types for classification
+        pattern_types = [
+            "paisley", "floral", "geometric", "abstract", "animal", "stripe", 
+            "dots", "plaid", "check", "chevron", "herringbone", "tropical", 
+            "diamond", "swirl", "damask", "toile", "ikat", "medallion", "flower"
+        ]
+        
+        # Common color names
+        basic_colors = [
+            "red", "blue", "green", "yellow", "orange", "purple", "pink", 
+            "brown", "black", "white", "gray", "grey"
+        ]
+        
+        specific_colors = [
+            "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
+            "magenta", "lavender", "violet", "indigo", "coral", "peach"
+        ]
+        
+        colors = basic_colors + specific_colors
+        
+        # Classify terms
+        pattern_terms = []
+        color_terms = []
+        other_terms = []
+        
+        for term in terms:
+            # First check if it's a pattern
+            if any(pattern in term for pattern in pattern_types):
+                pattern_terms.append(term)
+            # Then check if it's a color
+            elif any(color in term for color in colors):
+                color_terms.append(term)
+            # Otherwise it's an "other" term
+            else:
+                other_terms.append(term)
+        
+        # Log the parsing results
+        logger.info(f"Parsed similarity query '{query_string}' into:")
+        logger.info(f" - Patterns: {pattern_terms}")
+        logger.info(f" - Colors: {color_terms}")
+        logger.info(f" - Other: {other_terms}")
+        
+        return {
+            'patterns': pattern_terms,
+            'colors': color_terms,
+            'other': other_terms
+        } 
