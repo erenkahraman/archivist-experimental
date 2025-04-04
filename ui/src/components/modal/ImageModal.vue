@@ -12,7 +12,7 @@
           <div class="image-container" :class="{ 'is-loading': isLoading }">
             <img
               id="modal-image"
-              :src="getImageUrl(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path || props.selectedImage.id)"
+              :src="getImageUrl(props.selectedImage.path || props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.original_path)"
               :alt="getImageName(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.id)"
               class="main-image"
               @load="handleImageLoaded"
@@ -246,7 +246,18 @@ const getImageUrl = (path) => {
   // Get just the filename
   const filename = imageStore.getFileName(path);
   
-  // Construct API URL
+  // If the path contains 'uploads/', it's a reference to the uploads directory
+  if (path.includes('uploads/')) {
+    // Construct API URL for full image
+    return `${imageStore.API_BASE_URL}/images/${filename}`;
+  }
+  
+  // For paths that have thumbnail in them, use the thumbnail endpoint
+  if (path.includes('thumbnail')) {
+    return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
+  }
+  
+  // Default to full image endpoint
   return `${imageStore.API_BASE_URL}/images/${filename}`;
 };
 
@@ -622,6 +633,7 @@ const formatDate = (dateString) => {
 
 // Image loading handlers
 const handleImageLoaded = () => {
+  console.log('Image loaded successfully');
   isLoading.value = false;
   imageLoadError.value = false;
   errorMessage.value = '';
@@ -633,6 +645,7 @@ const attemptCount = ref(0);
 const handleImageError = (error) => {
   console.error('Error loading image:', error);
   console.log('Image that failed to load:', props.selectedImage);
+  console.log('Attempted URL:', imageElement.value?.src);
   isLoading.value = false;
   imageLoadError.value = true;
   
@@ -657,11 +670,18 @@ const handleImageError = (error) => {
   if (props.selectedImage.thumbnail_path) {
     console.log('Attempting to load thumbnail instead:', props.selectedImage.thumbnail_path);
     tryLoadThumbnail();
+  } else {
+    console.log('No thumbnail available, trying to generate one from path:', props.selectedImage.path);
+    tryLoadThumbnail();
   }
 };
 
 const tryLoadThumbnail = () => {
-  if (!props.selectedImage.thumbnail_path) {
+  // Try different sources for the thumbnail
+  const thumbnailPath = props.selectedImage.thumbnail_path || 
+                        (props.selectedImage.path && props.selectedImage.path.replace('uploads/', 'thumbnails/'));
+  
+  if (!thumbnailPath) {
     errorMessage.value = 'No thumbnail available for this image.';
     return;
   }
@@ -686,9 +706,12 @@ const tryLoadThumbnail = () => {
   useThumbnail.value = true;
   isLoading.value = true;
   
+  // Log the source we're trying
+  console.log('Trying to load thumbnail from:', thumbnailPath);
+  
   // Change the image source to the thumbnail
   if (imageElement.value) {
-    imageElement.value.src = getThumbnailUrl(props.selectedImage.thumbnail_path);
+    imageElement.value.src = getThumbnailUrl(thumbnailPath);
   }
 };
 
@@ -706,16 +729,31 @@ onMounted(() => {
   // Set image element for load handling
   imageElement.value = document.getElementById('modal-image');
   
+  // Reset state for new image
+  attemptCount.value = 0;
+  useThumbnail.value = false;
+  isLoading.value = true;
+  imageLoadError.value = false;
+  
+  // Log initial image path being attempted
+  const imagePath = props.selectedImage.path || 
+                   props.selectedImage.file_path || 
+                   props.selectedImage.image_path || 
+                   props.selectedImage.original_path;
+  console.log('Initial image path attempt:', imagePath);
+  console.log('Using URL:', getImageUrl(imagePath));
+  
   // Handle image loading events
   if (imageElement.value) {
     imageElement.value.onload = () => {
+      console.log('Image loaded successfully via onload event');
       isLoading.value = false;
       imageLoadError.value = false;
       errorMessage.value = '';
     };
     
     imageElement.value.onerror = (error) => {
-      console.error('Image load error:', error);
+      console.error('Image load error via onerror event:', error);
       
       // If we're not already using the thumbnail, try to use it
       if (!useThumbnail.value) {

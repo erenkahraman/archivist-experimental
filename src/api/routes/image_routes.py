@@ -23,6 +23,11 @@ def serve_thumbnail(filename):
     """Serve thumbnail images"""
     return send_from_directory(config.THUMBNAIL_DIR, filename)
 
+@api.route('/images/<path:filename>')
+def serve_image(filename):
+    """Serve full-size images"""
+    return send_from_directory(config.UPLOAD_DIR, filename)
+
 @api.route('/images', methods=['GET'])
 def get_images():
     try:
