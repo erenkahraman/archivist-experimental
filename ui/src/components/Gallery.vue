@@ -69,7 +69,8 @@
               aria-label="Delete image"
             >
               <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M3 6H5H21" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                <path d="M8 6V4C8 3.46957 8.21071 2.96086 8.58579 2.58579C8.96086 2.21071 9.46957 2 10 2H14C14.5304 2 15.0391 2.21071 15.4142 2.58579C15.7893 2.96086 16 3.46957 16 4V6M19 6V20C19 20.5304 18.7893 21.0391 18.4142 21.4142C18.0391 21.7893 17.5304 22 17 22H7C6.46957 22 5.96086 21.7893 5.58579 21.4142C5.21071 21.0391 5 20.5304 5 20V6H19Z" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </button>
           </div>
@@ -456,28 +457,49 @@ const getFileName = (path) => {
 
 <style scoped>
 .gallery-container {
-  min-height: 300px;
+  width: 100%;
+  margin: 0 var(--space-1);
 }
 
-.gallery-item.is-dragging {
-  opacity: 0.7;
-  transform: scale(0.97);
-  outline: 2px dashed var(--color-primary);
-  box-shadow: 0 0 15px rgba(79, 70, 229, 0.3);
+.reset-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--space-4);
 }
 
-.gallery-placeholder,
+.reset-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background-color: rgba(251, 113, 133, 0.1);
+  color: #fb7185;
+  border: 1px solid rgba(251, 113, 133, 0.2);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.reset-button:hover {
+  background-color: rgba(251, 113, 133, 0.15);
+  color: #f43f5e;
+}
+
+.gallery-placeholder, 
 .gallery-empty {
+  min-height: 300px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 300px;
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
   padding: var(--space-8);
   text-align: center;
-  border-radius: var(--radius-lg);
-  background-color: rgba(255, 255, 255, 0.5);
-  backdrop-filter: blur(4px);
 }
 
 .loading-container {
@@ -487,66 +509,116 @@ const getFileName = (path) => {
   gap: var(--space-4);
 }
 
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid rgba(79, 70, 229, 0.1);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
 .loading-text {
-  color: var(--color-text-light);
   font-size: 1.1rem;
+  color: var(--color-text-light);
+  margin: 0;
 }
 
 .empty-illustration {
-  width: 100px;
-  height: 100px;
-  color: var(--color-text-light);
-  opacity: 0.6;
+  width: 80px;
+  height: 80px;
+  color: var(--color-text-lighter);
   margin-bottom: var(--space-4);
+  opacity: 0.6;
 }
 
 .empty-title {
-  font-family: var(--font-heading);
-  font-size: 1.8rem;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin: 0 0 var(--space-2) 0;
   color: var(--color-text);
-  margin-bottom: var(--space-2);
 }
 
 .empty-description {
+  font-size: 1rem;
   color: var(--color-text-light);
+  margin: 0;
   max-width: 400px;
 }
 
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: var(--space-6);
+  grid-template-columns: repeat(6, 1fr);
+  gap: var(--space-4);
+  width: 100%;
+  justify-content: center;
+  margin: 0 auto;
 }
 
 .gallery-item {
   position: relative;
   border-radius: var(--radius-lg);
   overflow: hidden;
-  background-color: var(--color-surface);
-  box-shadow: var(--shadow-sm);
-  transition: all var(--transition-fast);
-  height: 100%;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  transition: all 0.3s ease;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
 }
 
 .gallery-item:hover {
-  transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  transform: translateY(-4px);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+  border-color: rgba(79, 70, 229, 0.3);
 }
 
-.gallery-item.search-result {
-  border: 2px solid transparent;
+.image-actions {
+  position: absolute;
+  top: var(--space-2);
+  right: var(--space-2);
+  z-index: 3;
+  opacity: 0;
+  transition: opacity 0.2s ease;
 }
 
-.gallery-item.search-result:hover {
-  border-color: var(--color-primary);
+.gallery-item:hover .image-actions {
+  opacity: 1;
+}
+
+.delete-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background-color: rgba(0, 0, 0, 0.5);
+  border: none;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(4px);
+}
+
+.delete-button:hover {
+  background-color: rgba(0, 0, 0, 0.7);
+}
+
+.delete-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .image-container {
   position: relative;
+  height: 200px;
   overflow: hidden;
-  aspect-ratio: 1 / 1;
   cursor: pointer;
 }
 
@@ -554,34 +626,37 @@ const getFileName = (path) => {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  transition: transform var(--transition-fast);
+  transition: transform 0.5s ease;
 }
 
-.image-container:hover .gallery-image {
+.gallery-item:hover .gallery-image {
   transform: scale(1.05);
 }
 
 .image-overlay {
   position: absolute;
   inset: 0;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.8), transparent);
-  opacity: 0;
-  transition: opacity var(--transition-fast);
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0) 60%);
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
+  align-items: flex-end;
   padding: var(--space-3);
-  color: white;
+  opacity: 0;
+  transition: opacity 0.3s ease;
 }
 
-.image-container:hover .image-overlay {
+.gallery-item:hover .image-overlay {
   opacity: 1;
 }
 
+.overlay-content {
+  width: 100%;
+}
+
 .overlay-title {
+  font-size: 0.9rem;
   font-weight: 600;
-  margin-bottom: var(--space-2);
-  font-size: 0.95rem;
+  color: white;
+  margin: 0 0 var(--space-2) 0;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -589,23 +664,29 @@ const getFileName = (path) => {
 
 .confidence-badge {
   font-size: 0.7rem;
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: rgba(79, 70, 229, 0.4);
+  color: white;
   padding: 2px 6px;
-  border-radius: 10px;
-  font-weight: normal;
+  border-radius: var(--radius-full);
+  backdrop-filter: blur(4px);
 }
 
 .color-chips {
   display: flex;
-  gap: var(--space-1);
-  margin-bottom: var(--space-2);
+  gap: 4px;
 }
 
 .color-chip {
-  width: 20px;
-  height: 20px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.3);
+}
+
+.search-score-info {
+  margin-top: var(--space-2);
+  font-size: 0.75rem;
+  color: white;
 }
 
 .image-metadata {
@@ -613,36 +694,38 @@ const getFileName = (path) => {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  background: rgba(255, 255, 255, 0.02);
   flex: 1;
 }
 
 .pattern-type {
   display: flex;
-  align-items: center;
-  gap: var(--space-1);
+  align-items: baseline;
+  gap: var(--space-2);
+  font-size: 0.85rem;
 }
 
 .type-label {
-  font-size: 0.7rem;
-  font-weight: 600;
-  opacity: 0.7;
+  color: var(--color-text-light);
+  font-weight: 500;
+  font-size: 0.75rem;
 }
 
 .type-value {
-  font-size: 0.85rem;
+  color: var(--color-text);
   font-weight: 600;
 }
 
 .secondary-patterns {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1);
+  gap: var(--space-1) var(--space-2);
   align-items: center;
+  font-size: 0.75rem;
 }
 
 .sec-pattern-label {
-  font-size: 0.7rem;
-  opacity: 0.7;
+  color: var(--color-text-light);
 }
 
 .sec-pattern-tags {
@@ -652,10 +735,11 @@ const getFileName = (path) => {
 }
 
 .sec-pattern-tag {
-  font-size: 0.7rem;
-  background-color: var(--color-surface-light);
+  background-color: rgba(79, 70, 229, 0.1);
+  color: var(--color-primary);
   padding: 2px 6px;
-  border-radius: 10px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
 }
 
 .style-keywords {
@@ -669,95 +753,54 @@ const getFileName = (path) => {
 }
 
 .keyword-tag {
-  font-size: 0.65rem;
-  background-color: var(--color-surface-lighter);
-  color: var(--color-text-light);
-  padding: 1px 5px;
-  border-radius: 6px;
+  background-color: rgba(34, 211, 238, 0.1);
+  color: #22d3ee;
+  padding: 2px 6px;
+  border-radius: var(--radius-full);
+  font-size: 0.7rem;
 }
 
 .search-score {
-  margin-top: auto;
-  padding-top: var(--space-2);
-  position: relative;
+  margin-top: var(--space-2);
+  background-color: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-full);
   height: 6px;
-  background-color: var(--color-surface-lighter);
-  border-radius: 10px;
   overflow: hidden;
+  position: relative;
 }
 
 .score-bar {
-  position: absolute;
-  left: 0;
-  top: 0;
   height: 100%;
-  background-color: var(--color-primary);
-  border-radius: 10px;
+  background: linear-gradient(to right, #4f46e5, #3b82f6);
+  border-radius: var(--radius-full);
 }
 
 .score-label {
-  position: absolute;
-  right: 0;
-  top: -16px;
   font-size: 0.7rem;
   color: var(--color-text-light);
+  margin-top: 4px;
+  display: block;
 }
 
-.search-score-info {
-  margin-top: var(--space-1);
-  font-size: 0.8rem;
-}
-
-.image-actions {
-  position: absolute;
-  top: var(--space-2);
-  right: var(--space-2);
-  z-index: 10;
-  opacity: 0;
-  transition: opacity var(--transition-fast);
-}
-
-.gallery-item:hover .image-actions {
-  opacity: 1;
-}
-
-.delete-button {
-  width: 28px;
-  height: 28px;
-  border-radius: 50%;
-  background: rgba(0, 0, 0, 0.6);
-  color: white;
-  border: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  transition: all var(--transition-fast);
-}
-
-.delete-button:hover {
-  background: rgba(255, 0, 0, 0.8);
-}
-
-.delete-button svg {
-  width: 14px;
-  height: 14px;
-}
-
-/* Upload placeholder styles */
+/* Upload placeholder */
 .upload-placeholder {
-  height: 100%;
-  min-height: 250px;
+  height: 200px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
   padding: var(--space-4);
-  background-color: rgba(79, 70, 229, 0.05);
+  gap: var(--space-4);
+  background-color: rgba(255, 255, 255, 0.03);
 }
 
 .upload-spinner {
-  margin-bottom: var(--space-4);
+  width: 32px;
+  height: 32px;
+  border: 3px solid rgba(79, 70, 229, 0.1);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
 }
 
 .upload-progress {
@@ -767,7 +810,7 @@ const getFileName = (path) => {
 
 .progress-bar {
   height: 6px;
-  background-color: var(--color-border);
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-full);
   overflow: hidden;
   margin-bottom: var(--space-2);
@@ -775,176 +818,155 @@ const getFileName = (path) => {
 
 .progress-fill {
   height: 100%;
-  background: var(--gradient-primary);
+  background: linear-gradient(to right, #4f46e5, #3b82f6);
+  border-radius: var(--radius-full);
   transition: width 0.3s ease;
 }
 
 .progress-text {
+  font-size: 0.9rem;
   font-weight: 600;
   color: var(--color-primary);
-  margin-bottom: var(--space-1);
+  margin: 0;
 }
 
 .upload-status {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   color: var(--color-text-light);
+  margin: var(--space-1) 0 0 0;
 }
 
-/* Delete modal */
-.delete-modal {
-  position: fixed;
-  top: 0;
-  left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
-  backdrop-filter: blur(4px);
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: var(--space-4);
-}
-
-.delete-modal-content {
-  background-color: var(--color-surface);
-  border-radius: var(--radius-lg);
-  padding: var(--space-6);
-  width: 100%;
-  max-width: 400px;
-  box-shadow: var(--shadow-xl);
-}
-
-.delete-modal-content h3 {
-  font-family: var(--font-heading);
-  margin-bottom: var(--space-3);
-  color: var(--color-error);
-}
-
-.delete-modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3);
-  margin-top: var(--space-6);
-}
-
-.cancel-button {
-  background-color: transparent;
-  border: 1px solid var(--color-border);
-  color: var(--color-text);
-}
-
-.cancel-button:hover {
-  background-color: var(--color-background);
-  transform: none;
-}
-
-.confirm-button {
-  background-color: var(--color-error);
-}
-
-.confirm-button:hover {
-  background-color: #dc2626;
-}
-
-@media (max-width: 768px) {
-  .gallery-grid {
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: var(--space-4);
-  }
-  
-  .image-container {
-    height: 200px;
-  }
-  
-  .upload-placeholder {
-    min-height: 200px;
-  }
-  
-  .empty-illustration {
-    width: 80px;
-    height: 80px;
-  }
-  
-  .empty-title {
-    font-size: 1.5rem;
-  }
-}
-
-/* Add this to your existing styles */
-.reset-container {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 16px;
-}
-
-.reset-button {
-  background-color: #ff3b30;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
-  font-weight: bold;
-  cursor: pointer;
-  transition: background-color 0.2s;
-}
-
-.reset-button:hover {
-  background-color: #d63530;
-}
-
+/* Modal styles */
+.delete-modal,
 .reset-modal {
   position: fixed;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  background-color: rgba(0, 0, 0, 0.5);
+  right: 0;
+  bottom: 0;
+  background-color: rgba(0, 0, 0, 0.7);
   backdrop-filter: blur(4px);
-  z-index: 1000;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: var(--space-4);
+  z-index: 100;
+  animation: fadeIn 0.2s ease;
 }
 
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.delete-modal-content,
 .reset-modal-content {
-  background-color: var(--color-surface);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
   padding: var(--space-6);
-  width: 100%;
+  width: 90%;
   max-width: 400px;
-  box-shadow: var(--shadow-xl);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3);
+  animation: scaleIn 0.3s ease;
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0.9); }
+  to { transform: scale(1); }
+}
+
+.delete-modal-content h3,
+.reset-modal-content h3 {
+  margin-top: 0;
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: var(--space-3);
+  color: var(--color-text);
 }
 
 .reset-modal-content h3 {
-  font-family: var(--font-heading);
-  margin-bottom: var(--space-3);
-  color: #ff3b30;
+  color: #f43f5e;
 }
 
+.delete-modal-content p,
+.reset-modal-content p {
+  color: var(--color-text-light);
+  margin-bottom: var(--space-4);
+}
+
+.delete-modal-actions,
 .reset-modal-actions {
   display: flex;
-  justify-content: flex-end;
   gap: var(--space-3);
-  margin-top: var(--space-6);
+  justify-content: flex-end;
 }
 
 .cancel-button {
-  background-color: var(--color-surface-muted);
+  padding: var(--space-2) var(--space-4);
+  background-color: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.2);
   color: var(--color-text);
-  border: 1px solid var(--color-border);
-  padding: 8px 16px;
-  border-radius: 4px;
+  border-radius: var(--radius-md);
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cancel-button:hover {
+  background-color: rgba(255, 255, 255, 0.05);
 }
 
 .confirm-button {
-  background-color: #ff3b30;
-  color: white;
-  border: none;
-  padding: 8px 16px;
-  border-radius: 4px;
+  padding: var(--space-2) var(--space-4);
+  background-color: rgba(251, 113, 133, 0.1);
+  color: #fb7185;
+  border: 1px solid rgba(251, 113, 133, 0.2);
+  border-radius: var(--radius-md);
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.confirm-button:hover {
+  background-color: rgba(251, 113, 133, 0.2);
+  color: #f43f5e;
+}
+
+/* Responsive design */
+@media (max-width: 1400px) {
+  .gallery-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
+  .gallery-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 992px) {
+  .gallery-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .gallery-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-3);
+  }
+  
+  .image-container {
+    height: 150px;
+  }
+  
+  .pattern-type {
+    font-size: 0.8rem;
+  }
+  
+  .sec-pattern-label,
+  .sec-pattern-tag {
+    font-size: 0.7rem;
+  }
 }
 </style> 

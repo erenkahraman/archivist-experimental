@@ -1,5 +1,6 @@
 <template>
   <div class="upload-container">
+    <h2 class="upload-heading">Add Images</h2>
     <div
       class="dropzone"
       :class="{ 'dropzone-active': isDragging }"
@@ -59,7 +60,7 @@
 
 <script setup>
 import { ref } from 'vue'
-import { useImageStore } from '../store/imageStore'
+import { useImageStore } from '../stores/imageStore'
 
 const imageStore = useImageStore()
 const isDragging = ref(false)
@@ -227,31 +228,42 @@ const uploadSingleFile = async (file) => {
 
 <style scoped>
 .upload-container {
-  margin-bottom: var(--space-8);
+  width: 100%;
+}
+
+.upload-heading {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: var(--space-4);
+  background: linear-gradient(135deg, #6366f1, #22d3ee);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 .dropzone {
-  border: 2px dashed var(--color-border);
+  border: 2px dashed rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-lg);
-  padding: var(--space-8);
+  padding: var(--space-6);
   text-align: center;
   cursor: pointer;
-  transition: all var(--transition-normal);
-  background: var(--color-surface);
+  transition: all 0.3s ease;
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(8px);
 }
 
 .dropzone-active {
   border-color: var(--color-primary);
-  background-color: rgba(79, 70, 229, 0.05);
+  background-color: rgba(99, 102, 241, 0.1);
   transform: scale(1.01);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 0 15px rgba(99, 102, 241, 0.2);
 }
 
 .dropzone:hover {
   border-color: var(--color-primary-light);
-  background-color: rgba(255, 255, 255, 0.8);
+  background-color: rgba(255, 255, 255, 0.05);
   transform: translateY(-2px);
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.1);
 }
 
 .file-input {
@@ -267,12 +279,23 @@ const uploadSingleFile = async (file) => {
 .upload-icon {
   width: 64px;
   height: 64px;
-  color: var(--color-primary);
+  color: var(--color-primary-light);
+  filter: drop-shadow(0 0 8px rgba(99, 102, 241, 0.3));
+  animation: gentle-pulse 2s ease-in-out infinite alternate;
+}
+
+@keyframes gentle-pulse {
+  0% {
+    filter: drop-shadow(0 0 5px rgba(99, 102, 241, 0.2));
+  }
+  100% {
+    filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.4)) drop-shadow(0 0 20px rgba(34, 211, 238, 0.2));
+  }
 }
 
 .upload-title {
-  font-family: var(--font-heading);
   font-size: 1.5rem;
+  font-weight: 600;
   margin-bottom: var(--space-2);
   color: var(--color-text);
 }
@@ -286,13 +309,15 @@ const uploadSingleFile = async (file) => {
   margin-top: var(--space-6);
   padding: var(--space-4);
   border-radius: var(--radius-md);
-  background-color: var(--color-surface);
-  box-shadow: var(--shadow-sm);
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .progress-bar {
   height: 8px;
-  background-color: var(--color-border);
+  background-color: rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-full);
   overflow: hidden;
   margin-bottom: var(--space-2);
@@ -300,9 +325,10 @@ const uploadSingleFile = async (file) => {
 
 .progress-fill {
   height: 100%;
-  background: var(--gradient-primary);
+  background: linear-gradient(to right, #6366f1, #22d3ee);
   border-radius: var(--radius-full);
   transition: width 0.3s ease;
+  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3);
 }
 
 .progress-details {
@@ -316,6 +342,7 @@ const uploadSingleFile = async (file) => {
   justify-content: space-between;
   font-size: 0.9rem;
   color: var(--color-text);
+  margin: 0;
 }
 
 .progress-counter {
@@ -324,12 +351,13 @@ const uploadSingleFile = async (file) => {
 
 .progress-percentage {
   font-weight: 600;
-  color: var(--color-primary);
+  color: var(--color-primary-light);
 }
 
 .upload-status {
   font-size: 0.85rem;
   color: var(--color-text-light);
+  margin: 0;
 }
 
 .upload-error {
@@ -340,7 +368,7 @@ const uploadSingleFile = async (file) => {
   padding: var(--space-3) var(--space-4);
   border-radius: var(--radius-md);
   background-color: rgba(239, 68, 68, 0.1);
-  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-left: 3px solid var(--color-error);
   color: var(--color-error);
 }
 
@@ -353,7 +381,7 @@ const uploadSingleFile = async (file) => {
 
 @media (max-width: 768px) {
   .dropzone {
-    padding: var(--space-6);
+    padding: var(--space-5);
   }
   
   .upload-icon {
