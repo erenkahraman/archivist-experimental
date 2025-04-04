@@ -31,6 +31,19 @@ NLIST = 100  # Number of clusters for IVF index
 API_HOST = "0.0.0.0"  # Allow access from all IPs
 API_PORT = 5000
 
+# Elasticsearch settings
+ELASTICSEARCH_HOSTS = os.environ.get("ELASTICSEARCH_HOSTS", "").split(",") if os.environ.get("ELASTICSEARCH_HOSTS") else []
+ELASTICSEARCH_INDEX = os.environ.get("ELASTICSEARCH_INDEX", "archivist")
+ELASTICSEARCH_CLOUD_ID = os.environ.get("ELASTICSEARCH_CLOUD_ID")
+ELASTICSEARCH_API_KEY = os.environ.get("ELASTICSEARCH_API_KEY")
+ELASTICSEARCH_USERNAME = os.environ.get("ELASTICSEARCH_USERNAME")
+ELASTICSEARCH_PASSWORD = os.environ.get("ELASTICSEARCH_PASSWORD")
+
+# Cache settings
+ENABLE_CACHE = os.environ.get("ENABLE_CACHE", "false").lower() == "true"
+REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
+CACHE_TTL = int(os.environ.get("CACHE_TTL", 3600))  # Default cache expiration: 1 hour
+
 # Model configurations
 CLIP_MODEL_NAME = "openai/clip-vit-base-patch32"
 IMAGE_SIZE = 256  # Size for thumbnails

@@ -51,8 +51,10 @@ ENV/
 .DS_Store
 Thumbs.db
 
-# Vue
-node_modules
+# Vue/JavaScript
+node_modules/
+*/node_modules/
+ui/node_modules/
 /dist
 .env.local
 .env.*.local
@@ -63,4 +65,11 @@ yarn-error.log*
 *.ntvs*
 *.njsproj
 *.sln
-*.sw? .env
+*.sw?
+
+# Cache directories
+cache/
+model_cache/
+vectors/
+*/.pytest_cache/
+.pytest_cache/

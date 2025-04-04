@@ -1,131 +1,129 @@
-import redis
-import json
-import hashlib
 import logging
-from typing import Any, Dict, List, Optional
+import pickle
+import time
+from functools import wraps
 import config
 
-# Configure logger
 logger = logging.getLogger(__name__)
 
 class SearchCache:
-    """Cache for search queries using Redis"""
+    """Simple caching system for search results."""
     
     def __init__(self):
-        """Initialize the Redis cache connection"""
+        """Initialize the cache system."""
         self.enabled = config.ENABLE_CACHE
-        self.ttl = config.CACHE_TTL
-        self.redis_client = None
+        self.redis = None
         
         if self.enabled:
             try:
-                self.redis_client = redis.Redis(
-                    host='localhost',
-                    port=6379,
-                    db=0,
-                    decode_responses=True
-                )
-                self.redis_client.ping()  # Test connection
-                logger.info("Connected to Redis cache")
-            except Exception as e:
-                logger.error(f"Failed to connect to Redis: {str(e)}")
+                import redis
+                self.redis = redis.from_url(config.REDIS_URL)
+                logger.info(f"Connected to Redis cache at {config.REDIS_URL}")
+            except ImportError:
+                logger.warning("Redis package not installed. In-memory cache will be used instead.")
                 self.enabled = False
-    
-    def _generate_key(self, query: str, limit: int, min_similarity: float) -> str:
-        """
-        Generate a unique key for the search query.
-        
-        Args:
-            query: The search query string
-            limit: Maximum number of results
-            min_similarity: Minimum similarity threshold
-            
-        Returns:
-            str: Unique key for the query
-        """
-        # Create a string representing the query parameters
-        query_str = f"{query}|{limit}|{min_similarity}"
-        
-        # Generate a hash of the query string
-        key = hashlib.md5(query_str.encode()).hexdigest()
-        return f"search:{key}"
-    
-    def get(self, query: str, limit: int, min_similarity: float) -> Optional[List[Dict[str, Any]]]:
-        """
-        Get search results from cache.
-        
-        Args:
-            query: The search query string
-            limit: Maximum number of results
-            min_similarity: Minimum similarity threshold
-            
-        Returns:
-            List of search results or None if not in cache
-        """
-        if not self.enabled or not self.redis_client:
-            return None
+            except Exception as e:
+                logger.warning(f"Failed to connect to Redis: {e}. In-memory cache will be used instead.")
+                self.enabled = False
+                
+        # Fallback to in-memory cache if Redis is not available
+        if not self.enabled:
+            self.memory_cache = {}
+            logger.info("Using in-memory cache")
+
+    def get(self, key):
+        """Get a value from the cache."""
+        if not self.enabled:
+            return self.memory_cache.get(key)
             
         try:
-            key = self._generate_key(query, limit, min_similarity)
-            cached_data = self.redis_client.get(key)
-            
-            if cached_data:
-                logger.info(f"Cache hit for query: '{query}'")
-                return json.loads(cached_data)
-            else:
-                logger.info(f"Cache miss for query: '{query}'")
-                return None
+            if self.redis:
+                data = self.redis.get(key)
+                if data:
+                    return pickle.loads(data)
         except Exception as e:
-            logger.error(f"Error retrieving from cache: {str(e)}")
-            return None
-    
-    def set(self, query: str, limit: int, min_similarity: float, results: List[Dict[str, Any]]) -> bool:
-        """
-        Store search results in cache.
-        
-        Args:
-            query: The search query string
-            limit: Maximum number of results
-            min_similarity: Minimum similarity threshold
-            results: Search results to cache
+            logger.warning(f"Error retrieving from cache: {e}")
             
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.enabled or not self.redis_client:
-            return False
-            
-        try:
-            key = self._generate_key(query, limit, min_similarity)
-            
-            # Convert results to JSON string
-            results_json = json.dumps(results)
-            
-            # Store in Redis with TTL
-            self.redis_client.setex(key, self.ttl, results_json)
-            logger.info(f"Cached results for query: '{query}'")
+        return None
+
+    def set(self, key, value, ttl=None):
+        """Set a value in the cache."""
+        if not self.enabled:
+            self.memory_cache[key] = value
             return True
-        except Exception as e:
-            logger.error(f"Error storing in cache: {str(e)}")
-            return False
-    
-    def invalidate_all(self) -> bool:
-        """
-        Invalidate all cached search results.
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.enabled or not self.redis_client:
-            return False
             
         try:
-            # Delete all keys matching the search pattern
-            keys = self.redis_client.keys("search:*")
-            if keys:
-                self.redis_client.delete(*keys)
-                logger.info(f"Invalidated {len(keys)} cached search results")
-            return True
+            if self.redis:
+                ttl = ttl or config.CACHE_TTL
+                return self.redis.setex(key, ttl, pickle.dumps(value))
         except Exception as e:
-            logger.error(f"Error invalidating cache: {str(e)}")
-            return False 
+            logger.warning(f"Error setting cache: {e}")
+            
+        return False
+
+    def delete(self, key):
+        """Delete a value from the cache."""
+        if not self.enabled:
+            if key in self.memory_cache:
+                del self.memory_cache[key]
+            return True
+            
+        try:
+            if self.redis:
+                return self.redis.delete(key) > 0
+        except Exception as e:
+            logger.warning(f"Error deleting from cache: {e}")
+            
+        return False
+
+    def flush(self):
+        """Flush the entire cache."""
+        if not self.enabled:
+            self.memory_cache = {}
+            return True
+            
+        try:
+            if self.redis:
+                return self.redis.flushdb()
+        except Exception as e:
+            logger.warning(f"Error flushing cache: {e}")
+            
+        return False
+
+
+def cached(ttl=None):
+    """Decorator to cache function results."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            # Skip caching if cache is disabled or it's a write operation
+            if not config.ENABLE_CACHE or kwargs.get('skip_cache', False):
+                return func(*args, **kwargs)
+                
+            # Generate a cache key
+            key_parts = [func.__name__]
+            key_parts.extend([str(arg) for arg in args])
+            
+            # Add sorted kwargs to ensure consistent keys
+            for k, v in sorted(kwargs.items()):
+                if k != 'skip_cache':  # Don't include skip_cache in the key
+                    key_parts.append(f"{k}={v}")
+                    
+            cache_key = ":".join(key_parts)
+            
+            # Try to get from cache
+            cache = SearchCache()
+            cached_result = cache.get(cache_key)
+            
+            if cached_result is not None:
+                return cached_result
+                
+            # Cache miss, compute the result
+            result = func(*args, **kwargs)
+            
+            # Cache the result
+            cache.set(cache_key, result, ttl)
+            
+            return result
+        return wrapper
+    return decorator 

@@ -11,7 +11,7 @@ import os
 
 # Relative imports from the same package
 from .analyzers.color_analyzer import ColorAnalyzer
-from .gemini_analyzer import GeminiAnalyzer
+from .analyzers.gemini_analyzer import GeminiAnalyzer
 from .search.elasticsearch_client import ElasticsearchClient
 from .utils.cache import SearchCache
 import config

@@ -1,11 +1,9 @@
 import logging
 from flask import Flask
 from flask_cors import CORS
-from pathlib import Path
 import os
 import config
 from src.utils.logging_config import configure_logging
-from src.core.search_engine import SearchEngine
 import dotenv
 
 # Load environment variables from .env file if it exists
@@ -14,31 +12,7 @@ dotenv.load_dotenv()
 # Configure logging at application startup
 configure_logging()
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),
-        logging.FileHandler('app.log')
-    ]
-)
 logger = logging.getLogger(__name__)
-
-# Suppress less important logs
-logging.getLogger('PIL').setLevel(logging.WARNING)
-logging.getLogger('matplotlib').setLevel(logging.WARNING)
-werkzeug_logger = logging.getLogger('werkzeug')
-werkzeug_logger.setLevel(logging.WARNING)
-
-# Get Gemini API key from environment variable
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
-if GEMINI_API_KEY:
-    # Mask API key for secure logging
-    masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
-    logger.info(f"Gemini API key found in environment variables: {masked_key}")
-else:
-    logger.warning("No Gemini API key found in environment variables")
 
 def create_app():
     """Create and configure the Flask application."""
@@ -67,7 +41,7 @@ def create_app():
     def home():
         return 'Archivist server is running'
     
-    # Import API routes
+    # Import API blueprint
     from src.api import api
     
     # Register API routes with prefix
