@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, Flask
+from flask_cors import CORS
 import logging
 import os
 import dotenv
@@ -47,6 +48,9 @@ else:
 # Initialize search engine with Gemini API key - shared instance
 search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
 
+# Export the search_engine instance for use in app.py
+__all__ = ['api', 'search_engine', 'create_app', 'DEBUG']
+
 # Create a Flask Blueprint
 api = Blueprint('api', __name__)
 
@@ -64,3 +68,33 @@ def home():
 
 # Import routes after api is created to avoid circular imports
 from .routes import image_routes, search_routes, settings_routes
+
+def create_app():
+    """
+    Create and configure the Flask application
+    """
+    app = Flask(__name__)
+    
+    # Configure CORS to allow requests from frontend
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:3000", 
+                "http://localhost:5000",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5000"
+            ],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": [
+                "Content-Type", 
+                "Authorization", 
+                "Accept",
+                "Cache-Control"
+            ]
+        }
+    })
+    
+    # Register the API blueprint
+    app.register_blueprint(api, url_prefix='/api')
+    
+    return app

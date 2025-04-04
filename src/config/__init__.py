@@ -1,5 +1,5 @@
-from src.config.prompts import GEMINI_CONFIG
-from src.config.elasticsearch_config import (
+from .prompts import GEMINI_CONFIG
+from .elasticsearch_config import (
     ELASTICSEARCH_HOSTS,
     ELASTICSEARCH_CLOUD_ID,
     ELASTICSEARCH_API_KEY,
