@@ -1,0 +1,4 @@
+Traceback (most recent call last):
+  File "/Users/erenkahraman/Desktop/code/archivist-experimental/src/app.py", line 6, in <module>
+    from src.utils.logging_config import configure_logging
+ModuleNotFoundError: No module named 'src'
