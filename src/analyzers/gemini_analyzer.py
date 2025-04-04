@@ -90,68 +90,37 @@ class GeminiAnalyzer:
             
             # Define the analysis prompt
             analysis_prompt = f"""
-            Analyze the following image in detail and identify the pattern, style, and visual elements.
-            
-            Focus on:
-            1. Main theme or pattern category (e.g., floral, geometric, paisley)
-            2. Specific content elements in the image (e.g., roses, triangles, teardrops)
-            3. Stylistic attributes (e.g., watercolor, hand-drawn, digital, sketched)
-            4. Layout, scale, and density characteristics
-            5. Cultural or historical influences
-            6. Color composition and mood
-            
-            Important note: If the image contains paisley motifs as a dominant element, set the main_theme to "paisley" or "paisley pattern", NOT just "textile pattern".
-            
-            Return the results in the following JSON format with confidence scores for each element:
-            
+            Identify the most specific textile pattern with high precision, capturing detailed motifs and cultural cues even if they aren't explicitly listed.
+
+            Taxonomy:
+            - BASE: geometric, floral, abstract, figurative, ethnic/tribal, typographic.
+            - SPECIFIC (non-exhaustive): paisley, batik, chevron, ditsy, lace, polka dot, plaid, tartan, ikat, toile, damask, patchwork, houndstooth, gingham, border, tropical, folk, brocade, graffiti, doodle.
+
+            Output JSON:
             {{
-                "main_theme": "The primary theme or category of the pattern",
-                "main_theme_confidence": 0.9,
-                "content_details": [
-                    {{"name": "Specific element 1", "confidence": 0.8}},
-                    {{"name": "Specific element 2", "confidence": 0.7}}
-                ],
-                "stylistic_attributes": [
-                    {{"name": "Style attribute 1", "confidence": 0.9}},
-                    {{"name": "Style attribute 2", "confidence": 0.7}}
-                ],
-                "category": "Overall pattern category",
-                "category_confidence": 0.9,
-                "secondary_patterns": [
-                    {{"name": "Secondary pattern 1", "confidence": 0.7}},
-                    {{"name": "Secondary pattern 2", "confidence": 0.6}}
-                ],
-                "elements": [
-                    {{
-                        "name": "Element name",
-                        "sub_category": "Element subcategory",
-                        "color": "Element color",
-                        "animal_type": "If animal, the type", 
-                        "textural_detail": "Texture description",
-                        "confidence": 0.8
-                    }}
-                ],
-                "density": {{"type": "sparse/medium/dense", "confidence": 0.8}},
-                "layout": {{"type": "regular/irregular/balanced", "confidence": 0.8}},
-                "scale": {{"type": "small/medium/large", "confidence": 0.8}},
-                "texture_type": {{"type": "texture description", "confidence": 0.8}},
-                "cultural_influence": {{"type": "culture name", "confidence": 0.7}},
-                "historical_period": {{"type": "time period", "confidence": 0.6}},
-                "mood": {{"type": "mood description", "confidence": 0.7}},
-                "style_keywords": ["keyword1", "keyword2", "keyword3"],
-                "prompt": {{
-                    "final_prompt": "A detailed description that could be used as a generative prompt for this image"
-                }}
+              "main_theme": "Most specific pattern name",
+              "main_theme_confidence": 0.95,
+              "category": "Base category",
+              "category_confidence": 0.95,
+              "secondary_patterns": [{{"name": "One secondary pattern if clearly present", "confidence": 0.9}}],
+              "style_keywords": ["up to 5 relevant keywords"],
+              "prompt": {{"final_prompt": "Concise detailed description including motifs, arrangement, and cultural cues"}}
             }}
-            
-            Focus on accuracy and give confidence values between 0.0 and 1.0. The main_theme should be more general, while content_details should be specific elements found in the image.
+
+            Rules:
+            1. Always select the most specific pattern name if confidence >90%.
+            2. Do not default to generic base terms (e.g., 'abstract') if further detail is available.
+            3. Generate a descriptive, specific name using detailed cues when the pattern doesn't exactly match the predefined list.
+            4. Include one secondary pattern only if clearly distinguishable.
+            5. Limit style_keywords to a maximum of 5 that capture the unique design details.
+            6. Report only high-confidence identifications.
             """
             
             # Set up the Gemini model
             generation_config = {
                 "temperature": 0.0,
-                "top_p": 0.8,
-                "top_k": 40,
+                "top_p": 0.95,
+                "top_k": 10,
                 "max_output_tokens": 1024,
             }
             

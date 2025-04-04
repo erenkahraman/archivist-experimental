@@ -545,21 +545,33 @@ class ElasticsearchClient:
             
         Returns:
             Dict containing parsed components: 
-            {'colors': [...], 'phrases': [...], 'keywords': [...], 'original': query_string}
+            {'colors': [...], 'quoted_phrases': [...], 'potential_phrases': [...], 'keywords': [...], 'original': query_string}
         """
         # Normalize the query
         query_string = query_string.lower().strip()
         
         # Extract phrases in quotes
         import re
-        phrases = re.findall(r'"([^"]*)"', query_string)
+        quoted_phrases = re.findall(r'"([^"]*)"', query_string)
+        
+        # If multi-word query and not quoted, add the entire query as a quoted phrase
+        normalized_query = query_string
+        for phrase in quoted_phrases:
+            normalized_query = normalized_query.replace(f'"{phrase}"', '')
+        
+        words = [w.strip() for w in re.split(r'[,\s]+', normalized_query) if w.strip()]
+        if len(words) > 1 and not quoted_phrases:
+            full_query_phrase = normalized_query.strip()
+            if full_query_phrase:
+                quoted_phrases.append(full_query_phrase)
         
         # Remove phrases from query for further processing
-        for phrase in phrases:
-            query_string = query_string.replace(f'"{phrase}"', '')
+        query_for_processing = query_string
+        for phrase in quoted_phrases:
+            query_for_processing = query_for_processing.replace(f'"{phrase}"', '').replace(phrase, '')
         
         # Split remaining terms by spaces and commas
-        remainder = [term.strip() for term in re.split(r'[,\s]+', query_string) if term.strip()]
+        remainder = [term.strip() for term in re.split(r'[,\s]+', query_for_processing) if term.strip()]
         
         # Color detection
         colors = []
@@ -599,30 +611,50 @@ class ElasticsearchClient:
             else:
                 keywords.append(term)
         
-        # Also check phrases for any color mentions
-        for phrase in phrases:
+        # Check quoted phrases for any color mentions
+        for phrase in quoted_phrases:
             has_color = False
             for color in all_colors:
-                if color in phrase:
+                if color in phrase.split():
                     has_color = True
                     colors.append(phrase)
                     break
             if not has_color:
                 keywords.append(phrase)
         
+        # Identify potential multi-word phrases from any remaining query
+        potential_phrases = []
+        # Only find potential phrases if they're not already covered by quoted phrases
+        if query_for_processing.strip():
+            # Find sequences of 2-3 consecutive words that aren't colors
+            words = [w.strip() for w in re.split(r'[,\s]+', query_for_processing) if w.strip()]
+            for i in range(len(words) - 1):
+                # Check for two consecutive words that aren't colors
+                if words[i] not in all_colors and words[i+1] not in all_colors:
+                    two_word_phrase = f"{words[i]} {words[i+1]}"
+                    potential_phrases.append(two_word_phrase)
+                    
+                    # Check for three consecutive words
+                    if i < len(words) - 2 and words[i+2] not in all_colors:
+                        three_word_phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
+                        potential_phrases.append(three_word_phrase)
+        
         # Clean up any duplicates
         colors = list(set(colors))
         keywords = list(set(keywords))
+        potential_phrases = list(set(potential_phrases))
         
         # Log the parsing results
         logger.info(f"Parsed query '{query_string}' into components:")
         logger.info(f" - Colors: {colors}")
-        logger.info(f" - Phrases: {phrases}")
+        logger.info(f" - Quoted phrases: {quoted_phrases}")
+        logger.info(f" - Potential phrases: {potential_phrases}")
         logger.info(f" - Keywords: {keywords}")
         
         return {
             'colors': colors,
-            'phrases': phrases,
+            'quoted_phrases': quoted_phrases,
+            'potential_phrases': potential_phrases,
             'keywords': keywords,
             'original': query_string
         }
@@ -647,7 +679,7 @@ class ElasticsearchClient:
         logger.info("===== SEARCH PROCESS START =====")
         logger.info(f"Search parameters: query='{query}', limit={limit}, min_similarity={min_similarity}")
             
-        # Parse the query into components using our new helper function
+        # Parse the query into components using our helper function
         parsed_query = self._parse_query(query)
         
         try:
@@ -663,87 +695,273 @@ class ElasticsearchClient:
                 }
             }
             
-            # Add primary text matching to must clause
-            if parsed_query['keywords']:
-                # Join keywords for the main query
-                primary_query_text = " ".join(parsed_query['keywords'])
-                
-                if primary_query_text:
-                    logger.info(f"Adding primary text query for: '{primary_query_text}'")
-                    bool_query["bool"]["must"].append({
-                        "multi_match": {
-                            "query": primary_query_text,
-                            "fields": [
-                                "patterns.main_theme^5",
-                                "patterns.primary_pattern^4",
-                                "patterns.content_details.name^3",
-                                "patterns.stylistic_attributes.name^3",
-                                "patterns.elements.name^2",
-                                "patterns.prompt.final_prompt^1.5",
-                                "patterns.style_keywords^1",
-                                "patterns.secondary_patterns.name^0.8"
-                            ],
-                            "type": "cross_fields",
-                            "operator": "or",
-                            "fuzziness": "AUTO",
-                            "prefix_length": 2
-                        }
-                    })
+            # Check if this is a multi-word query (use stricter matching)
+            original_query = parsed_query['original'].lower().strip()
+            words = original_query.split()
+            is_multi_word_query = len(words) > 1 and not all(word in all_colors for word in words)
             
-            # Add phrase matching for better precision
-            for phrase in parsed_query['phrases']:
-                logger.info(f"Adding phrase matching for: '{phrase}'")
-                bool_query["bool"]["should"].extend([
-                    {
-                        "match_phrase": {
-                            "patterns.main_theme": {
-                                "query": phrase,
-                                "slop": 2,
-                                "boost": 4.0
+            # If this is a multi-word query, enforce exact phrase matching using must
+            if is_multi_word_query:
+                logger.info(f"Multi-word query detected: '{original_query}'. Enforcing strict exact phrase matching.")
+                
+                # Create a strict matching clause that requires the exact phrase in must
+                exact_phrase_must = {
+                    "bool": {
+                        "should": [
+                            {"match_phrase": {"patterns.main_theme": original_query}},
+                            {"match_phrase": {"patterns.content_details.name": original_query}},
+                            {"match_phrase": {"patterns.elements.name": original_query}},
+                            {"match_phrase": {"patterns.primary_pattern": original_query}},
+                            {"match_phrase": {"patterns.prompt.final_prompt": original_query}},
+                            {"nested": {
+                                "path": "patterns.secondary_patterns",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.secondary_patterns.name": original_query
+                                    }
+                                }
+                            }},
+                            {"nested": {
+                                "path": "patterns.stylistic_attributes",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.stylistic_attributes.name": original_query
+                                    }
+                                }
+                            }}
+                        ],
+                        "minimum_should_match": 1  # At least one field must have the exact phrase
+                    }
+                }
+                
+                # Add to must clause to enforce this constraint - this is stricter than filter
+                bool_query["bool"]["must"].append(exact_phrase_must)
+                
+                # Remove all other clauses for multi-word queries to ensure only exact matches are found
+                # Only keep exact phrase matching in must clause and color queries if any
+                bool_query["bool"]["should"] = []
+                
+                # Replace previous filter-based approach with must-based approach
+                # Clear any existing filter clauses for multi-word queries
+                bool_query["bool"]["filter"] = [filter_clause for filter_clause in bool_query["bool"]["filter"] 
+                                               if not (isinstance(filter_clause, dict) and 
+                                                     "bool" in filter_clause and 
+                                                     "should" in filter_clause["bool"] and
+                                                     any("match_phrase" in clause for clause in filter_clause["bool"]["should"]))]
+            
+            # 1. Add highly boosted match_phrase queries for both quoted and potential phrases - but SKIP if multi-word query
+            # Since multi-word queries now handle phrase matching in the must clause
+            if all_phrases and not is_multi_word_query:
+                for phrase in all_phrases:
+                    is_quoted = phrase in parsed_query['quoted_phrases']
+                    is_full_query = phrase == parsed_query['original'].lower().strip()
+                    
+                    # Highest boost for the full query phrase, high for quoted, medium for potential
+                    if is_full_query:
+                        boost_factor = 25  # Extremely high boost for exact full query match
+                    elif is_quoted:
+                        boost_factor = 15
+                    else:
+                        boost_factor = 10
+                        
+                    phrase_type = "full_query" if is_full_query else ("quoted" if is_quoted else "potential")
+                    logger.info(f"Adding {phrase_type} phrase matching for: '{phrase}'")
+                    
+                    # Add match_phrase queries for the phrase
+                    bool_query["bool"]["should"].extend([
+                        {
+                            "match_phrase": {
+                                "patterns.main_theme": {
+                                    "query": phrase,
+                                    "boost": boost_factor
+                                }
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "patterns.content_details.name": {
+                                    "query": phrase,
+                                    "boost": boost_factor - 1
+                                }
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "patterns.elements.name": {
+                                    "query": phrase,
+                                    "boost": boost_factor - 2
+                                }
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "patterns.prompt.final_prompt": {
+                                    "query": phrase,
+                                    "boost": boost_factor - 3
+                                }
+                            }
+                        },
+                        {
+                            "match_phrase": {
+                                "patterns.primary_pattern": {
+                                    "query": phrase,
+                                    "boost": boost_factor - 2
+                                }
+                            }
+                        },
+                        {
+                            "nested": {
+                                "path": "patterns.secondary_patterns",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.secondary_patterns.name": {
+                                            "query": phrase,
+                                            "boost": boost_factor - 4
+                                        }
+                                    }
+                                },
+                                "score_mode": "max"
+                            }
+                        },
+                        {
+                            "nested": {
+                                "path": "patterns.stylistic_attributes",
+                                "query": {
+                                    "match_phrase": {
+                                        "patterns.stylistic_attributes.name": {
+                                            "query": phrase,
+                                            "boost": boost_factor - 4
+                                        }
+                                    }
+                                },
+                                "score_mode": "max"
                             }
                         }
-                    },
-                    {
-                        "match_phrase": {
-                            "patterns.prompt.final_prompt": {
-                                "query": phrase,
-                                "slop": 3,
-                                "boost": 2.0
-                            }
-                        }
-                    },
-                    {
-                        "nested": {
-                            "path": "patterns.content_details",
-                            "query": {
-                                "match_phrase": {
-                                    "patterns.content_details.name": {
-                                        "query": phrase,
-                                        "slop": 2,
-                                        "boost": 3.0
+                    ])
+            
+            # Skip adding individual term/keyword matches if this is a multi-word query
+            if not is_multi_word_query:
+                # 2. Add exact keyword matches targeting .raw fields
+                all_terms = parsed_query['keywords'] + parsed_query['potential_phrases']
+                if all_terms:
+                    for term in all_terms:
+                        logger.info(f"Adding exact term matching for: '{term}'")
+                        
+                        # Add exact matches using .raw fields with high boost
+                        bool_query["bool"]["should"].extend([
+                            {
+                                "term": {
+                                    "patterns.main_theme.raw": {
+                                        "value": term,
+                                        "boost": 8
                                     }
                                 }
                             },
-                            "score_mode": "max"
-                        }
-                    }
-                ])
+                            {
+                                "term": {
+                                    "patterns.content_details.name.raw": {
+                                        "value": term,
+                                        "boost": 7
+                                    }
+                                }
+                            },
+                            {
+                                "term": {
+                                    "patterns.elements.name.raw": {
+                                        "value": term,
+                                        "boost": 7
+                                    }
+                                }
+                            },
+                            {
+                                "term": {
+                                    "patterns.primary_pattern.raw": {
+                                        "value": term,
+                                        "boost": 7
+                                    }
+                                }
+                            },
+                            {
+                                "nested": {
+                                    "path": "patterns.secondary_patterns",
+                                    "query": {
+                                        "term": {
+                                            "patterns.secondary_patterns.name.raw": {
+                                                "value": term,
+                                                "boost": 6
+                                            }
+                                        }
+                                    },
+                                    "score_mode": "max"
+                                }
+                            },
+                            {
+                                "nested": {
+                                    "path": "patterns.stylistic_attributes",
+                                    "query": {
+                                        "term": {
+                                            "patterns.stylistic_attributes.name.raw": {
+                                                "value": term,
+                                                "boost": 6
+                                            }
+                                        }
+                                    },
+                                    "score_mode": "max"
+                                }
+                            },
+                            {
+                                "term": {
+                                    "patterns.style_keywords.raw": {
+                                        "value": term,
+                                        "boost": 5
+                                    }
+                                }
+                            }
+                        ])
+                
+                # 3. Add multi_match for single keywords (for recall via synonyms)
+                if parsed_query['keywords']:
+                    # Join single keywords for the multi_match query
+                    keywords_text = " ".join(parsed_query['keywords'])
+                    
+                    if keywords_text:
+                        logger.info(f"Adding multi_match for keywords: '{keywords_text}'")
+                        bool_query["bool"]["should"].append({
+                            "multi_match": {
+                                "query": keywords_text,
+                                "fields": [
+                                    "patterns.main_theme^4",
+                                    "patterns.primary_pattern^3.5",
+                                    "patterns.content_details.name^3",
+                                    "patterns.stylistic_attributes.name^3",
+                                    "patterns.elements.name^2",
+                                    "patterns.prompt.final_prompt^1.5",
+                                    "patterns.style_keywords^1",
+                                    "patterns.secondary_patterns.name^0.8"
+                                ],
+                                "type": "cross_fields",
+                                "operator": "or",
+                                "fuzziness": "AUTO",
+                                "prefix_length": 2,
+                                "boost": 4
+                            }
+                        })
             
-            # Add color matching for both filtering and scoring
+            # 4. Add color matching with refined boosting
             if parsed_query['colors']:
                 for color_term in parsed_query['colors']:
                     logger.info(f"Adding color matching for: '{color_term}'")
                     
-                    # Add color clauses to should
+                    # Add color clauses to should with .raw field having higher boost
                     bool_query["bool"]["should"].extend([
                         {
                             "nested": {
                                 "path": "colors.dominant_colors",
                                 "query": {
                                     "match": {
-                                        "colors.dominant_colors.name": {
+                                        "colors.dominant_colors.name.raw": {
                                             "query": color_term,
-                                            "boost": 2
+                                            "boost": 6
                                         }
                                     }
                                 },
@@ -755,9 +973,9 @@ class ElasticsearchClient:
                                 "path": "colors.dominant_colors",
                                 "query": {
                                     "match": {
-                                        "colors.dominant_colors.name.raw": {
+                                        "colors.dominant_colors.name": {
                                             "query": color_term,
-                                            "boost": 3
+                                            "boost": 5
                                         }
                                     }
                                 },
@@ -767,7 +985,7 @@ class ElasticsearchClient:
                     ])
                 
                 # If query has ONLY color terms, add a filter to ensure at least one color matches
-                if not parsed_query['keywords'] and not parsed_query['phrases'] and len(parsed_query['colors']) == 1:
+                if not parsed_query['keywords'] and not parsed_query['quoted_phrases'] and not parsed_query['potential_phrases'] and len(parsed_query['colors']) == 1:
                     # Only one color specified - add a filter to require this color
                     color_term = parsed_query['colors'][0]
                     logger.info(f"Adding color filter for '{color_term}' since it's the only search term")
@@ -785,16 +1003,15 @@ class ElasticsearchClient:
                         }
                     })
             
-            # Set appropriate minimum_should_match based on query complexity
-            total_terms = len(parsed_query['keywords']) + len(parsed_query['phrases']) + len(parsed_query['colors'])
+            # 5. Calculate appropriate minimum_should_match
+            # Count distinct concepts (treat each potential phrase as one concept)
+            concept_count = len(parsed_query['keywords']) + len(parsed_query['quoted_phrases']) + len(parsed_query['potential_phrases']) + len(parsed_query['colors'])
             
-            if len(bool_query["bool"]["must"]) > 0:
-                # We have must clauses, no need for minimum_should_match on should clauses
-                min_should = 0
-            elif total_terms > 4:
-                # For complex queries, require matching at least 40% of terms (or at least 2)
-                min_should = max(2, int(len(bool_query["bool"]["should"]) * 0.4))
-            elif total_terms > 1:
+            # Calculate minimum_should_match based on concept count
+            if concept_count > 3:
+                # For complex queries, require matching at least 60% of concepts
+                min_should = max(1, int(concept_count * 0.6))
+            elif concept_count > 1:
                 # For simple multi-term queries, require at least 1 term
                 min_should = 1
             else:

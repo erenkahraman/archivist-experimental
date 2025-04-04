@@ -48,20 +48,18 @@
         <div class="tab-content">
           <!-- Patterns Tab -->
           <div v-if="activeTab === 'patterns'" class="tab-pane">
-            <div class="pattern-section" v-if="props.selectedImage.patterns?.primary_pattern">
+            <!-- Primary Pattern -->
+            <div class="pattern-section" v-if="getPrimaryPattern()">
               <h3 class="section-title">Primary Pattern</h3>
               <div class="pattern-primary">
-                {{ typeof props.selectedImage.patterns.primary_pattern === 'object' ? 
-                   props.selectedImage.patterns.primary_pattern.name : 
-                   props.selectedImage.patterns.primary_pattern }}
-                <span class="inline-confidence">
-                  {{ props.selectedImage.patterns.category_confidence !== undefined ? 
-                     Math.round((props.selectedImage.patterns.category_confidence || 0) * 100) + '%' : 
-                     '0%' }}
+                {{ getPrimaryPattern() }}
+                <span class="inline-confidence" v-if="getPatternConfidence() !== null">
+                  {{ formatConfidence(getPatternConfidence()) }}
                 </span>
               </div>
             </div>
             
+            <!-- Secondary Patterns -->
             <div class="pattern-section" v-if="hasSecondaryPatterns">
               <h3 class="section-title">Secondary Patterns</h3>
               <p class="confidence-note">Percentages indicate pattern confidence level</p>
@@ -77,11 +75,13 @@
               </div>
             </div>
             
-            <div class="pattern-section" v-if="props.selectedImage.patterns?.prompt">
+            <!-- Pattern Description -->
+            <div class="pattern-section" v-if="getPatternDescription()">
               <h3 class="section-title">Pattern Description</h3>
-              <div class="image-data">{{ getPromptText(props.selectedImage.patterns.prompt) }}</div>
+              <div class="image-data">{{ getPatternDescription() }}</div>
             </div>
 
+            <!-- Style Keywords -->
             <div class="pattern-section" v-if="hasStyleKeywords">
               <h3 class="section-title">Style Keywords</h3>
               <div class="keyword-tags">
@@ -203,6 +203,14 @@ const activeTab = ref('patterns')
 
 // Data availability checks
 const hasSecondaryPatterns = computed(() => {
+  // Check search results format
+  if (props.selectedImage.pattern?.secondary && 
+      Array.isArray(props.selectedImage.pattern.secondary) && 
+      props.selectedImage.pattern.secondary.length > 0) {
+    return true;
+  }
+  
+  // Check regular format
   return props.selectedImage.patterns?.secondary_patterns && 
     (Array.isArray(props.selectedImage.patterns.secondary_patterns) || 
     typeof props.selectedImage.patterns.secondary_patterns === 'object')
@@ -263,7 +271,76 @@ const getPromptText = (prompt) => {
 }
 
 // Pattern handling
+const getPrimaryPattern = () => {
+  if (!props.selectedImage) return null;
+  
+  // Regular format: props.selectedImage.patterns.primary_pattern
+  if (props.selectedImage.patterns?.primary_pattern) {
+    const pattern = props.selectedImage.patterns.primary_pattern;
+    if (typeof pattern === 'object' && pattern.name) {
+      return pattern.name;
+    }
+    return pattern;
+  }
+  
+  // Search results format: props.selectedImage.pattern.primary
+  if (props.selectedImage.pattern?.primary) {
+    return props.selectedImage.pattern.primary;
+  }
+  
+  return null;
+}
+
+const getPatternConfidence = () => {
+  if (!props.selectedImage) return null;
+  
+  // Regular format
+  if (props.selectedImage.patterns?.pattern_confidence !== undefined) {
+    return props.selectedImage.patterns.pattern_confidence;
+  }
+  
+  if (props.selectedImage.patterns?.category_confidence !== undefined) {
+    return props.selectedImage.patterns.category_confidence;
+  }
+  
+  // Search results format
+  if (props.selectedImage.pattern?.confidence !== undefined) {
+    return props.selectedImage.pattern.confidence;
+  }
+  
+  return null;
+}
+
+const formatConfidence = (confidence) => {
+  if (confidence === null || confidence === undefined) return '';
+  return `${Math.round(confidence * 100)}%`;
+}
+
+const getPatternDescription = () => {
+  if (!props.selectedImage) return null;
+  
+  // Regular format
+  if (props.selectedImage.patterns?.prompt) {
+    return getPromptText(props.selectedImage.patterns.prompt);
+  }
+  
+  // Search results format
+  if (props.selectedImage.prompt) {
+    return getPromptText(props.selectedImage.prompt);
+  }
+  
+  return null;
+}
+
 const getSecondaryPatterns = () => {
+  if (!props.selectedImage) return [];
+  
+  // Search results format
+  if (props.selectedImage.pattern?.secondary && Array.isArray(props.selectedImage.pattern.secondary)) {
+    return props.selectedImage.pattern.secondary;
+  }
+  
+  // Regular format
   if (!props.selectedImage.patterns?.secondary_patterns) return []
   
   // Handle when it's an array of strings
