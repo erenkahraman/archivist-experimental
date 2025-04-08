@@ -451,7 +451,6 @@ class SearchEngine:
         logger.info(f"Searching for: '{query}'")
         search_start_time = int(import_time.time())
         
-
         # Check cache first
         cache_key = f"search:{query}:{k}"
         cached_results = self.cache.get(cache_key)
@@ -464,7 +463,6 @@ class SearchEngine:
             return cached_results
         
         # Cache miss, perform search
-
         if self.use_elasticsearch and self.es_client.is_connected():
             logger.info(f"Using Elasticsearch to search for: '{query}'")
             # Use elasticsearch search
@@ -500,7 +498,6 @@ class SearchEngine:
         Args:
             query: Search query
             k: Maximum number of results
-
             
         Returns:
             List of results sorted by relevance
@@ -942,4 +939,3 @@ class SearchEngine:
             pattern_info['prompt']['final_prompt'] = pattern_info.get('main_theme', 'Unknown pattern')
             
         return pattern_info 
-
