@@ -14,7 +14,7 @@
 <script setup>
 import { computed } from 'vue'
 import GalleryItem from './item.vue'
-import { useImageStore } from '../../store/imageStore'
+import { useImageStore } from '../../stores/imageStore'
 
 const props = defineProps({
   images: {

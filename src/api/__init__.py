@@ -4,11 +4,10 @@ import logging
 import os
 import dotenv
 import sys
+from pathlib import Path
 
 # Add the project root to the Python path to ensure imports work
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-
-from src.search_engine import SearchEngine
 
 # Load environment variables from .env file
 dotenv.load_dotenv()
@@ -21,8 +20,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Control logging verbosity
-DEBUG = os.environ.get('DEBUG', 'false').lower() == 'true'
+# Debug flag
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 't', 'yes')
 
 # Set default logging to WARNING for production unless DEBUG is enabled
 if not DEBUG:
@@ -45,14 +44,29 @@ else:
     masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
     logger.info(f"Using Gemini API key: {masked_key}")
 
-# Initialize search engine with Gemini API key - shared instance
-search_engine = SearchEngine(gemini_api_key=GEMINI_API_KEY)
 
-# Export the search_engine instance for use in app.py
-__all__ = ['api', 'search_engine', 'create_app', 'DEBUG']
-
-# Create a Flask Blueprint
+# Create API blueprint
 api = Blueprint('api', __name__)
+
+# Import SearchEngine to set up search functionality
+try:
+    # Import here to avoid circular imports
+    from ..search_engine import SearchEngine
+    
+    # Initialize search engine
+    search_engine = SearchEngine()
+    
+    if not search_engine.es_client or not search_engine.es_client.is_connected():
+        logger.warning("Elasticsearch connection failed. Some search features will be limited.")
+    else:
+        logger.info("Elasticsearch connection successful.")
+    
+    # Log initialization state
+    logger.info(f"API initialized with DEBUG={DEBUG}")
+except Exception as e:
+    logger.error(f"Error initializing search engine: {e}", exc_info=True)
+    search_engine = None
+    logger.warning("API initialized without search engine.")
 
 # Register basic error handlers
 from werkzeug.exceptions import BadRequest
@@ -60,6 +74,15 @@ from werkzeug.exceptions import BadRequest
 @api.errorhandler(BadRequest)
 def handle_bad_request(e):
     return jsonify({'error': str(e)}), 400
+
+@api.errorhandler(404)
+def not_found(error):
+    return jsonify({"error": "Not found"}), 404
+
+@api.errorhandler(500)
+def internal_error(error):
+    logger.error(f"Internal server error: {error}", exc_info=True)
+    return jsonify({"error": "Internal server error"}), 500
 
 # Basic test route
 @api.route('/')

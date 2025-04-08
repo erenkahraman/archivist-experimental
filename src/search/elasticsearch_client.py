@@ -1,19 +1,65 @@
 from elasticsearch import Elasticsearch, helpers
-from elasticsearch.exceptions import NotFoundError
+from elasticsearch.exceptions import NotFoundError, ConnectionError, ConnectionTimeout
 import logging
 from typing import Dict, List, Any, Optional, Generator
-import config
 import time
+import math
+import numpy as np
+from functools import wraps
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
+def retry_on_exception(max_retries=3, retry_interval=1.0, 
+                      allowed_exceptions=(ConnectionError, ConnectionTimeout, NotFoundError)):
+    """
+    Decorator for retrying operations on Elasticsearch with exponential backoff.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        retry_interval: Initial time to wait between retries (seconds)
+        allowed_exceptions: Tuple of exceptions that trigger a retry
+        
+    Returns:
+        Decorated function with retry logic
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            retry_count = 0
+            current_interval = retry_interval
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    return func(self, *args, **kwargs)
+                except allowed_exceptions as e:
+                    retry_count += 1
+                    last_error = e
+                    
+                    if retry_count < max_retries:
+                        logger.warning(f"{func.__name__} failed (attempt {retry_count}): {str(e)}. "
+                                     f"Retrying in {current_interval:.2f}s...")
+                        time.sleep(current_interval)
+                        # Exponential backoff
+                        current_interval *= 1.5
+                    else:
+                        logger.error(f"{func.__name__} failed after {max_retries} attempts: {str(e)}")
+                        raise
+            
+            # This should never be reached due to the raise in the except block
+            return None
+        return wrapper
+    return decorator
+
 class ElasticsearchClient:
     """Client for interacting with Elasticsearch"""
     
-    def __init__(self, hosts: List[str] = None, cloud_id: str = None, api_key: str = None, username: str = None, password: str = None):
+    def __init__(self, hosts: List[str] = None, cloud_id: str = None, api_key: str = None, 
+                 username: str = None, password: str = None, max_retries: int = 3, 
+                 retry_interval: float = 2.0):
         """
-        Initialize the Elasticsearch client.
+        Initialize the Elasticsearch client with connection parameters
         
         Args:
             hosts: List of Elasticsearch host URLs
@@ -21,37 +67,56 @@ class ElasticsearchClient:
             api_key: API key for authentication
             username: Username for basic authentication
             password: Password for basic authentication
+            max_retries: Maximum number of connection attempts
+            retry_interval: Time to wait between retries in seconds
         """
         self.index_name = "images"
         
-        # Connection parameters
+        # Set connection parameters
         self.connection_params = {}
-        
-        # Set hosts if provided
         if hosts:
             self.connection_params["hosts"] = hosts
-            
-        # Set cloud_id if provided
         if cloud_id:
             self.connection_params["cloud_id"] = cloud_id
-            
-        # Set authentication
         if api_key:
             self.connection_params["api_key"] = api_key
         elif username and password:
             self.connection_params["basic_auth"] = (username, password)
             
-        # Initialize client
-        try:
-            self.es = Elasticsearch(**self.connection_params)
-            logger.info(f"Connected to Elasticsearch: {self.es.info()['version']['number']}")
-        except Exception as e:
-            logger.error(f"Failed to connect to Elasticsearch: {str(e)}")
-            self.es = None
+
+        # Add sensible timeouts
+        self.connection_params["request_timeout"] = 30
+        self.connection_params["retry_on_timeout"] = True
+            
+        # Initialize client with retry mechanism
+        self.client = None
+        retry_count = 0
+        
+        while retry_count < max_retries and self.client is None:
+            try:
+                self.client = Elasticsearch(**self.connection_params)
+                if self.client.ping():
+                    logger.info(f"Connected to Elasticsearch at {hosts if hosts else 'default'}")
+                else:
+                    logger.error("Failed to ping Elasticsearch")
+                    self.client = None
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(retry_interval)
+                    retry_interval *= 1.5
+                else:
+                    logger.error(f"Failed to connect to Elasticsearch after {max_retries} attempts")
     
     def is_connected(self) -> bool:
-        """Check if connected to Elasticsearch"""
-        if not self.es:
+        """
+        Check if connected to Elasticsearch
+        
+        Returns:
+            bool: True if connected, False otherwise
+        """
+        if not self.client:
             return False
         try:
             return self.es.ping()
@@ -59,10 +124,26 @@ class ElasticsearchClient:
             logger.error(f"Elasticsearch connection error: {str(e)}")
             return False
     
-    def create_index(self) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def index_exists(self) -> bool:
         """
-        Create the images index with appropriate mappings.
+        Check if the index exists
         
+        Returns:
+            bool: True if index exists, False otherwise
+        """
+        if not self.is_connected():
+            return False
+        return self.client.indices.exists(index=self.index_name)
+    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def create_index(self, force_recreate=False) -> bool:
+        """
+        Create index with appropriate mappings
+        
+        Args:
+            force_recreate: Whether to recreate the index if it exists
+            
         Returns:
             bool: True if successful, False otherwise
         """
@@ -70,46 +151,113 @@ class ElasticsearchClient:
             logger.error("Cannot create index: not connected to Elasticsearch")
             return False
             
-        # Define the mapping for the images index
-        mappings = {
-            "mappings": {
+        try:
+            # Check if index exists
+            index_exists = self.client.indices.exists(index=self.index_name)
+            
+            if index_exists:
+                if force_recreate:
+                    logger.info(f"Deleting existing index '{self.index_name}'")
+                    self.client.indices.delete(index=self.index_name)
+                else:
+                    logger.info(f"Index '{self.index_name}' already exists")
+                    return True
+                    
+            # Define custom analyzers
+            settings = {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "analysis": {
+                    "analyzer": {
+                        "partial_analyzer": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": ["lowercase", "partial_filter"]
+                        }
+                    },
+                    "filter": {
+                        "partial_filter": {
+                            "type": "edge_ngram",
+                            "min_gram": 2,
+                            "max_gram": 20
+                        },
+                        "color_synonym_filter": {
+                            "type": "synonym",
+                            "synonyms": [
+                                "blue, navy, azure, cobalt, indigo",
+                                "red, crimson, scarlet, ruby, vermilion",
+                                "green, olive, emerald, lime, sage",
+                                "yellow, gold, amber, mustard, ochre",
+                                "orange, tangerine, rust, coral",
+                                "purple, violet, lavender, lilac, mauve",
+                                "pink, rose, magenta, fuchsia",
+                                "brown, tan, beige, khaki, chocolate",
+                                "gray, grey, silver, slate, charcoal",
+                                "black, onyx, jet, ebony",
+                                "white, ivory, cream, pearl"
+                            ]
+                        },
+                        "pattern_synonym_filter": {
+                            "type": "synonym",
+                            "synonyms": [
+                                "floral, flower, botanical, bloom, garden",
+                                "geometric, geometry, shape, pattern",
+                                "stripe, striped, linear, line, banded",
+                                "dot, dots, polka dot, spotted, circular pattern",
+                                "plaid, tartan, check, checkered",
+                                "paisley, paisleys",
+                                "abstract, non-representational",
+                                "tropical, exotic, jungle, palm",
+                                "damask, scroll, acanthus",
+                                "chevron, zigzag, herringbone",
+                                "animal, wildlife, fauna, creature"
+                            ]
+                        }
+                    }
+                }
+            }
+
+            # Enhanced mappings
+            mappings = {
                 "properties": {
                     "id": {"type": "keyword"},
                     "filename": {"type": "keyword"},
                     "path": {"type": "keyword"},
                     "thumbnail_path": {"type": "keyword"},
-                    "timestamp": {"type": "date"},
-                    
-                    # Pattern information
+                    "timestamp": {"type": "date", "format": "epoch_second||epoch_millis||strict_date_optional_time"},
+                    "embedding": {"type": "dense_vector", "dims": 512},
                     "patterns": {
                         "properties": {
-                            # New fields with multi-field mappings
                             "main_theme": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
+                                "type": "text",
+                                "analyzer": "standard",
+                                "boost": 3.0,
                                 "fields": {
                                     "raw": {"type": "keyword"},
-                                    "partial": {
-                                        "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
-                                    }
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                 }
                             },
                             "main_theme_confidence": {"type": "float"},
+                            "primary_pattern": {
+                                "type": "text",
+                                "analyzer": "standard",
+                                "boost": 2.5,
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                }
+                            },
+                            "pattern_confidence": {"type": "float"},
                             "content_details": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
+                                        "boost": 2.0,
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
@@ -119,258 +267,99 @@ class ElasticsearchClient:
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
+                                        "boost": 1.5,
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
                                 }
                             },
-                            "primary_pattern": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
+                            "category": {
+                                "type": "text",
+                                "analyzer": "standard",
                                 "fields": {
                                     "raw": {"type": "keyword"},
-                                    "partial": {
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                }
+                            },
+                            "category_confidence": {"type": "float"},
+                            "style_keywords": {"type": "text"},
+                            "prompt": {
+                                "properties": {
+                                    "final_prompt": {
                                         "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
+                                        "analyzer": "standard",
+                                        "boost": 1.0,
+                                        "fields": {
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                        }
                                     }
                                 }
                             },
-                            "pattern_confidence": {"type": "float"},
                             "secondary_patterns": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    },
-                                    "confidence": {"type": "float"}
-                                }
-                            },
-                            "elements": {
-                                "type": "nested",
-                                "properties": {
-                                    "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    },
-                                    "confidence": {"type": "float"}
-                                }
-                            },
-                            "prompt": {
-                                "properties": {
-                                    "original_prompt": {"type": "text", "analyzer": "standard"},
-                                    "final_prompt": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            "style_keywords": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
-                                "fields": {
-                                    "raw": {"type": "keyword"},
-                                    "partial": {
                                         "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
-                                    }
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                        }
+                                    },
+                                    "confidence": {"type": "float"}
                                 }
                             }
                         }
                     },
-                    
-                    # Color information
                     "colors": {
                         "properties": {
                             "dominant_colors": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"},
+                                            "synonym": {"type": "text", "analyzer": "standard", "search_analyzer": "standard", "term_vector": "with_positions_offsets"}
                                         }
                                     },
                                     "hex": {"type": "keyword"},
                                     "proportion": {"type": "float"}
                                 }
                             },
-                            "color_palette": {
-                                "type": "nested",
-                                "properties": {
-                                    "name": {"type": "keyword"},
-                                    "hex": {"type": "keyword"}
-                                }
-                            }
+                            "color_distribution": {"type": "object"}
                         }
                     }
                 }
-            },
-            "settings": {
-                "number_of_shards": 1,
-                "number_of_replicas": 0,
-                "analysis": {
-                    "analyzer": {
-                        "custom_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": ["lowercase", "stemmer"]
-                        },
-                        "partial_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": ["lowercase", "edge_ngram_filter"]
-                        },
-                        "synonym_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": [
-                                "lowercase",
-                                "synonym_filter",
-                                "stemmer"
-                            ]
-                        }
-                    },
-                    "filter": {
-                        "edge_ngram_filter": {
-                            "type": "edge_ngram",
-                            "min_gram": 2,
-                            "max_gram": 10
-                        },
-                        "synonym_filter": {
-                            "type": "synonym_graph",
-                            "expand": true,
-                            "synonyms": [
-                                # Color synonyms
-                                "crimson, ruby, cherry, scarlet => red",
-                                "burgundy, maroon => dark red",
-                                "salmon, coral pink => pink",
-                                "navy, cobalt, azure => blue",
-                                "teal, turquoise => blue green",
-                                "khaki, tan, beige => light brown",
-                                "gold, goldenrod => yellow",
-                                "lime, chartreuse => light green",
-                                "forest => dark green",
-                                "olive => yellow green",
-                                "mint => pale green",
-                                "magenta, fuchsia => bright pink",
-                                "lavender, periwinkle => light purple",
-                                "indigo => deep blue",
-                                "amber => orange yellow",
-                                "slate => blue gray",
-                                "charcoal => dark gray",
-                                "ivory, cream => off white",
-                                "silver => light gray",
-                                
-                                # Pattern synonyms
-                                "flower, bloom, floral => floral",
-                                "geometric, shape => geometric",
-                                "dots, polka dot => dotted",
-                                "stripe, striped, stripes => striped",
-                                "diamonds, diamond pattern => diamond",
-                                "grid, checks, checked => checkered",
-                                "abstract, non representational => abstract",
-                                "zig zag, chevron => chevron",
-                                "animal print, animal skin => animal print",
-                                "paisley, teardrop => paisley",
-                                "squares, blocks, grid => geometric",
-                                "curvy, wavy, waves => wave",
-                                "botanical, natural, nature inspired => natural",
-                                "gradient, ombre => gradient",
-                                "herringbone, fishbone => herringbone",
-                                "damask, ornate pattern => damask",
-                                "ikat, ethnic => ethnic",
-                                "abstract geometric => abstract geometric",
-                                "medallion => circular pattern",
-                                "toile, scenic => toile",
-                                
-                                # Textile terms
-                                "fabric, cloth, textile, material => textile",
-                                "cotton, natural fiber => cotton",
-                                "silk, silky => silk",
-                                "wool, woolen => wool",
-                                "polyester, synthetic => synthetic",
-                                "linen, flax => linen",
-                                "satin, glossy => satin",
-                                "velvet, plush => velvet",
-                                "denim, jeans => denim",
-                                "leather, hide => leather",
-                                "suede => soft leather",
-                                "knit, knitted => knit",
-                                "woven, weave => woven",
-                                "embroidered, embroidery => embroidery",
-                                "brocade, jacquard => brocade",
-                                "tapestry, wall hanging => tapestry",
-                                "canvas, heavy fabric => canvas",
-                                "upholstery => furniture fabric"
-                            ]
-                        }
-                    }
+            }            
+            # Create the index with both settings and mappings
+            self.client.indices.create(
+                index=self.index_name,
+                body={
+                    "settings": settings,
+                    "mappings": mappings
                 }
-            }
-        }
-        
-        try:
-            # Check if index exists
-            if self.es.indices.exists(index=self.index_name):
-                logger.info(f"Index '{self.index_name}' already exists")
-                return True
-                
-            # Create the index
-            self.es.indices.create(index=self.index_name, body=mappings)
-            logger.info(f"Created index '{self.index_name}' with mappings")
+            )
+            logger.info(f"Created index '{self.index_name}' with enhanced mappings and analyzers")
             return True
         except Exception as e:
             logger.error(f"Failed to create index: {str(e)}")
             return False
     
-    def index_document(self, document: Dict[str, Any], invalidate_cache: bool = True) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def index_document(self, document: Dict[str, Any]) -> bool:
         """
-        Index a single document into Elasticsearch.
+        Index a single document into Elasticsearch
         
         Args:
             document: The document to index
-            invalidate_cache: Whether to invalidate the search cache after indexing
             
         Returns:
             bool: True if successful, False otherwise
@@ -379,40 +368,30 @@ class ElasticsearchClient:
             logger.error("Cannot index document: not connected to Elasticsearch")
             return False
             
-        try:
-            # Make sure the index exists
-            if not self.es.indices.exists(index=self.index_name):
-                self.create_index()
-            
-            # Extract the document ID
-            doc_id = document.get("id", document.get("path", None))
-            if not doc_id:
-                logger.error("Document must have an 'id' or 'path' field")
+        # Make sure the index exists
+        if not self.index_exists():
+            logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
+            if not self.create_index():
                 return False
-                
-            # Index the document
-            self.es.index(index=self.index_name, id=doc_id, document=document)
-            logger.info(f"Indexed document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after indexing document")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to index document: {str(e)}")
+        
+        # Extract the document ID
+        doc_id = document.get("id") or document.get("path") or document.get("filename")
+        if not doc_id:
+            logger.error("Document must have an 'id', 'path', or 'filename' field")
             return False
+            
+        self.client.index(index=self.index_name, id=doc_id, document=document)
+        logger.info(f"Indexed document with ID: {doc_id}")
+        return True
     
-    def bulk_index(self, documents: List[Dict[str, Any]], invalidate_cache: bool = True) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def bulk_index(self, documents: List[Dict[str, Any]], chunk_size: int = 500) -> bool:
         """
-        Bulk index multiple documents into Elasticsearch.
+        Bulk index multiple documents into Elasticsearch
         
         Args:
             documents: List of documents to index
-            invalidate_cache: Whether to invalidate the search cache after indexing
+            chunk_size: Number of documents per bulk request
             
         Returns:
             bool: True if successful, False otherwise
@@ -423,143 +402,53 @@ class ElasticsearchClient:
             
         if not documents:
             logger.warning("No documents to bulk index")
-            return False
+
+            return True
             
-        try:
-            # Make sure the index exists
-            if not self.es.indices.exists(index=self.index_name):
-                self.create_index()
-                
-            # Prepare actions for bulk indexing
-            actions = []
-            for doc in documents:
-                # Extract the document ID
-                doc_id = doc.get("id", doc.get("path", None))
-                if not doc_id:
-                    logger.warning("Skipping document without 'id' or 'path' field")
-                    continue
-                    
-                action = {
-                    "_index": self.index_name,
-                    "_id": doc_id,
-                    "_source": doc
-                }
-                actions.append(action)
-                
-            if not actions:
-                logger.warning("No valid documents to bulk index")
+        # Make sure the index exists
+        if not self.index_exists():
+            logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
+            if not self.create_index():
                 return False
+            
+        # Process documents in chunks
+        actions = []
+        for doc in documents:
+            # Extract ID
+            doc_id = doc.get("id") or doc.get("path") or doc.get("filename")
+            if not doc_id:
+                logger.warning("Skipping document without ID field")
+                continue
                 
-            # Execute bulk indexing
-            result = helpers.bulk(self.es, actions)
-            logger.info(f"Bulk indexed {result[0]} documents")
+            action = {
+                "_index": self.index_name,
+                "_id": doc_id,
+                "_source": doc
+            }
+            actions.append(action)
             
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after bulk indexing")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to bulk index documents: {str(e)}")
+        if not actions:
+            logger.warning("No valid documents to bulk index")
             return False
-    
-    def update_document(self, doc_id: str, document: Dict[str, Any], invalidate_cache: bool = True) -> bool:
-        """
-        Update an existing document in Elasticsearch.
+
+            
+        # Execute bulk indexing
+        success, failed = helpers.bulk(
+            self.client, 
+            actions, 
+            chunk_size=chunk_size,
+            raise_on_error=False
+        )
         
-        Args:
-            doc_id: The document ID to update
-            document: The document data to update
-            invalidate_cache: Whether to invalidate the search cache after updating
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.is_connected():
-            logger.error("Cannot update document: not connected to Elasticsearch")
-            return False
-            
-        try:
-            self.es.update(index=self.index_name, id=doc_id, doc=document)
-            logger.info(f"Updated document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after document update")
-            
-            return True
-        except NotFoundError:
-            # Document doesn't exist, index it instead
-            logger.info(f"Document with ID {doc_id} doesn't exist, indexing instead")
-            return self.index_document(document, invalidate_cache)
-        except Exception as e:
-            logger.error(f"Failed to update document: {str(e)}")
-            return False
+        logger.info(f"Bulk indexed {success} documents, {len(failed) if failed else 0} failed")
+        return success > 0
     
-    def delete_document(self, doc_id: str, invalidate_cache: bool = True) -> bool:
-        """
-        Delete a document from Elasticsearch.
-        
-        Args:
-            doc_id: The document ID to delete
-            invalidate_cache: Whether to invalidate the search cache after deletion
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.is_connected():
-            logger.error("Cannot delete document: not connected to Elasticsearch")
-            return False
-            
-        try:
-            self.es.delete(index=self.index_name, id=doc_id)
-            logger.info(f"Deleted document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after document deletion")
-            
-            return True
-        except NotFoundError:
-            logger.warning(f"Document with ID {doc_id} not found")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to delete document: {str(e)}")
-            return False
-    
-    def _parse_query(self, query_string: str) -> Dict[str, Any]:
-        """
-        Parse a search query into components for advanced search.
-        Not used in the simple search implementation.
-        
-        Args:
-            query_string: The raw search query string
-            
-        Returns:
-            Dictionary with query components
-        """
-        # This method is no longer used but kept for backward compatibility
-        return {
-            "colors": [],
-            "quoted_phrases": [],
-            "potential_phrases": [],
-            "keywords": [query_string],
-            "concepts": [query_string],
-            "original": query_string
-        }
-    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-        Simple search for images using Elasticsearch.
+
+        Enhanced search function using composite query structure
+
         
         Args:
             query: The search query string
@@ -567,179 +456,538 @@ class ElasticsearchClient:
             min_similarity: Minimum similarity score threshold
             
         Returns:
-            List of matching documents with similarity scores
+            List of matching documents
         """
         if not self.is_connected():
             logger.error("Cannot search: not connected to Elasticsearch")
-            # Use in-memory search instead
-            try:
-                from src.search_engine import search_engine
-                return search_engine._in_memory_search(query, limit)
-            except Exception as e:
-                logger.error(f"Fallback to in-memory search failed: {str(e)}")
-                return []
+            return []
+            
+        # For empty or wildcard queries
+        if query == "*" or not query.strip():
+            query_body = {"match_all": {}}
+            return self._execute_search(query_body, limit, min_similarity)
         
-        try:
-            # Build a simple query that matches the query term across multiple fields
-            dsl = {
-                "size": limit,
+        # Log search parameters for debugging
+        logger.info(f"Performing enhanced search for: '{query}' with limit {limit}")
+        
+        # Split query into terms for more flexibility
+        query_terms = [term.strip() for term in query.split() if term.strip()]
+        min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
+        
+        # Build the main compound query
+        should_clauses = []
+        
+        # 1. Exact matches on main_theme with high boost
+        should_clauses.append({
+            "match": {
+                "patterns.main_theme.raw": {
+                    "query": query,
+                    "boost": 5.0
+                }
+            }
+        })
+        
+        # 2. Exact matches on primary_pattern with high boost
+        should_clauses.append({
+            "match": {
+                "patterns.primary_pattern.raw": {
+                    "query": query,
+                    "boost": 4.5
+                }
+            }
+        })
+        
+        # 3. Multi-match across all relevant fields
+        should_clauses.append({
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "patterns.main_theme^3",
+                    "patterns.main_theme.partial^2.5",
+                    "patterns.primary_pattern^2.5",
+                    "patterns.primary_pattern.partial^2",
+                    "patterns.prompt.final_prompt^1.2",
+                    "patterns.prompt.final_prompt.partial^1"
+                ],
+                "type": "best_fields",
+                "fuzziness": "AUTO",
+                "prefix_length": 2,
+                "boost": 3.0
+            }
+        })
+        
+        # 4. Nested query for content details
+        should_clauses.append({
+            "nested": {
+                "path": "patterns.content_details",
                 "query": {
                     "bool": {
                         "should": [
-                            {"match": {"patterns.primary_pattern": query}},
-                            {"match": {"patterns.style_keywords": query}},
-                            {"match": {"patterns.prompt.final_prompt": query}},
-                            {"match": {"colors.dominant_colors.name": query}}
-                        ],
-                        "minimum_should_match": 1
+                            {
+                                "match": {
+                                    "patterns.content_details.name": {
+                                        "query": query,
+                                        "boost": 2.0
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "patterns.content_details.name.partial": {
+                                        "query": query,
+                                        "boost": 1.5
+                                    }
+                                }
+                            }
+                        ]
                     }
-                }
+                },
+                "score_mode": "max",
+                "boost": 2.0
             }
+        })
+        
+        # 5. Nested query for stylistic attributes
+        should_clauses.append({
+            "nested": {
+                "path": "patterns.stylistic_attributes",
+                "query": {
+                    "bool": {
+                        "should": [
+                            {
+                                "match": {
+                                    "patterns.stylistic_attributes.name": {
+                                        "query": query,
+                                        "boost": 1.5
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "patterns.stylistic_attributes.name.partial": {
+                                        "query": query,
+                                        "boost": 1.0
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "score_mode": "max",
+                "boost": 1.5
+            }
+        })
+        
+        # 6. Nested query for colors
+        should_clauses.append({
+            "nested": {
+                "path": "colors.dominant_colors",
+                "query": {
+                    "bool": {
+                        "should": [
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name.raw": {
+                                        "query": query,
+                                        "boost": 2.0
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name": {
+                                        "query": query,
+                                        "boost": 1.5
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name.partial": {
+                                        "query": query,
+                                        "boost": 1.0
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "score_mode": "avg",
+                "boost": 1.5
+            }
+        })
+        
+        # Build the main bool query
+        bool_query = {
+            "bool": {
+                "should": should_clauses,
+                "minimum_should_match": 1
+            }
+        }
+        
+        # Wrap in a function_score query to factor in confidence values
+        function_score_query = {
+            "function_score": {
+                "query": bool_query,
+                "functions": [
+                    {
+                        "field_value_factor": {
+                            "field": "patterns.main_theme_confidence",
+                            "factor": 1.5,
+                            "missing": 0.8,
+                            "modifier": "log1p"
+                        }
+                    },
+                    {
+                        "field_value_factor": {
+                            "field": "patterns.pattern_confidence",
+                            "factor": 1.2,
+                            "missing": 0.7,
+                            "modifier": "log1p"
+                        }
+                    },
+                    # Add recency boost
+                    {
+                        "gauss": {
+                            "timestamp": {
+                                "scale": "30d",
+                                "decay": 0.5
+                            }
+                        },
+                        "weight": 0.5
+                    }
+                ],
+                "score_mode": "multiply",
+                "boost_mode": "multiply"
+            }
+        }
+        
+        # Execute search with the function_score query
+        return self._execute_search(function_score_query, limit, min_similarity)
+    
+    def _execute_search(self, query_body, limit, min_similarity):
+        """
+        Helper method to execute a search with the given query body
+        """
+        start_time = time.time()
+        try:
+            response = self.client.search(
+                index=self.index_name,
+                body={
+                    "size": limit,
+                    "query": query_body,
+                    "_source": True
+                }
+            )
             
-            # Execute the search
-            response = self.es.search(index=self.index_name, body=dsl)
+            search_time = time.time() - start_time
+            logger.info(f"Search completed in {search_time:.2f}s")
             
-            # Process results
+            # Get max score for normalization
+            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
+            
+            # Process and normalize results
             results = []
             for hit in response["hits"]["hits"]:
                 doc = hit["_source"]
-                score = hit["_score"]
+                raw_score = hit["_score"]
                 
-                # Normalize the score to 0-1 range for consistency
-                normalized_score = min(score / 10.0, 1.0)
+                # Normalize score to 0-1 range
+                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
                 
-                # Skip results with score below threshold
-                if normalized_score < min_similarity:
-                    continue
-                    
-                # Add score to the document
-                doc["similarity"] = normalized_score
+                # Add scores to the document
+                doc["similarity"] = max(min_similarity, similarity)
+                doc["raw_score"] = raw_score
                 
-                results.append(doc)
-                
-            logger.info(f"Elasticsearch search for '{query}' found {len(results)} results")
+                # Only include results above threshold
+                if doc["similarity"] >= min_similarity:
+                    results.append(doc)
+            
+            # Sort by similarity
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            
+            logger.info(f"Search returned {len(results)} results")
             return results
+            
         except Exception as e:
-            logger.error(f"Elasticsearch search error: {str(e)}")
+            search_time = time.time() - start_time
+            logger.error(f"Search failed after {search_time:.2f}s: {str(e)}")
             return []
     
-    def _log_query_details(self, query_body: Dict[str, Any]) -> None:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def find_similar(self, embedding=None, limit=20, min_similarity=0.1, exclude_id=None, 
+                   text_query=None):
         """
-        Log query details for debugging.
-        Not used in the simple search implementation.
-        """
-        pass
-    
-    def rebuild_index(self) -> bool:
-        """
-        Rebuild the index with new mappings and reindex all documents.
-        This is required after changing analyzers or mappings.
+        Find similar documents based on text query or vector similarity
         
+        Args:
+            embedding: Vector embedding for similarity search
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity score threshold
+            exclude_id: ID of image to exclude from results
+            text_query: Text query for searching
+
         Returns:
-            bool: True if successful, False otherwise
+            List of documents sorted by similarity
         """
         if not self.is_connected():
-            logger.error("Cannot rebuild index: not connected to Elasticsearch")
-            return False
+            logger.error("Cannot perform similarity search: not connected to Elasticsearch")
+            return []
             
-        try:
-            # Check if index exists
-            if not self.es.indices.exists(index=self.index_name):
-                logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
-                return self.create_index()
-                
-            # Create a temporary index name
-            temp_index = f"{self.index_name}_temp"
+
+        # Build the main query
+        if text_query:
+            logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
             
-            logger.info(f"Rebuilding index '{self.index_name}' with new mappings")
+            # Split query into terms for better matching control
+            query_terms = [term.strip() for term in text_query.split() if term.strip()]
+            min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
             
-            # 1. Create a new temporary index with the updated mappings
-            old_index = self.index_name
-            self.index_name = temp_index
-            temp_creation_success = self.create_index()
-            self.index_name = old_index
+            # Build enhanced similar query with multiple fields and clauses
+            should_clauses = []
             
-            if not temp_creation_success:
-                logger.error("Failed to create temporary index for reindexing")
-                return False
+            # Match on all important fields with appropriate boosts
+            should_clauses.append({
+                "match": {
+                    "patterns.main_theme.raw": {
+                        "query": text_query,
+                        "boost": 5.0
+                    }
+                }
+            })
             
-            # 2. Count documents in the original index
-            count_request = self.es.count(index=self.index_name)
-            total_docs = count_request["count"]
+            should_clauses.append({
+                "match": {
+                    "patterns.primary_pattern.raw": {
+                        "query": text_query,
+                        "boost": 4.5
+                    }
+                }
+            })
             
-            if total_docs == 0:
-                logger.info("No documents to reindex. Deleting old index and creating new one.")
-                self.es.indices.delete(index=self.index_name)
-                self.index_name = temp_index
-                return True
-                
-            logger.info(f"Reindexing {total_docs} documents from '{self.index_name}' to '{temp_index}'")
+            # Multi match across standard fields
+            should_clauses.append({
+                "multi_match": {
+                    "query": text_query,
+                    "fields": [
+                        "patterns.main_theme^3",
+                        "patterns.main_theme.partial^2.5",
+                        "patterns.primary_pattern^2.5",
+                        "patterns.primary_pattern.partial^2",
+                        "patterns.prompt.final_prompt^1.2",
+                        "patterns.prompt.final_prompt.partial^1"
+                    ],
+                    "type": "best_fields",
+                    "fuzziness": "AUTO",
+                    "prefix_length": 2,
+                    "boost": 3.0
+                }
+            })
             
-            # 3. Reindex from old to new index
-            reindex_body = {
-                "source": {
-                    "index": self.index_name
-                },
-                "dest": {
-                    "index": temp_index
+            # Nested queries for content details and stylistic attributes
+            should_clauses.append({
+                "nested": {
+                    "path": "patterns.content_details",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"patterns.content_details.name": {"query": text_query, "boost": 2.0}}},
+                                {"match": {"patterns.content_details.name.partial": {"query": text_query, "boost": 1.5}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "max",
+                    "boost": 2.0
+                }
+            })
+            
+            should_clauses.append({
+                "nested": {
+                    "path": "patterns.stylistic_attributes",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"patterns.stylistic_attributes.name": {"query": text_query, "boost": 1.5}}},
+                                {"match": {"patterns.stylistic_attributes.name.partial": {"query": text_query, "boost": 1.0}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "max",
+                    "boost": 1.5
+                }
+            })
+            
+
+            # Add dominant color search
+            should_clauses.append({
+                "nested": {
+                    "path": "colors.dominant_colors",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"colors.dominant_colors.name.raw": {"query": text_query, "boost": 2.0}}},
+                                {"match": {"colors.dominant_colors.name": {"query": text_query, "boost": 1.5}}},
+                                {"match": {"colors.dominant_colors.name.partial": {"query": text_query, "boost": 1.0}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "avg",
+                    "boost": 1.5
+                }
+            })
+            
+            # Build bool query
+            bool_query = {
+                "bool": {
+                    "should": should_clauses,
+                    "minimum_should_match": 1
                 }
             }
             
-            # Execute reindex
-            self.es.reindex(body=reindex_body, wait_for_completion=True)
+            # Wrap in function_score query to factor in confidence scores
+            query_body = {
+                "function_score": {
+                    "query": bool_query,
+                    "functions": [
+                        {
+                            "field_value_factor": {
+                                "field": "patterns.main_theme_confidence",
+                                "factor": 1.5,
+                                "missing": 0.8,
+                                "modifier": "log1p"
+                            }
+                        },
+                        {
+                            "field_value_factor": {
+                                "field": "patterns.pattern_confidence",
+                                "factor": 1.2,
+                                "missing": 0.7,
+                                "modifier": "log1p"
+                            }
+                        },
+                        # Add recency boost
+                        {
+                            "gauss": {
+                                "timestamp": {
+                                    "scale": "30d",
+                                    "decay": 0.5
+                                }
+                            },
+                            "weight": 0.5
+                        }
+                    ],
+                    "score_mode": "multiply",
+                    "boost_mode": "multiply"
+                }
+            }
+        elif embedding is not None:
+            # Vector similarity search
+            logger.info("Performing vector-based similarity search")
+            query_body = {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
+                        "params": {"query_vector": embedding}
+                    }
+                }
+            }
+        else:
+            # Fallback to general search
+            logger.info("Performing general similarity search")
+            query_body = {"match_all": {}}
             
-            # 4. Verify new index has all documents
-            new_count_request = self.es.count(index=temp_index)
-            new_total_docs = new_count_request["count"]
-            
-            if new_total_docs != total_docs:
-                logger.error(f"Document count mismatch after reindexing: {total_docs} vs {new_total_docs}")
-                # Clean up temp index
-                self.es.indices.delete(index=temp_index)
-                return False
+        # Add exclusion if provided
+        if exclude_id:
+            # Create a must_not clause to exclude the reference document
+            if "function_score" in query_body:
+                if "bool" not in query_body["function_score"]["query"]:
+                    query_body["function_score"]["query"] = {
+                        "bool": {
+                            "must": [query_body["function_score"]["query"]],
+                            "must_not": []
+                        }
+                    }
                 
-            # 5. Delete the old index
-            logger.info(f"Reindexing complete. Deleting old index '{self.index_name}'")
-            self.es.indices.delete(index=self.index_name)
-            
-            # 6. Create an alias from the old name to the new index
-            logger.info(f"Creating alias from '{self.index_name}' to '{temp_index}'")
-            self.es.indices.update_aliases(body={
-                "actions": [
-                    {"add": {"index": temp_index, "alias": self.index_name}}
+                # Add exclusion by ID and filename
+                query_body["function_score"]["query"]["bool"]["must_not"] = [
+                    {"term": {"id": exclude_id}},
+                    {"term": {"filename": exclude_id}},
+                    {"term": {"path": exclude_id}}
+
                 ]
-            })
+            elif "script_score" in query_body:
+                # For vector search
+                if "bool" not in query_body["script_score"]["query"]:
+                    query_body["script_score"]["query"] = {
+                        "bool": {
+                            "must": [query_body["script_score"]["query"]],
+                            "must_not": []
+                        }
+                    }
+                
+                # Add exclusion
+                query_body["script_score"]["query"]["bool"]["must_not"] = [
+                    {"term": {"id": exclude_id}},
+                    {"term": {"filename": exclude_id}},
+                    {"term": {"path": exclude_id}}
+                ]
+            else:
+                # For simple queries
+                query_body = {
+                    "bool": {
+                        "must": [query_body],
+                        "must_not": [
+                            {"term": {"id": exclude_id}},
+                            {"term": {"filename": exclude_id}},
+                            {"term": {"path": exclude_id}}
+                        ]
+                    }
+                }
+                
+            logger.info(f"Excluding ID: {exclude_id}")
+        
+        # Execute the search and process results
+        start_time = time.time()
+        try:
+            response = self.client.search(
+                index=self.index_name,
+                body={
+                    "size": limit,
+                    "query": query_body,
+                    "_source": True
+                }
+            )
             
-            # Update our internal index name to point to the new one
-            self.index_name = temp_index
+            search_time = time.time() - start_time
+            logger.info(f"Similarity search completed in {search_time:.2f}s")
             
-            logger.info(f"Index rebuild complete with new mappings and {new_total_docs} documents")
+            # Process results
+            results = []
+            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
             
-            # Invalidate cache since we've reindexed everything
-            from src.search_engine import search_engine  # Import here to avoid circular imports
-            if hasattr(search_engine, 'cache'):
-                search_engine.cache.invalidate_all()
+            for hit in response["hits"]["hits"]:
+                doc = hit["_source"]
+                raw_score = hit["_score"]
+                
+                # Normalize score to 0-1 range
+                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
+                
+                # Add similarity score
+                doc["raw_score"] = raw_score
+                doc["similarity"] = max(min_similarity, similarity)
+                
+                # Only include results above threshold
+                if doc["similarity"] >= min_similarity:
+                    results.append(doc)
             
-            return True
+            # Sort by similarity (descending)
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            
+            logger.info(f"Similarity search returned {len(results)} results (of {len(response['hits']['hits'])} total)")
+            return results
             
         except Exception as e:
-            logger.error(f"Failed to rebuild index: {str(e)}")
-            return False
-    
-    def explain_search_result(self, doc_id: str, query: str) -> Dict[str, Any]:
-        """
-        Explain why a document matched a query. Kept for backward compatibility.
-        Not used in the simple search implementation.
-        
-        Args:
-            doc_id: The document ID to explain
-            query: The query to explain against
-            
-        Returns:
-            Dictionary with explanation details
-        """
-        return {
-            "doc_id": doc_id,
-            "query": query,
-            "explanation": "Simple search doesn't support detailed explanations"
-        } 
+            search_time = time.time() - start_time
+            logger.error(f"Similarity search failed after {search_time:.2f}s: {str(e)}")
+            return [] 

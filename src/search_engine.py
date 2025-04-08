@@ -78,8 +78,8 @@ class SearchEngine:
             if self.es_client.is_connected():
                 logger.info("Successfully connected to Elasticsearch")
                 
-                # Create index if it doesn't exist
-                self.es_client.create_index()
+                # Create index if it doesn't exist, force recreation
+                self.es_client.create_index(force_recreate=True)
                 return True
             else:
                 logger.warning("Failed to connect to Elasticsearch, using in-memory search instead")
@@ -189,40 +189,8 @@ class SearchEngine:
             # Then use Gemini for pattern analysis
             pattern_info = self.gemini_analyzer.analyze_image(str(image_path))
             
-            # Ensure pattern_info has the required fields
-            if pattern_info.get('primary_pattern') is None:
-                pattern_info['primary_pattern'] = pattern_info.get('category', 'Unknown')
-            
-            if pattern_info.get('pattern_confidence') is None:
-                pattern_info['pattern_confidence'] = pattern_info.get('category_confidence', 0.8)
-                
-            # Add new structured fields if they're missing
-            if pattern_info.get('main_theme') is None:
-                pattern_info['main_theme'] = pattern_info.get('primary_pattern', pattern_info.get('category', 'Unknown'))
-                
-            if pattern_info.get('main_theme_confidence') is None:
-                pattern_info['main_theme_confidence'] = pattern_info.get('pattern_confidence', pattern_info.get('category_confidence', 0.8))
-                
-            # Ensure content_details exists
-            if not pattern_info.get('content_details'):
-                # Create from elements if available
-                pattern_info['content_details'] = []
-                for element in pattern_info.get('elements', []):
-                    if isinstance(element, dict) and element.get('name'):
-                        pattern_info['content_details'].append({
-                            'name': element.get('name', ''),
-                            'confidence': element.get('confidence', 0.8)
-                        })
-                        
-            # Ensure stylistic_attributes exists
-            if not pattern_info.get('stylistic_attributes'):
-                # Create from style_keywords if available
-                pattern_info['stylistic_attributes'] = []
-                for keyword in pattern_info.get('style_keywords', []):
-                    pattern_info['stylistic_attributes'].append({
-                        'name': keyword,
-                        'confidence': 0.8
-                    })
+            # Validate and enhance pattern_info if needed
+            pattern_info = self._enhance_pattern_info(pattern_info)
             
             # Generate metadata
             metadata = {
@@ -232,7 +200,7 @@ class SearchEngine:
                 'thumbnail_path': str(rel_thumbnail_path),
                 'patterns': pattern_info,
                 'colors': color_info,
-                'timestamp': import_time.time()
+                'timestamp': int(import_time.time())
             }
             
             # Store metadata in memory
@@ -324,7 +292,7 @@ class SearchEngine:
             user_id: Optional user identifier
         """
         try:
-            timestamp = import_time.time()
+            timestamp = int(import_time.time())
             log_entry = {
                 "timestamp": timestamp,
                 "query": query,
@@ -363,7 +331,7 @@ class SearchEngine:
             user_id: Optional user identifier
         """
         try:
-            timestamp = import_time.time()
+            timestamp = int(import_time.time())
             log_entry = {
                 "timestamp": timestamp,
                 "query": query,
@@ -400,7 +368,7 @@ class SearchEngine:
         """
         try:
             # Calculate cutoff timestamp
-            cutoff = import_time.time() - (days * 24 * 60 * 60)
+            cutoff = int(import_time.time()) - (days * 24 * 60 * 60)
             
             # Filter queries and clicks by time range
             recent_queries = [q for q in self.search_logs["queries"] 
@@ -468,147 +436,222 @@ class SearchEngine:
 
     def search(self, query: str, k: int = 10, session_id: str = None, user_id: str = None) -> List[Dict]:
         """
-        Advanced search for images based on pattern, color, and other metadata.
-        If Elasticsearch is enabled, use it for search, otherwise fall back to in-memory search.
-        Results are cached if Redis is available.
+        Search for images matching the query. Uses Elasticsearch if available, or falls back to in-memory search.
         
         Args:
-            query: Search query string (can include commas to separate distinct terms)
+            query: The search query string
             k: Maximum number of results to return
-            session_id: Optional session identifier for analytics
-            user_id: Optional user identifier for analytics
+            session_id: Optional session ID for logging
+            user_id: Optional user ID for logging
             
         Returns:
-            List of image metadata dictionaries with similarity scores
+            List of matching documents sorted by similarity
         """
-        min_similarity = config.DEFAULT_MIN_SIMILARITY
-        search_start_time = import_time.time()
+        # Log analytics info and timing
+        logger.info(f"Searching for: '{query}'")
+        search_start_time = int(import_time.time())
         
-        # Force cache invalidation to ensure fresh results
-        self.cache.invalidate_for_key_prefix("search:")
-        
-        # Create cache key
-        cache_key = f"search:{query}:{k}:{min_similarity}"
-        
-        # Check cache first if enabled
+
+        # Check cache first
+        cache_key = f"search:{query}:{k}"
         cached_results = self.cache.get(cache_key)
-        if cached_results is not None:
-            logger.info(f"Returning cached results for query: '{query}'")
-            search_time = import_time.time() - search_start_time
+        
+        if cached_results:
+            logger.info(f"Cache hit for '{query}'")
+            # Log the search for analytics
+            search_time = int(import_time.time()) - search_start_time
             self.log_search_query(query, len(cached_results), search_time, session_id, user_id)
             return cached_results
         
         # Cache miss, perform search
-        if self.use_elasticsearch:
-            logger.info(f"Using Elasticsearch for search: '{query}'")
-            try:
-                results = self.es_client.search(
-                    query=query, 
-                    limit=k,
-                    min_similarity=min_similarity
-                )
-                
-                # Cache the results
-                self.cache.set(cache_key, results)
-                
-                # Log the search for analytics
-                search_time = import_time.time() - search_start_time
-                self.log_search_query(query, len(results), search_time, session_id, user_id)
-                
-                return results
-            except Exception as e:
-                logger.error(f"Elasticsearch search failed, falling back to in-memory search: {e}")
-        
-        # Fall back to in-memory search
-        logger.info(f"Using in-memory search: '{query}'")
-        results = self._in_memory_search(query, k)
-        
-        # Cache the results
-        self.cache.set(cache_key, results)
-        
-        # Log the search for analytics
-        search_time = import_time.time() - search_start_time
-        self.log_search_query(query, len(results), search_time, session_id, user_id)
-        
-        return results
-    
+
+        if self.use_elasticsearch and self.es_client.is_connected():
+            logger.info(f"Using Elasticsearch to search for: '{query}'")
+            # Use elasticsearch search
+            results = self.es_client.search(query, limit=k)
+            
+            # Cache the results
+            self.cache.set(cache_key, results)
+            
+            # Log the search for analytics
+            search_time = int(import_time.time()) - search_start_time
+            self.log_search_query(query, len(results), search_time, session_id, user_id)
+            
+            return results
+        else:
+            logger.warning("Elasticsearch is not available. Falling back to in-memory search.")
+            # Fall back to in-memory search
+            results = self._in_memory_search(query, k)
+            
+            # Cache the results
+            self.cache.set(cache_key, results)
+            
+            # Log the search for analytics
+            search_time = int(import_time.time()) - search_start_time
+            self.log_search_query(query, len(results), search_time, session_id, user_id)
+            
+            return results
+
     def _in_memory_search(self, query: str, k: int = 10) -> List[Dict]:
         """
-        Simple in-memory search implementation as fallback.
-        Treats the entire query as a single term for matching.
-        Results are sorted by relevance to the query.
+        Perform in-memory search when Elasticsearch is not available.
+        Enhanced to match the Elasticsearch search capabilities.
         
         Args:
-            query: Search query string
-            k: Maximum number of results to return
+            query: Search query
+            k: Maximum number of results
+
             
         Returns:
-            List of image metadata dictionaries with similarity scores
+            List of results sorted by relevance
         """
+        logger.info(f"Performing enhanced in-memory search for: '{query}'")
+        
         if not self.metadata:
-            logger.info("No metadata available for search")
+            logger.warning("No metadata available for in-memory search")
             return []
-
-        try:
-            # Parse the query
-            query = query.lower().strip()
+        
+        # Convert query to lowercase for case-insensitive matching
+        query_lower = query.lower()
+        
+        # Split query into terms for more flexible matching
+        query_terms = [term.strip() for term in query_lower.split() if term.strip()]
+        
+        # Calculate similarity scores for each document
+        scored_docs = []
+        for doc_id, doc in self.metadata.items():
+            # Initialize score components
+            score_components = {
+                "main_theme_exact": 0.0,
+                "main_theme_partial": 0.0,
+                "primary_pattern_exact": 0.0,
+                "primary_pattern_partial": 0.0,
+                "content_details": 0.0,
+                "stylistic_attributes": 0.0,
+                "colors": 0.0,
+                "prompt": 0.0
+            }
             
-            # Log the search query for analysis
-            logger.info(f"In-memory search for: '{query}'")
-            search_start_time = import_time.time()
+            # Get patterns data
+            patterns = doc.get("patterns", {})
             
-            # Organize search results
-            scored_results = []
+            # Exact match on main_theme (highest weight)
+            main_theme = patterns.get("main_theme", "").lower()
+            if main_theme:
+                if main_theme == query_lower:
+                    score_components["main_theme_exact"] = 5.0
+                elif any(term in main_theme for term in query_terms):
+                    score_components["main_theme_partial"] = 3.0
             
-            # Check each image
-            for image_path, metadata in self.metadata.items():
-                # Initialize score
-                score = 0.0
-                
-                # Check patterns
-                if 'patterns' in metadata and metadata['patterns']:
-                    patterns = metadata['patterns']
+            # Exact match on primary_pattern
+            primary_pattern = patterns.get("primary_pattern", "").lower()
+            if primary_pattern:
+                if primary_pattern == query_lower:
+                    score_components["primary_pattern_exact"] = 4.5
+                elif any(term in primary_pattern for term in query_terms):
+                    score_components["primary_pattern_partial"] = 2.5
+            
+            # Check content details with weights
+            content_details = patterns.get("content_details", [])
+            content_score = 0.0
+            for detail in content_details:
+                if not isinstance(detail, dict):
+                    continue
                     
-                    # Check primary pattern
-                    primary_pattern = patterns.get('primary_pattern', '').lower()
-                    if primary_pattern and query in primary_pattern:
-                        score += 5.0
-                    
-                    # Check style keywords
-                    for keyword in patterns.get('style_keywords', []):
-                        if query in keyword.lower():
-                            score += 3.0
-                    
-                    # Check prompt
-                    prompt = patterns.get('prompt', {}).get('final_prompt', '').lower()
-                    if query in prompt:
-                        score += 2.0
+                name = detail.get("name", "").lower()
+                confidence = detail.get("confidence", 0.7)
                 
-                # Check if this is a color search
-                if 'colors' in metadata and metadata['colors']:
-                    for color_info in metadata['colors'].get('dominant_colors', []):
-                        color_name = color_info.get('name', '').lower()
-                        if query in color_name:
-                            score += 4.0 * color_info.get('proportion', 0.5)
+                if name and name == query_lower:
+                    content_score += 2.0 * confidence
+                elif name and any(term in name for term in query_terms):
+                    content_score += 1.5 * confidence
+            
+            score_components["content_details"] = min(content_score, 2.0)  # Cap content score
+            
+            # Check stylistic attributes
+            stylistic_attrs = patterns.get("stylistic_attributes", [])
+            style_score = 0.0
+            for attr in stylistic_attrs:
+                if not isinstance(attr, dict):
+                    continue
+                    
+                name = attr.get("name", "").lower()
+                confidence = attr.get("confidence", 0.6)
                 
-                # Only include results with non-zero scores
-                if score > 0:
-                    scored_results.append({
-                        **metadata, 
-                        'similarity': min(score / 10.0, 1.0)  # Normalize to 0-1
-                    })
+                if name and name == query_lower:
+                    style_score += 1.5 * confidence
+                elif name and any(term in name for term in query_terms):
+                    style_score += 1.0 * confidence
             
-            # Sort results by similarity score (descending)
-            scored_results.sort(key=lambda x: x['similarity'], reverse=True)
+            score_components["stylistic_attributes"] = min(style_score, 1.5)  # Cap style score
             
-            # Log search performance
-            search_time = import_time.time() - search_start_time
-            logger.info(f"In-memory search for '{query}' found {len(scored_results)} results in {search_time:.2f}s")
+            # Check prompt
+            prompt = patterns.get("prompt", {}).get("final_prompt", "").lower()
+            if prompt:
+                if query_lower in prompt:
+                    score_components["prompt"] = 1.2
+                elif any(term in prompt for term in query_terms):
+                    score_components["prompt"] = 0.8
             
-            return scored_results[:k]
-        except Exception as e:
-            logger.error(f"Error in in-memory search: {e}", exc_info=True)
-            return []
+            # Check colors
+            colors = doc.get("colors", {})
+            dominant_colors = colors.get("dominant_colors", [])
+            color_score = 0.0
+            for color in dominant_colors:
+                if not isinstance(color, dict):
+                    continue
+                    
+                name = color.get("name", "").lower()
+                proportion = color.get("proportion", 0.5)
+                
+                if name and name == query_lower:
+                    color_score += 2.0 * proportion
+                elif name and any(term in name for term in query_terms):
+                    color_score += 1.5 * proportion
+            
+            score_components["colors"] = min(color_score, 1.5)  # Cap color score
+            
+            # Calculate base score as sum of components
+            base_score = sum(score_components.values())
+            
+            # Apply confidence boosting similar to function_score query
+            main_theme_confidence = patterns.get("main_theme_confidence", 0.8)
+            pattern_confidence = patterns.get("pattern_confidence", 0.7)
+            
+            # Apply confidence multipliers
+            confidence_boost = 1.0
+            if base_score > 0:
+                confidence_boost = 1.0 + (0.5 * main_theme_confidence) + (0.3 * pattern_confidence)
+            
+            # Apply recency boost
+            recency_boost = 1.0
+            timestamp = doc.get("timestamp", 0)
+            current_time = int(import_time.time())
+            days_old = (current_time - timestamp) / (24 * 60 * 60)
+            if days_old < 30:  # Less than 30 days old
+                recency_boost = 1.0 + (0.5 * (1 - (days_old / 30)))
+            
+            # Calculate final score
+            final_score = base_score * confidence_boost * recency_boost
+            
+            # If any match found, add to results
+            if final_score > 0:
+                # Add document with its score
+                doc_copy = doc.copy()
+                doc_copy["similarity"] = min(final_score / 15.0, 1.0)  # Normalize to [0,1] range and cap at 1.0
+                doc_copy["score_components"] = score_components  # For debugging
+                scored_docs.append(doc_copy)
+        
+        # Sort by similarity (descending)
+        scored_docs.sort(key=lambda x: x["similarity"], reverse=True)
+        
+        # Remove score_components from final results
+        for doc in scored_docs:
+            if "score_components" in doc:
+                del doc["score_components"]
+        
+        # Return top k results
+        return scored_docs[:k]
 
     def delete_image(self, image_path: str) -> bool:
         """
@@ -684,5 +727,124 @@ class SearchEngine:
         """Get metadata for a specific image."""
         return self.metadata.get(image_path, None)
 
-# Create an instance of SearchEngine to be imported elsewhere
-search_engine = SearchEngine() 
+    def _enhance_pattern_info(self, pattern_info: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Enhance and validate pattern info to ensure all required fields are present
+        with proper structure for optimal search.
+        
+        Args:
+            pattern_info: Original pattern information from the analyzer
+            
+        Returns:
+            Enhanced pattern information with all required fields
+        """
+        if not pattern_info:
+            pattern_info = {}
+            
+        # Ensure primary pattern field exists
+        if not pattern_info.get('primary_pattern'):
+            pattern_info['primary_pattern'] = pattern_info.get('category', 'Unknown')
+            
+        # Ensure pattern confidence exists
+        if not pattern_info.get('pattern_confidence'):
+            pattern_info['pattern_confidence'] = pattern_info.get('category_confidence', 0.8)
+            
+        # Ensure main_theme field exists
+        if not pattern_info.get('main_theme'):
+            pattern_info['main_theme'] = pattern_info.get('primary_pattern', 
+                                          pattern_info.get('category', 'Unknown'))
+            
+        # Ensure main_theme_confidence exists
+        if not pattern_info.get('main_theme_confidence'):
+            pattern_info['main_theme_confidence'] = pattern_info.get('pattern_confidence', 
+                                                    pattern_info.get('category_confidence', 0.8))
+        
+        # Ensure content_details exists and has proper structure
+        if not isinstance(pattern_info.get('content_details'), list):
+            pattern_info['content_details'] = []
+            
+            # Try to generate from elements if available
+            if isinstance(pattern_info.get('elements'), list):
+                for element in pattern_info.get('elements', []):
+                    if isinstance(element, dict) and element.get('name'):
+                        pattern_info['content_details'].append({
+                            'name': element.get('name', ''),
+                            'confidence': element.get('confidence', 0.8)
+                        })
+            
+            # If still empty, extract from style_keywords or prompt
+            if not pattern_info['content_details'] and isinstance(pattern_info.get('style_keywords'), list):
+                # Use first two style keywords as content elements
+                for i, keyword in enumerate(pattern_info.get('style_keywords', [])[:2]):
+                    pattern_info['content_details'].append({
+                        'name': keyword,
+                        'confidence': 0.7
+                    })
+            
+            # If still empty, extract from prompt
+            if not pattern_info['content_details'] and pattern_info.get('prompt', {}).get('final_prompt'):
+                prompt_text = pattern_info['prompt']['final_prompt']
+                # Extract key terms from prompt
+                terms = [term.strip() for term in prompt_text.split(',') if term.strip()]
+                for i, term in enumerate(terms[:2]):
+                    pattern_info['content_details'].append({
+                        'name': term,
+                        'confidence': 0.7
+                    })
+                    
+            # If still empty, add a placeholder
+            if not pattern_info['content_details']:
+                pattern_info['content_details'].append({
+                    'name': pattern_info.get('main_theme', 'Unknown'),
+                    'confidence': 0.6
+                })
+        
+        # Ensure stylistic_attributes exists and has proper structure
+        if not isinstance(pattern_info.get('stylistic_attributes'), list):
+            pattern_info['stylistic_attributes'] = []
+            
+            # Try to generate from style_keywords if available
+            if isinstance(pattern_info.get('style_keywords'), list):
+                for keyword in pattern_info.get('style_keywords', []):
+                    pattern_info['stylistic_attributes'].append({
+                        'name': keyword,
+                        'confidence': 0.7
+                    })
+            
+            # If still empty, extract from prompt
+            if not pattern_info['stylistic_attributes'] and pattern_info.get('prompt', {}).get('final_prompt'):
+                prompt_text = pattern_info['prompt']['final_prompt']
+                # Extract adjectives from prompt
+                terms = [term.strip() for term in prompt_text.split() if term.strip()]
+                for i, term in enumerate(terms[:3]):
+                    if len(term) > 3:  # Simple filter for meaningful terms
+                        pattern_info['stylistic_attributes'].append({
+                            'name': term,
+                            'confidence': 0.6
+                        })
+                        
+            # If still empty, add a placeholder
+            if not pattern_info['stylistic_attributes']:
+                pattern_info['stylistic_attributes'].append({
+                    'name': 'basic',
+                    'confidence': 0.5
+                })
+        
+        # Ensure secondary_patterns exists
+        if not isinstance(pattern_info.get('secondary_patterns'), list):
+            pattern_info['secondary_patterns'] = []
+            
+        # Ensure style_keywords exists
+        if not isinstance(pattern_info.get('style_keywords'), list):
+            pattern_info['style_keywords'] = []
+            
+        # Ensure prompt exists
+        if not isinstance(pattern_info.get('prompt'), dict):
+            pattern_info['prompt'] = {
+                'final_prompt': pattern_info.get('main_theme', 'Unknown pattern')
+            }
+        elif not pattern_info['prompt'].get('final_prompt'):
+            pattern_info['prompt']['final_prompt'] = pattern_info.get('main_theme', 'Unknown pattern')
+            
+        return pattern_info 
+
