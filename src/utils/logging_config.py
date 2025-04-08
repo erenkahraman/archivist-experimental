@@ -1,66 +1,69 @@
 """Structured logging configuration."""
 import logging
-import json
-import sys
+import os
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import config
 
-class JsonFormatter(logging.Formatter):
-    """JSON formatter for structured logging."""
-    
-    def format(self, record):
-        log_record = {
-            'timestamp': self.formatTime(record),
-            'level': record.levelname,
-            'logger': record.name,
-            'message': record.getMessage(),
-            'module': record.module,
-            'function': record.funcName,
-            'line': record.lineno,
-        }
-        
-        # Add exception info if available
-        if record.exc_info:
-            log_record['exception'] = self.formatException(record.exc_info)
-            
-        # Add custom fields if available
-        if hasattr(record, 'image_path'):
-            log_record['image_path'] = record.image_path
-            
-        if hasattr(record, 'pattern_type'):
-            log_record['pattern_type'] = record.pattern_type
-            
-        if hasattr(record, 'processing_time'):
-            log_record['processing_time'] = record.processing_time
-            
-        return json.dumps(log_record)
-
 def configure_logging():
-    """Configure structured logging for the application."""
+    """Configure logging with rotating file handlers and console output"""
     # Create logs directory if it doesn't exist
-    log_dir = Path(config.BASE_DIR) / 'logs'
-    log_dir.mkdir(exist_ok=True)
-    
-    # Create formatters
-    json_formatter = JsonFormatter()
-    console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    logs_dir = Path(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../logs')))
+    logs_dir.mkdir(parents=True, exist_ok=True)
     
     # Configure root logger
     root_logger = logging.getLogger()
+    
+    # Set level to INFO by default
     root_logger.setLevel(logging.INFO)
     
-    # Console handler
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setFormatter(console_formatter)
+    # Clear existing handlers
+    if root_logger.handlers:
+        root_logger.handlers.clear()
+    
+    # Create formatters
+    verbose_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+    
+    simple_formatter = logging.Formatter('%(levelname)s - %(message)s')
+    
+    # Create rotating file handler for all logs
+    all_log_file = logs_dir / 'application.log'
+    file_handler = RotatingFileHandler(
+        all_log_file,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5
+    )
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(verbose_formatter)
+    
+    # Create rotating file handler for errors only
+    error_log_file = logs_dir / 'errors.log'
+    error_file_handler = RotatingFileHandler(
+        error_log_file,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5
+    )
+    error_file_handler.setLevel(logging.ERROR)
+    error_file_handler.setFormatter(verbose_formatter)
+    
+    # Create console handler for development
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(simple_formatter)
+    
+    # Add handlers to the root logger
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(error_file_handler)
     root_logger.addHandler(console_handler)
     
-    # File handler for JSON logs
-    file_handler = logging.FileHandler(log_dir / 'archivist.json.log')
-    file_handler.setFormatter(json_formatter)
-    root_logger.addHandler(file_handler)
-    
-    # Set lower log levels for noisy libraries
+    # Set specific levels for verbose libraries
+    logging.getLogger('elasticsearch').setLevel(logging.WARNING)
+    logging.getLogger('elastic_transport').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
     logging.getLogger('PIL').setLevel(logging.WARNING)
-    logging.getLogger('matplotlib').setLevel(logging.WARNING)
-    logging.getLogger('transformers').setLevel(logging.WARNING)
-    logging.getLogger('werkzeug').setLevel(logging.WARNING) 
+    
+    # Return the configured logger
+    return logging.getLogger(__name__) 

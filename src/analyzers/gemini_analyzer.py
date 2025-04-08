@@ -88,32 +88,42 @@ class GeminiAnalyzer:
             # Get file name from path
             file_name = os.path.basename(image_path)
             
-            # Define the analysis prompt
+            # Define the enhanced analysis prompt for more granular data
             analysis_prompt = f"""
-            Identify the most specific textile pattern with high precision, capturing detailed motifs and cultural cues even if they aren't explicitly listed.
+            Analyze this textile/fabric pattern image in detail, identifying specific elements and characteristics.
 
-            Taxonomy:
-            - BASE: geometric, floral, abstract, figurative, ethnic/tribal, typographic.
-            - SPECIFIC (non-exhaustive): paisley, batik, chevron, ditsy, lace, polka dot, plaid, tartan, ikat, toile, damask, patchwork, houndstooth, gingham, border, tropical, folk, brocade, graffiti, doodle.
+            Output a structured JSON with the following:
 
-            Output JSON:
             {{
-              "main_theme": "Most specific pattern name",
+              "main_theme": "The most specific, primary pattern name that accurately describes this design (e.g. 'paisley', 'abstract geometric', 'floral damask')",
               "main_theme_confidence": 0.95,
-              "category": "Base category",
-              "category_confidence": 0.95,
-              "secondary_patterns": [{{"name": "One secondary pattern if clearly present", "confidence": 0.9}}],
-              "style_keywords": ["up to 5 relevant keywords"],
-              "prompt": {{"final_prompt": "Concise detailed description including motifs, arrangement, and cultural cues"}}
+              "category": "Base category (geometric, floral, abstract, figurative, ethnic/tribal, typographic)",
+              "category_confidence": 0.90,
+              "primary_pattern": "The dominant pattern type",
+              "pattern_confidence": 0.90,
+              "content_details": [
+                {{"name": "specific motif or element in the pattern", "confidence": 0.85}},
+                {{"name": "another specific motif or element", "confidence": 0.80}}
+              ],
+              "stylistic_attributes": [
+                {{"name": "art style or design characteristic (e.g. 'vintage', 'intricate', 'minimalist')", "confidence": 0.85}},
+                {{"name": "another style descriptor", "confidence": 0.80}}
+              ],
+              "secondary_patterns": [
+                {{"name": "a secondary pattern if present", "confidence": 0.75}}
+              ],
+              "style_keywords": ["5-7 descriptive keywords that capture unique aspects"],
+              "prompt": {{"final_prompt": "A detailed description of the pattern including arrangement, scale, style and cultural influences"}}
             }}
 
-            Rules:
-            1. Always select the most specific pattern name if confidence >90%.
-            2. Do not default to generic base terms (e.g., 'abstract') if further detail is available.
-            3. Generate a descriptive, specific name using detailed cues when the pattern doesn't exactly match the predefined list.
-            4. Include one secondary pattern only if clearly distinguishable.
-            5. Limit style_keywords to a maximum of 5 that capture the unique design details.
-            6. Report only high-confidence identifications.
+            Guidelines:
+            1. Be specific and precise - use the most accurate terminology for each pattern type
+            2. For main_theme and primary_pattern, identify the most specific term possible (e.g. "paisley" rather than "curvy pattern")
+            3. In content_details, list 2-4 specific motifs, shapes or distinctive elements
+            4. In stylistic_attributes, include 2-4 design characteristic terms that describe the aesthetic
+            5. Include confidence scores (0.0-1.0) that reflect your certainty about each identification
+            6. For any unfamiliar patterns, create descriptive names based on visual characteristics
+            7. Ensure all field names match exactly as specified
             """
             
             # Set up the Gemini model
@@ -428,60 +438,25 @@ class GeminiAnalyzer:
         
         return response
     
-    def _get_default_response(self, image_path: str, width: int, height: int) -> Dict[str, Any]:
-        """Return a default response when analysis fails"""
-        return {
+    def _get_default_response(self, image_path: str = "", width: int = 0, height: int = 0) -> Dict[str, Any]:
+        """Return a default pattern analysis when the API fails"""
+        default_response = {
             "main_theme": "Unknown",
-            "main_theme_confidence": 0.0,
-            "content_details": [],
-            "stylistic_attributes": [],
+            "main_theme_confidence": 0.5,
             "category": "Unknown",
-            "category_confidence": 0.0,
+            "category_confidence": 0.5,
             "primary_pattern": "Unknown",
-            "pattern_confidence": 0.0,
-            "secondary_patterns": [],
-            "elements": [
-                {
-                    "name": "",
-                    "sub_category": "",
-                    "color": "",
-                    "animal_type": "",
-                    "textural_detail": "",
-                    "confidence": 0.0
-                }
+            "pattern_confidence": 0.5,
+            "content_details": [
+                {"name": "unknown element", "confidence": 0.5}
             ],
-            "density": {
-                "type": "regular",
-                "confidence": 0.0
-            },
-            "layout": {
-                "type": "balanced",
-                "confidence": 0.0
-            },
-            "scale": {
-                "type": "medium",
-                "confidence": 0.0
-            },
-            "texture_type": {
-                "type": "",
-                "confidence": 0.0
-            },
-            "cultural_influence": {
-                "type": "",
-                "confidence": 0.0
-            },
-            "historical_period": {
-                "type": "",
-                "confidence": 0.0
-            },
-            "mood": {
-                "type": "",
-                "confidence": 0.0
-            },
-            "style_keywords": [],
-            "prompt": {
-                "final_prompt": "Unable to analyze pattern"
-            },
+            "stylistic_attributes": [
+                {"name": "unknown style", "confidence": 0.5}
+            ],
+            "secondary_patterns": [],
+            "style_keywords": ["unknown"],
+            "prompt": {"final_prompt": "Unknown pattern"},
             "dimensions": {"width": width, "height": height},
             "original_path": image_path
-        } 
+        }
+        return default_response 

@@ -1,24 +1,24 @@
 :root {
-  /* Modern dark-mode color palette */
-  --color-primary: #6366f1;
-  --color-primary-dark: #4f46e5;
-  --color-primary-light: #818cf8;
-  --color-secondary: #fb7185;
-  --color-accent: #22d3ee;
-  --color-background: #0f172a;
-  --color-surface: #1e293b;
-  --color-surface-lighter: #334155;
-  --color-text: #f1f5f9;
-  --color-text-light: #94a3b8;
-  --color-text-lighter: #64748b;
-  --color-border: #334155;
-  --color-error: #ef4444;
-  --color-success: #10b981;
+  /* Monochromatic black and gray color palette */
+  --color-primary: #3a3a3a;      /* Medium gray */
+  --color-primary-dark: #252525; /* Dark gray */
+  --color-primary-light: #777777;/* Light gray */
+  --color-secondary: #aaaaaa;    /* Silver */
+  --color-accent: #505050;       /* Charcoal */
+  --color-background: #121212;   /* Nearly black */
+  --color-surface: #1a1a1a;      /* Very dark gray */
+  --color-surface-lighter: #202020; /* Dark gray */
+  --color-text: #e6e6e6;         /* Off-white */
+  --color-text-light: #aaaaaa;   /* Silver */
+  --color-text-lighter: #777777; /* Light gray */
+  --color-border: #2c2c2c;       /* Dark gray border */
+  --color-error: #8c4646;        /* Dark red */
+  --color-success: #467a6e;      /* Dark teal */
 
   /* Gradients */
-  --gradient-primary: linear-gradient(135deg, #6366f1, #22d3ee);
-  --gradient-accent: linear-gradient(135deg, #fb7185, #f43f5e);
-  --gradient-surface: linear-gradient(135deg, #1e293b, #111827);
+  --gradient-primary: linear-gradient(135deg, #3a3a3a, #252525);
+  --gradient-accent: linear-gradient(135deg, #aaaaaa, #777777);
+  --gradient-surface: linear-gradient(135deg, #1a1a1a, #121212);
   
   /* Elevations */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
@@ -109,7 +109,7 @@ a {
 }
 
 a:hover {
-  color: var(--color-accent);
+  color: var(--color-secondary);
   text-decoration: underline;
 }
 
@@ -121,16 +121,16 @@ button, .btn {
   border-radius: var(--radius-md);
   cursor: pointer;
   transition: all var(--transition-fast);
-  border: none;
+  border: 1px solid var(--color-primary-dark);
   outline: none;
-  background: linear-gradient(135deg, var(--color-primary), var(--color-primary-dark));
-  color: white;
+  background: var(--color-primary);
+  color: var(--color-text);
 }
 
 button:hover, .btn:hover {
-  background: linear-gradient(135deg, var(--color-primary-dark), var(--color-primary));
+  background: var(--color-primary-dark);
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
 }
 
 button:active, .btn:active {
@@ -145,13 +145,13 @@ input, textarea, select {
   border-radius: var(--radius-md);
   outline: none;
   transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(0, 0, 0, 0.2);
   color: var(--color-text);
 }
 
 input:focus, textarea:focus, select:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+  box-shadow: 0 0 0 3px rgba(58, 58, 58, 0.2);
 }
 
 .container {
@@ -165,7 +165,7 @@ input:focus, textarea:focus, select:focus {
 .loading-spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(99, 102, 241, 0.1);
+  border: 3px solid rgba(58, 58, 58, 0.15);
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s infinite linear;
@@ -187,12 +187,12 @@ input:focus, textarea:focus, select:focus {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-primary-light);
+  background: var(--color-primary);
   border-radius: var(--radius-full);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-primary);
+  background: var(--color-primary-dark);
 }
 
 /* Delete button specific styles - override defaults */
@@ -224,29 +224,29 @@ input:focus, textarea:focus, select:focus {
 
 /* Custom selection color */
 ::selection {
-  background-color: var(--color-primary-light);
-  color: white;
+  background-color: var(--color-primary);
+  color: var(--color-text);
 }
 
 /* Glass morphism effect */
 .glass {
-  background: rgba(30, 41, 59, 0.5);
+  background: rgba(26, 26, 26, 0.7);
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(44, 44, 44, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
 }
 
-/* Futuristic neon glow */
+/* Subdued glow effects */
 .neon-glow {
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.3), 
-              0 0 20px rgba(99, 102, 241, 0.2), 
-              0 0 30px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 10px rgba(80, 80, 80, 0.25), 
+              0 0 20px rgba(80, 80, 80, 0.15), 
+              0 0 30px rgba(50, 50, 50, 0.1);
 }
 
 .neon-text {
-  text-shadow: 0 0 5px rgba(99, 102, 241, 0.5),
-               0 0 10px rgba(99, 102, 241, 0.3);
+  text-shadow: 0 0 5px rgba(170, 170, 170, 0.4),
+               0 0 10px rgba(170, 170, 170, 0.25);
 }
 
 /* Utility classes */

@@ -1,19 +1,65 @@
 from elasticsearch import Elasticsearch, helpers
-from elasticsearch.exceptions import NotFoundError
+from elasticsearch.exceptions import NotFoundError, ConnectionError, ConnectionTimeout
 import logging
 from typing import Dict, List, Any, Optional, Generator
-import config
 import time
+import math
+import numpy as np
+from functools import wraps
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
+def retry_on_exception(max_retries=3, retry_interval=1.0, 
+                      allowed_exceptions=(ConnectionError, ConnectionTimeout, NotFoundError)):
+    """
+    Decorator for retrying operations on Elasticsearch with exponential backoff.
+    
+    Args:
+        max_retries: Maximum number of retry attempts
+        retry_interval: Initial time to wait between retries (seconds)
+        allowed_exceptions: Tuple of exceptions that trigger a retry
+        
+    Returns:
+        Decorated function with retry logic
+    """
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            retry_count = 0
+            current_interval = retry_interval
+            last_error = None
+            
+            while retry_count < max_retries:
+                try:
+                    return func(self, *args, **kwargs)
+                except allowed_exceptions as e:
+                    retry_count += 1
+                    last_error = e
+                    
+                    if retry_count < max_retries:
+                        logger.warning(f"{func.__name__} failed (attempt {retry_count}): {str(e)}. "
+                                     f"Retrying in {current_interval:.2f}s...")
+                        time.sleep(current_interval)
+                        # Exponential backoff
+                        current_interval *= 1.5
+                    else:
+                        logger.error(f"{func.__name__} failed after {max_retries} attempts: {str(e)}")
+                        raise
+            
+            # This should never be reached due to the raise in the except block
+            return None
+        return wrapper
+    return decorator
+
 class ElasticsearchClient:
     """Client for interacting with Elasticsearch"""
     
-    def __init__(self, hosts: List[str] = None, cloud_id: str = None, api_key: str = None, username: str = None, password: str = None):
+    def __init__(self, hosts: List[str] = None, cloud_id: str = None, api_key: str = None, 
+                 username: str = None, password: str = None, max_retries: int = 3, 
+                 retry_interval: float = 2.0):
         """
-        Initialize the Elasticsearch client.
+        Initialize the Elasticsearch client with connection parameters
         
         Args:
             hosts: List of Elasticsearch host URLs
@@ -21,36 +67,54 @@ class ElasticsearchClient:
             api_key: API key for authentication
             username: Username for basic authentication
             password: Password for basic authentication
+            max_retries: Maximum number of connection attempts
+            retry_interval: Time to wait between retries in seconds
         """
         self.index_name = "images"
         
-        # Connection parameters
+        # Set connection parameters
         self.connection_params = {}
-        
-        # Set hosts if provided
         if hosts:
             self.connection_params["hosts"] = hosts
-            
-        # Set cloud_id if provided
         if cloud_id:
             self.connection_params["cloud_id"] = cloud_id
-            
-        # Set authentication
         if api_key:
             self.connection_params["api_key"] = api_key
         elif username and password:
             self.connection_params["basic_auth"] = (username, password)
             
-        # Initialize client
-        try:
-            self.client = Elasticsearch(**self.connection_params)
-            logger.info(f"Connected to Elasticsearch: {self.client.info()['version']['number']}")
-        except Exception as e:
-            logger.error(f"Failed to connect to Elasticsearch: {str(e)}")
-            self.client = None
+        # Add sensible timeouts
+        self.connection_params["request_timeout"] = 30
+        self.connection_params["retry_on_timeout"] = True
+            
+        # Initialize client with retry mechanism
+        self.client = None
+        retry_count = 0
+        
+        while retry_count < max_retries and self.client is None:
+            try:
+                self.client = Elasticsearch(**self.connection_params)
+                if self.client.ping():
+                    logger.info(f"Connected to Elasticsearch at {hosts if hosts else 'default'}")
+                else:
+                    logger.error("Failed to ping Elasticsearch")
+                    self.client = None
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(retry_interval)
+                    retry_interval *= 1.5
+                else:
+                    logger.error(f"Failed to connect to Elasticsearch after {max_retries} attempts")
     
     def is_connected(self) -> bool:
-        """Check if connected to Elasticsearch"""
+        """
+        Check if connected to Elasticsearch
+        
+        Returns:
+            bool: True if connected, False otherwise
+        """
         if not self.client:
             return False
         try:
@@ -59,10 +123,26 @@ class ElasticsearchClient:
             logger.error(f"Elasticsearch connection error: {str(e)}")
             return False
     
-    def create_index(self) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def index_exists(self) -> bool:
         """
-        Create the images index with appropriate mappings.
+        Check if the index exists
         
+        Returns:
+            bool: True if index exists, False otherwise
+        """
+        if not self.is_connected():
+            return False
+        return self.client.indices.exists(index=self.index_name)
+    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def create_index(self, force_recreate=False) -> bool:
+        """
+        Create index with appropriate mappings
+        
+        Args:
+            force_recreate: Whether to recreate the index if it exists
+            
         Returns:
             bool: True if successful, False otherwise
         """
@@ -70,46 +150,113 @@ class ElasticsearchClient:
             logger.error("Cannot create index: not connected to Elasticsearch")
             return False
             
-        # Define the mapping for the images index
-        mappings = {
-            "mappings": {
+        try:
+            # Check if index exists
+            index_exists = self.client.indices.exists(index=self.index_name)
+            
+            if index_exists:
+                if force_recreate:
+                    logger.info(f"Deleting existing index '{self.index_name}'")
+                    self.client.indices.delete(index=self.index_name)
+                else:
+                    logger.info(f"Index '{self.index_name}' already exists")
+                    return True
+                    
+            # Define custom analyzers
+            settings = {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "analysis": {
+                    "analyzer": {
+                        "partial_analyzer": {
+                            "type": "custom",
+                            "tokenizer": "standard",
+                            "filter": ["lowercase", "partial_filter"]
+                        }
+                    },
+                    "filter": {
+                        "partial_filter": {
+                            "type": "edge_ngram",
+                            "min_gram": 2,
+                            "max_gram": 20
+                        },
+                        "color_synonym_filter": {
+                            "type": "synonym",
+                            "synonyms": [
+                                "blue, navy, azure, cobalt, indigo",
+                                "red, crimson, scarlet, ruby, vermilion",
+                                "green, olive, emerald, lime, sage",
+                                "yellow, gold, amber, mustard, ochre",
+                                "orange, tangerine, rust, coral",
+                                "purple, violet, lavender, lilac, mauve",
+                                "pink, rose, magenta, fuchsia",
+                                "brown, tan, beige, khaki, chocolate",
+                                "gray, grey, silver, slate, charcoal",
+                                "black, onyx, jet, ebony",
+                                "white, ivory, cream, pearl"
+                            ]
+                        },
+                        "pattern_synonym_filter": {
+                            "type": "synonym",
+                            "synonyms": [
+                                "floral, flower, botanical, bloom, garden",
+                                "geometric, geometry, shape, pattern",
+                                "stripe, striped, linear, line, banded",
+                                "dot, dots, polka dot, spotted, circular pattern",
+                                "plaid, tartan, check, checkered",
+                                "paisley, paisleys",
+                                "abstract, non-representational",
+                                "tropical, exotic, jungle, palm",
+                                "damask, scroll, acanthus",
+                                "chevron, zigzag, herringbone",
+                                "animal, wildlife, fauna, creature"
+                            ]
+                        }
+                    }
+                }
+            }
+
+            # Enhanced mappings
+            mappings = {
                 "properties": {
                     "id": {"type": "keyword"},
                     "filename": {"type": "keyword"},
                     "path": {"type": "keyword"},
                     "thumbnail_path": {"type": "keyword"},
-                    "timestamp": {"type": "date"},
-                    
-                    # Pattern information
+                    "timestamp": {"type": "date", "format": "epoch_second||epoch_millis||strict_date_optional_time"},
+                    "embedding": {"type": "dense_vector", "dims": 512},
                     "patterns": {
                         "properties": {
-                            # New fields with multi-field mappings
                             "main_theme": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
+                                "type": "text",
+                                "analyzer": "standard",
+                                "boost": 3.0,
                                 "fields": {
                                     "raw": {"type": "keyword"},
-                                    "partial": {
-                                        "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
-                                    }
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                 }
                             },
                             "main_theme_confidence": {"type": "float"},
+                            "primary_pattern": {
+                                "type": "text",
+                                "analyzer": "standard",
+                                "boost": 2.5,
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                }
+                            },
+                            "pattern_confidence": {"type": "float"},
                             "content_details": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
+                                        "boost": 2.0,
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
@@ -119,258 +266,100 @@ class ElasticsearchClient:
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
+                                        "boost": 1.5,
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
                                 }
                             },
-                            "primary_pattern": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
+                            "category": {
+                                "type": "text",
+                                "analyzer": "standard",
                                 "fields": {
                                     "raw": {"type": "keyword"},
-                                    "partial": {
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                }
+                            },
+                            "category_confidence": {"type": "float"},
+                            "style_keywords": {"type": "text"},
+                            "prompt": {
+                                "properties": {
+                                    "final_prompt": {
                                         "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
+                                        "analyzer": "standard",
+                                        "boost": 1.0,
+                                        "fields": {
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                        }
                                     }
                                 }
                             },
-                            "pattern_confidence": {"type": "float"},
                             "secondary_patterns": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    },
-                                    "confidence": {"type": "float"}
-                                }
-                            },
-                            "elements": {
-                                "type": "nested",
-                                "properties": {
-                                    "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    },
-                                    "confidence": {"type": "float"}
-                                }
-                            },
-                            "prompt": {
-                                "properties": {
-                                    "original_prompt": {"type": "text", "analyzer": "standard"},
-                                    "final_prompt": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
-                                        "fields": {
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
-                                        }
-                                    }
-                                }
-                            },
-                            "style_keywords": {
-                                "type": "text", 
-                                "analyzer": "synonym_analyzer",
-                                "fields": {
-                                    "raw": {"type": "keyword"},
-                                    "partial": {
                                         "type": "text",
-                                        "analyzer": "partial_analyzer",
-                                        "search_analyzer": "standard"
-                                    }
+                                        "analyzer": "standard",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                        }
+                                    },
+                                    "confidence": {"type": "float"}
                                 }
                             }
                         }
                     },
-                    
-                    # Color information
                     "colors": {
                         "properties": {
                             "dominant_colors": {
                                 "type": "nested",
                                 "properties": {
                                     "name": {
-                                        "type": "text", 
-                                        "analyzer": "synonym_analyzer",
+                                        "type": "text",
+                                        "analyzer": "standard",
                                         "fields": {
                                             "raw": {"type": "keyword"},
-                                            "partial": {
-                                                "type": "text",
-                                                "analyzer": "partial_analyzer",
-                                                "search_analyzer": "standard"
-                                            }
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"},
+                                            "synonym": {"type": "text", "analyzer": "standard", "search_analyzer": "standard", "term_vector": "with_positions_offsets"}
                                         }
                                     },
                                     "hex": {"type": "keyword"},
                                     "proportion": {"type": "float"}
                                 }
                             },
-                            "color_palette": {
-                                "type": "nested",
-                                "properties": {
-                                    "name": {"type": "keyword"},
-                                    "hex": {"type": "keyword"}
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            "settings": {
-                "number_of_shards": 1,
-                "number_of_replicas": 0,
-                "analysis": {
-                    "analyzer": {
-                        "custom_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": ["lowercase", "stemmer"]
-                        },
-                        "partial_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": ["lowercase", "edge_ngram_filter"]
-                        },
-                        "synonym_analyzer": {
-                            "type": "custom",
-                            "tokenizer": "standard",
-                            "filter": [
-                                "lowercase",
-                                "synonym_filter",
-                                "stemmer"
-                            ]
-                        }
-                    },
-                    "filter": {
-                        "edge_ngram_filter": {
-                            "type": "edge_ngram",
-                            "min_gram": 2,
-                            "max_gram": 10
-                        },
-                        "synonym_filter": {
-                            "type": "synonym_graph",
-                            "expand": true,
-                            "synonyms": [
-                                # Color synonyms
-                                "crimson, ruby, cherry, scarlet => red",
-                                "burgundy, maroon => dark red",
-                                "salmon, coral pink => pink",
-                                "navy, cobalt, azure => blue",
-                                "teal, turquoise => blue green",
-                                "khaki, tan, beige => light brown",
-                                "gold, goldenrod => yellow",
-                                "lime, chartreuse => light green",
-                                "forest => dark green",
-                                "olive => yellow green",
-                                "mint => pale green",
-                                "magenta, fuchsia => bright pink",
-                                "lavender, periwinkle => light purple",
-                                "indigo => deep blue",
-                                "amber => orange yellow",
-                                "slate => blue gray",
-                                "charcoal => dark gray",
-                                "ivory, cream => off white",
-                                "silver => light gray",
-                                
-                                # Pattern synonyms
-                                "flower, bloom, floral => floral",
-                                "geometric, shape => geometric",
-                                "dots, polka dot => dotted",
-                                "stripe, striped, stripes => striped",
-                                "diamonds, diamond pattern => diamond",
-                                "grid, checks, checked => checkered",
-                                "abstract, non representational => abstract",
-                                "zig zag, chevron => chevron",
-                                "animal print, animal skin => animal print",
-                                "paisley, teardrop => paisley",
-                                "squares, blocks, grid => geometric",
-                                "curvy, wavy, waves => wave",
-                                "botanical, natural, nature inspired => natural",
-                                "gradient, ombre => gradient",
-                                "herringbone, fishbone => herringbone",
-                                "damask, ornate pattern => damask",
-                                "ikat, ethnic => ethnic",
-                                "abstract geometric => abstract geometric",
-                                "medallion => circular pattern",
-                                "toile, scenic => toile",
-                                
-                                # Textile terms
-                                "fabric, cloth, textile, material => textile",
-                                "cotton, natural fiber => cotton",
-                                "silk, silky => silk",
-                                "wool, woolen => wool",
-                                "polyester, synthetic => synthetic",
-                                "linen, flax => linen",
-                                "satin, glossy => satin",
-                                "velvet, plush => velvet",
-                                "denim, jeans => denim",
-                                "leather, hide => leather",
-                                "suede => soft leather",
-                                "knit, knitted => knit",
-                                "woven, weave => woven",
-                                "embroidered, embroidery => embroidery",
-                                "brocade, jacquard => brocade",
-                                "tapestry, wall hanging => tapestry",
-                                "canvas, heavy fabric => canvas",
-                                "upholstery => furniture fabric"
-                            ]
+                            "color_distribution": {"type": "object"}
                         }
                     }
                 }
             }
-        }
-        
-        try:
-            # Check if index exists
-            if self.client.indices.exists(index=self.index_name):
-                logger.info(f"Index '{self.index_name}' already exists")
-                return True
-                
-            # Create the index
-            self.client.indices.create(index=self.index_name, body=mappings)
-            logger.info(f"Created index '{self.index_name}' with mappings")
+            
+            # Create the index with both settings and mappings
+            self.client.indices.create(
+                index=self.index_name,
+                body={
+                    "settings": settings,
+                    "mappings": mappings
+                }
+            )
+            logger.info(f"Created index '{self.index_name}' with enhanced mappings and analyzers")
             return True
         except Exception as e:
             logger.error(f"Failed to create index: {str(e)}")
             return False
     
-    def index_document(self, document: Dict[str, Any], invalidate_cache: bool = True) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def index_document(self, document: Dict[str, Any]) -> bool:
         """
-        Index a single document into Elasticsearch.
+        Index a single document into Elasticsearch
         
         Args:
             document: The document to index
-            invalidate_cache: Whether to invalidate the search cache after indexing
             
         Returns:
             bool: True if successful, False otherwise
@@ -379,40 +368,30 @@ class ElasticsearchClient:
             logger.error("Cannot index document: not connected to Elasticsearch")
             return False
             
-        try:
-            # Make sure the index exists
-            if not self.client.indices.exists(index=self.index_name):
-                self.create_index()
-            
-            # Extract the document ID
-            doc_id = document.get("id", document.get("path", None))
-            if not doc_id:
-                logger.error("Document must have an 'id' or 'path' field")
+        # Make sure the index exists
+        if not self.index_exists():
+            logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
+            if not self.create_index():
                 return False
-                
-            # Index the document
-            self.client.index(index=self.index_name, id=doc_id, document=document)
-            logger.info(f"Indexed document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after indexing document")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to index document: {str(e)}")
+        
+        # Extract the document ID
+        doc_id = document.get("id") or document.get("path") or document.get("filename")
+        if not doc_id:
+            logger.error("Document must have an 'id', 'path', or 'filename' field")
             return False
+            
+        self.client.index(index=self.index_name, id=doc_id, document=document)
+        logger.info(f"Indexed document with ID: {doc_id}")
+        return True
     
-    def bulk_index(self, documents: List[Dict[str, Any]], invalidate_cache: bool = True) -> bool:
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def bulk_index(self, documents: List[Dict[str, Any]], chunk_size: int = 500) -> bool:
         """
-        Bulk index multiple documents into Elasticsearch.
+        Bulk index multiple documents into Elasticsearch
         
         Args:
             documents: List of documents to index
-            invalidate_cache: Whether to invalidate the search cache after indexing
+            chunk_size: Number of documents per bulk request
             
         Returns:
             bool: True if successful, False otherwise
@@ -423,245 +402,49 @@ class ElasticsearchClient:
             
         if not documents:
             logger.warning("No documents to bulk index")
-            return False
+            return True
             
-        try:
-            # Make sure the index exists
-            if not self.client.indices.exists(index=self.index_name):
-                self.create_index()
-                
-            # Prepare actions for bulk indexing
-            actions = []
-            for doc in documents:
-                # Extract the document ID
-                doc_id = doc.get("id", doc.get("path", None))
-                if not doc_id:
-                    logger.warning("Skipping document without 'id' or 'path' field")
-                    continue
-                    
-                action = {
-                    "_index": self.index_name,
-                    "_id": doc_id,
-                    "_source": doc
-                }
-                actions.append(action)
-                
-            if not actions:
-                logger.warning("No valid documents to bulk index")
+        # Make sure the index exists
+        if not self.index_exists():
+            logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
+            if not self.create_index():
                 return False
+            
+        # Process documents in chunks
+        actions = []
+        for doc in documents:
+            # Extract ID
+            doc_id = doc.get("id") or doc.get("path") or doc.get("filename")
+            if not doc_id:
+                logger.warning("Skipping document without ID field")
+                continue
                 
-            # Execute bulk indexing
-            result = helpers.bulk(self.client, actions)
-            logger.info(f"Bulk indexed {result[0]} documents")
+            action = {
+                "_index": self.index_name,
+                "_id": doc_id,
+                "_source": doc
+            }
+            actions.append(action)
             
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after bulk indexing")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to bulk index documents: {str(e)}")
+        if not actions:
+            logger.warning("No valid documents to bulk index")
             return False
+            
+        # Execute bulk indexing
+        success, failed = helpers.bulk(
+            self.client, 
+            actions, 
+            chunk_size=chunk_size,
+            raise_on_error=False
+        )
+        
+        logger.info(f"Bulk indexed {success} documents, {len(failed) if failed else 0} failed")
+        return success > 0
     
-    def update_document(self, doc_id: str, document: Dict[str, Any], invalidate_cache: bool = True) -> bool:
-        """
-        Update an existing document in Elasticsearch.
-        
-        Args:
-            doc_id: The document ID to update
-            document: The document data to update
-            invalidate_cache: Whether to invalidate the search cache after updating
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.is_connected():
-            logger.error("Cannot update document: not connected to Elasticsearch")
-            return False
-            
-        try:
-            self.client.update(index=self.index_name, id=doc_id, doc=document)
-            logger.info(f"Updated document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after document update")
-            
-            return True
-        except NotFoundError:
-            # Document doesn't exist, index it instead
-            logger.info(f"Document with ID {doc_id} doesn't exist, indexing instead")
-            return self.index_document(document, invalidate_cache)
-        except Exception as e:
-            logger.error(f"Failed to update document: {str(e)}")
-            return False
-    
-    def delete_document(self, doc_id: str, invalidate_cache: bool = True) -> bool:
-        """
-        Delete a document from Elasticsearch.
-        
-        Args:
-            doc_id: The document ID to delete
-            invalidate_cache: Whether to invalidate the search cache after deletion
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.is_connected():
-            logger.error("Cannot delete document: not connected to Elasticsearch")
-            return False
-            
-        try:
-            self.client.delete(index=self.index_name, id=doc_id)
-            logger.info(f"Deleted document with ID: {doc_id}")
-            
-            # Invalidate cache if requested
-            if invalidate_cache:
-                from src.search_engine import search_engine  # Import here to avoid circular imports
-                if hasattr(search_engine, 'cache'):
-                    search_engine.cache.invalidate_all()
-                    logger.info("Invalidated search cache after document deletion")
-            
-            return True
-        except NotFoundError:
-            logger.warning(f"Document with ID {doc_id} not found")
-            return False
-        except Exception as e:
-            logger.error(f"Failed to delete document: {str(e)}")
-            return False
-    
-    def _parse_query(self, query_string: str) -> Dict[str, Any]:
-        """
-        Parse a query string into components for advanced search.
-        
-        Args:
-            query_string: The raw search query string
-            
-        Returns:
-            Dict containing parsed components: 
-            {'colors': [...], 'quoted_phrases': [...], 'potential_phrases': [...], 'keywords': [...], 'original': query_string}
-        """
-        # Normalize the query
-        query_string = query_string.lower().strip()
-        
-        # Extract phrases in quotes
-        import re
-        quoted_phrases = re.findall(r'"([^"]*)"', query_string)
-        
-        # If multi-word query and not quoted, add the entire query as a quoted phrase
-        normalized_query = query_string
-        for phrase in quoted_phrases:
-            normalized_query = normalized_query.replace(f'"{phrase}"', '')
-        
-        words = [w.strip() for w in re.split(r'[,\s]+', normalized_query) if w.strip()]
-        if len(words) > 1 and not quoted_phrases:
-            full_query_phrase = normalized_query.strip()
-            if full_query_phrase:
-                quoted_phrases.append(full_query_phrase)
-        
-        # Remove phrases from query for further processing
-        query_for_processing = query_string
-        for phrase in quoted_phrases:
-            query_for_processing = query_for_processing.replace(f'"{phrase}"', '').replace(phrase, '')
-        
-        # Split remaining terms by spaces and commas
-        remainder = [term.strip() for term in re.split(r'[,\s]+', query_for_processing) if term.strip()]
-        
-        # Color detection
-        colors = []
-        keywords = []
-        
-        # Common color names from our color reference database
-        basic_colors = [
-            "red", "blue", "green", "yellow", "orange", "purple", "pink", 
-            "brown", "black", "white", "gray", "grey"
-        ]
-        
-        specific_colors = [
-            "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
-            "magenta", "lavender", "violet", "indigo", "coral", "peach",
-            "crimson", "azure", "beige", "tan", "gold", "silver", "bronze",
-            "burgundy", "scarlet", "vermilion", "ruby", "cherry", "cardinal",
-            "fuchsia", "salmon", "amber", "khaki", "mustard", "lemon",
-            "lime", "forest", "emerald", "sage", "chartreuse", "avocado",
-            "aqua", "sky", "cobalt", "cerulean", "sapphire", "plum", "mauve",
-            "amethyst", "periwinkle", "chocolate", "sienna", "camel", "taupe",
-            "charcoal", "slate", "ivory", "cream"
-        ]
-        
-        all_colors = basic_colors + specific_colors
-        
-        # Check each term
-        for term in remainder:
-            # Check if it's a color term
-            if term in all_colors:
-                colors.append(term)
-            # Check for compound color terms
-            elif any(color in term for color in all_colors):
-                for color in all_colors:
-                    if color in term:
-                        colors.append(term)
-                        break
-            else:
-                keywords.append(term)
-        
-        # Check quoted phrases for any color mentions
-        for phrase in quoted_phrases:
-            has_color = False
-            for color in all_colors:
-                if color in phrase.split():
-                    has_color = True
-                    colors.append(phrase)
-                    break
-            if not has_color:
-                keywords.append(phrase)
-        
-        # Identify potential multi-word phrases from any remaining query
-        potential_phrases = []
-        # Only find potential phrases if they're not already covered by quoted phrases
-        if query_for_processing.strip():
-            # Find sequences of 2-3 consecutive words that aren't colors
-            words = [w.strip() for w in re.split(r'[,\s]+', query_for_processing) if w.strip()]
-            for i in range(len(words) - 1):
-                # Check for two consecutive words that aren't colors
-                if words[i] not in all_colors and words[i+1] not in all_colors:
-                    two_word_phrase = f"{words[i]} {words[i+1]}"
-                    potential_phrases.append(two_word_phrase)
-                    
-                    # Check for three consecutive words
-                    if i < len(words) - 2 and words[i+2] not in all_colors:
-                        three_word_phrase = f"{words[i]} {words[i+1]} {words[i+2]}"
-                        potential_phrases.append(three_word_phrase)
-        
-        # Clean up any duplicates
-        colors = list(set(colors))
-        keywords = list(set(keywords))
-        potential_phrases = list(set(potential_phrases))
-        
-        # Log the parsing results
-        logger.info(f"Parsed query '{query_string}' into components:")
-        logger.info(f" - Colors: {colors}")
-        logger.info(f" - Quoted phrases: {quoted_phrases}")
-        logger.info(f" - Potential phrases: {potential_phrases}")
-        logger.info(f" - Keywords: {keywords}")
-        
-        return {
-            'colors': colors,
-            'quoted_phrases': quoted_phrases,
-            'potential_phrases': potential_phrases,
-            'keywords': keywords,
-            'original': query_string
-        }
-    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-        Advanced search for images using Elasticsearch with a single, structured bool query.
+        Enhanced search function using composite query structure
         
         Args:
             query: The search query string
@@ -669,859 +452,535 @@ class ElasticsearchClient:
             min_similarity: Minimum similarity score threshold
             
         Returns:
-            List of matching documents with similarity scores
+            List of matching documents
         """
         if not self.is_connected():
             logger.error("Cannot search: not connected to Elasticsearch")
             return []
             
-        # Log search initialization with parameters
-        logger.info("===== SEARCH PROCESS START =====")
-        logger.info(f"Search parameters: query='{query}', limit={limit}, min_similarity={min_similarity}")
-            
-        # Parse the query into components using our helper function
-        parsed_query = self._parse_query(query)
+        # For empty or wildcard queries
+        if query == "*" or not query.strip():
+            query_body = {"match_all": {}}
+            return self._execute_search(query_body, limit, min_similarity)
         
-        try:
-            # Start building the search query
-            search_start_time = time.time()
-            
-            # Initialize query components
-            bool_query = {
-                "bool": {
-                    "should": [],
-                    "must": [],
-                    "filter": []
+        # Log search parameters for debugging
+        logger.info(f"Performing enhanced search for: '{query}' with limit {limit}")
+        
+        # Split query into terms for more flexibility
+        query_terms = [term.strip() for term in query.split() if term.strip()]
+        min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
+        
+        # Build the main compound query
+        should_clauses = []
+        
+        # 1. Exact matches on main_theme with high boost
+        should_clauses.append({
+            "match": {
+                "patterns.main_theme.raw": {
+                    "query": query,
+                    "boost": 5.0
                 }
             }
-            
-            # Check if this is a multi-word query (use stricter matching)
-            original_query = parsed_query['original'].lower().strip()
-            words = original_query.split()
-            is_multi_word_query = len(words) > 1 and not all(word in all_colors for word in words)
-            
-            # If this is a multi-word query, enforce exact phrase matching using must
-            if is_multi_word_query:
-                logger.info(f"Multi-word query detected: '{original_query}'. Enforcing strict exact phrase matching.")
-                
-                # Create a strict matching clause that requires the exact phrase in must
-                exact_phrase_must = {
+        })
+        
+        # 2. Exact matches on primary_pattern with high boost
+        should_clauses.append({
+            "match": {
+                "patterns.primary_pattern.raw": {
+                    "query": query,
+                    "boost": 4.5
+                }
+            }
+        })
+        
+        # 3. Multi-match across all relevant fields
+        should_clauses.append({
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "patterns.main_theme^3",
+                    "patterns.main_theme.partial^2.5",
+                    "patterns.primary_pattern^2.5",
+                    "patterns.primary_pattern.partial^2",
+                    "patterns.prompt.final_prompt^1.2",
+                    "patterns.prompt.final_prompt.partial^1"
+                ],
+                "type": "best_fields",
+                "fuzziness": "AUTO",
+                "prefix_length": 2,
+                "boost": 3.0
+            }
+        })
+        
+        # 4. Nested query for content details
+        should_clauses.append({
+            "nested": {
+                "path": "patterns.content_details",
+                "query": {
                     "bool": {
                         "should": [
-                            {"match_phrase": {"patterns.main_theme": original_query}},
-                            {"match_phrase": {"patterns.content_details.name": original_query}},
-                            {"match_phrase": {"patterns.elements.name": original_query}},
-                            {"match_phrase": {"patterns.primary_pattern": original_query}},
-                            {"match_phrase": {"patterns.prompt.final_prompt": original_query}},
-                            {"nested": {
-                                "path": "patterns.secondary_patterns",
-                                "query": {
-                                    "match_phrase": {
-                                        "patterns.secondary_patterns.name": original_query
+                            {
+                                "match": {
+                                    "patterns.content_details.name": {
+                                        "query": query,
+                                        "boost": 2.0
                                     }
                                 }
-                            }},
-                            {"nested": {
-                                "path": "patterns.stylistic_attributes",
-                                "query": {
-                                    "match_phrase": {
-                                        "patterns.stylistic_attributes.name": original_query
+                            },
+                            {
+                                "match": {
+                                    "patterns.content_details.name.partial": {
+                                        "query": query,
+                                        "boost": 1.5
                                     }
                                 }
-                            }}
-                        ],
-                        "minimum_should_match": 1  # At least one field must have the exact phrase
+                            }
+                        ]
                     }
-                }
-                
-                # Add to must clause to enforce this constraint - this is stricter than filter
-                bool_query["bool"]["must"].append(exact_phrase_must)
-                
-                # Remove all other clauses for multi-word queries to ensure only exact matches are found
-                # Only keep exact phrase matching in must clause and color queries if any
-                bool_query["bool"]["should"] = []
-                
-                # Replace previous filter-based approach with must-based approach
-                # Clear any existing filter clauses for multi-word queries
-                bool_query["bool"]["filter"] = [filter_clause for filter_clause in bool_query["bool"]["filter"] 
-                                               if not (isinstance(filter_clause, dict) and 
-                                                     "bool" in filter_clause and 
-                                                     "should" in filter_clause["bool"] and
-                                                     any("match_phrase" in clause for clause in filter_clause["bool"]["should"]))]
-            
-            # 1. Add highly boosted match_phrase queries for both quoted and potential phrases - but SKIP if multi-word query
-            # Since multi-word queries now handle phrase matching in the must clause
-            if all_phrases and not is_multi_word_query:
-                for phrase in all_phrases:
-                    is_quoted = phrase in parsed_query['quoted_phrases']
-                    is_full_query = phrase == parsed_query['original'].lower().strip()
-                    
-                    # Highest boost for the full query phrase, high for quoted, medium for potential
-                    if is_full_query:
-                        boost_factor = 25  # Extremely high boost for exact full query match
-                    elif is_quoted:
-                        boost_factor = 15
-                    else:
-                        boost_factor = 10
-                        
-                    phrase_type = "full_query" if is_full_query else ("quoted" if is_quoted else "potential")
-                    logger.info(f"Adding {phrase_type} phrase matching for: '{phrase}'")
-                    
-                    # Add match_phrase queries for the phrase
-                    bool_query["bool"]["should"].extend([
-                        {
-                            "match_phrase": {
-                                "patterns.main_theme": {
-                                    "query": phrase,
-                                    "boost": boost_factor
-                                }
-                            }
-                        },
-                        {
-                            "match_phrase": {
-                                "patterns.content_details.name": {
-                                    "query": phrase,
-                                    "boost": boost_factor - 1
-                                }
-                            }
-                        },
-                        {
-                            "match_phrase": {
-                                "patterns.elements.name": {
-                                    "query": phrase,
-                                    "boost": boost_factor - 2
-                                }
-                            }
-                        },
-                        {
-                            "match_phrase": {
-                                "patterns.prompt.final_prompt": {
-                                    "query": phrase,
-                                    "boost": boost_factor - 3
-                                }
-                            }
-                        },
-                        {
-                            "match_phrase": {
-                                "patterns.primary_pattern": {
-                                    "query": phrase,
-                                    "boost": boost_factor - 2
-                                }
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "patterns.secondary_patterns",
-                                "query": {
-                                    "match_phrase": {
-                                        "patterns.secondary_patterns.name": {
-                                            "query": phrase,
-                                            "boost": boost_factor - 4
-                                        }
-                                    }
-                                },
-                                "score_mode": "max"
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "patterns.stylistic_attributes",
-                                "query": {
-                                    "match_phrase": {
-                                        "patterns.stylistic_attributes.name": {
-                                            "query": phrase,
-                                            "boost": boost_factor - 4
-                                        }
-                                    }
-                                },
-                                "score_mode": "max"
-                            }
-                        }
-                    ])
-            
-            # Skip adding individual term/keyword matches if this is a multi-word query
-            if not is_multi_word_query:
-                # 2. Add exact keyword matches targeting .raw fields
-                all_terms = parsed_query['keywords'] + parsed_query['potential_phrases']
-                if all_terms:
-                    for term in all_terms:
-                        logger.info(f"Adding exact term matching for: '{term}'")
-                        
-                        # Add exact matches using .raw fields with high boost
-                        bool_query["bool"]["should"].extend([
-                            {
-                                "term": {
-                                    "patterns.main_theme.raw": {
-                                        "value": term,
-                                        "boost": 8
-                                    }
-                                }
-                            },
-                            {
-                                "term": {
-                                    "patterns.content_details.name.raw": {
-                                        "value": term,
-                                        "boost": 7
-                                    }
-                                }
-                            },
-                            {
-                                "term": {
-                                    "patterns.elements.name.raw": {
-                                        "value": term,
-                                        "boost": 7
-                                    }
-                                }
-                            },
-                            {
-                                "term": {
-                                    "patterns.primary_pattern.raw": {
-                                        "value": term,
-                                        "boost": 7
-                                    }
-                                }
-                            },
-                            {
-                                "nested": {
-                                    "path": "patterns.secondary_patterns",
-                                    "query": {
-                                        "term": {
-                                            "patterns.secondary_patterns.name.raw": {
-                                                "value": term,
-                                                "boost": 6
-                                            }
-                                        }
-                                    },
-                                    "score_mode": "max"
-                                }
-                            },
-                            {
-                                "nested": {
-                                    "path": "patterns.stylistic_attributes",
-                                    "query": {
-                                        "term": {
-                                            "patterns.stylistic_attributes.name.raw": {
-                                                "value": term,
-                                                "boost": 6
-                                            }
-                                        }
-                                    },
-                                    "score_mode": "max"
-                                }
-                            },
-                            {
-                                "term": {
-                                    "patterns.style_keywords.raw": {
-                                        "value": term,
-                                        "boost": 5
-                                    }
-                                }
-                            }
-                        ])
-                
-                # 3. Add multi_match for single keywords (for recall via synonyms)
-                if parsed_query['keywords']:
-                    # Join single keywords for the multi_match query
-                    keywords_text = " ".join(parsed_query['keywords'])
-                    
-                    if keywords_text:
-                        logger.info(f"Adding multi_match for keywords: '{keywords_text}'")
-                        bool_query["bool"]["should"].append({
-                            "multi_match": {
-                                "query": keywords_text,
-                                "fields": [
-                                    "patterns.main_theme^4",
-                                    "patterns.primary_pattern^3.5",
-                                    "patterns.content_details.name^3",
-                                    "patterns.stylistic_attributes.name^3",
-                                    "patterns.elements.name^2",
-                                    "patterns.prompt.final_prompt^1.5",
-                                    "patterns.style_keywords^1",
-                                    "patterns.secondary_patterns.name^0.8"
-                                ],
-                                "type": "cross_fields",
-                                "operator": "or",
-                                "fuzziness": "AUTO",
-                                "prefix_length": 2,
-                                "boost": 4
-                            }
-                        })
-            
-            # 4. Add color matching with refined boosting
-            if parsed_query['colors']:
-                for color_term in parsed_query['colors']:
-                    logger.info(f"Adding color matching for: '{color_term}'")
-                    
-                    # Add color clauses to should with .raw field having higher boost
-                    bool_query["bool"]["should"].extend([
-                        {
-                            "nested": {
-                                "path": "colors.dominant_colors",
-                                "query": {
-                                    "match": {
-                                        "colors.dominant_colors.name.raw": {
-                                            "query": color_term,
-                                            "boost": 6
-                                        }
-                                    }
-                                },
-                                "score_mode": "sum"
-                            }
-                        },
-                        {
-                            "nested": {
-                                "path": "colors.dominant_colors",
-                                "query": {
-                                    "match": {
-                                        "colors.dominant_colors.name": {
-                                            "query": color_term,
-                                            "boost": 5
-                                        }
-                                    }
-                                },
-                                "score_mode": "sum"
-                            }
-                        }
-                    ])
-                
-                # If query has ONLY color terms, add a filter to ensure at least one color matches
-                if not parsed_query['keywords'] and not parsed_query['quoted_phrases'] and not parsed_query['potential_phrases'] and len(parsed_query['colors']) == 1:
-                    # Only one color specified - add a filter to require this color
-                    color_term = parsed_query['colors'][0]
-                    logger.info(f"Adding color filter for '{color_term}' since it's the only search term")
-                    bool_query["bool"]["filter"].append({
-                        "nested": {
-                            "path": "colors.dominant_colors",
-                            "query": {
-                                "bool": {
-                                    "should": [
-                                        {"match": {"colors.dominant_colors.name": color_term}},
-                                        {"match": {"colors.dominant_colors.name.raw": color_term}}
-                                    ]
-                                }
-                            }
-                        }
-                    })
-            
-            # 5. Calculate appropriate minimum_should_match
-            # Count distinct concepts (treat each potential phrase as one concept)
-            concept_count = len(parsed_query['keywords']) + len(parsed_query['quoted_phrases']) + len(parsed_query['potential_phrases']) + len(parsed_query['colors'])
-            
-            # Calculate minimum_should_match based on concept count
-            if concept_count > 3:
-                # For complex queries, require matching at least 60% of concepts
-                min_should = max(1, int(concept_count * 0.6))
-            elif concept_count > 1:
-                # For simple multi-term queries, require at least 1 term
-                min_should = 1
-            else:
-                # For single term queries, require that term
-                min_should = 1
-            
-            logger.info(f"Setting minimum_should_match to {min_should}")
-            bool_query["bool"]["minimum_should_match"] = min_should
-            
-            # Wrap the bool query in a function_score query for advanced scoring
-            query_body = {
+                },
+                "score_mode": "max",
+                "boost": 2.0
+            }
+        })
+        
+        # 5. Nested query for stylistic attributes
+        should_clauses.append({
+            "nested": {
+                "path": "patterns.stylistic_attributes",
                 "query": {
-                    "function_score": {
-                        "query": bool_query,
-                        "functions": [
-                            # Boost by confidence scores
+                    "bool": {
+                        "should": [
                             {
-                                "field_value_factor": {
-                                    "field": "patterns.main_theme_confidence",
-                                    "factor": 1.2,
-                                    "modifier": "ln1p",
-                                    "missing": 0.5
-                                },
-                                "weight": 1.5
-                            },
-                            {
-                                "field_value_factor": {
-                                    "field": "patterns.pattern_confidence",
-                                    "factor": 1.0,
-                                    "modifier": "ln1p",
-                                    "missing": 0.5
-                                },
-                                "weight": 1.0
-                            },
-                            # Recency boost - favor newer content
-                            {
-                                "gauss": {
-                                    "timestamp": {
-                                        "scale": "30d",
-                                        "offset": "7d",
-                                        "decay": 0.5
-                                    }
-                                },
-                                "weight": 0.5
-                            }
-                        ],
-                        "score_mode": "sum",
-                        "boost_mode": "multiply"
-                    }
-                },
-                "size": limit,
-                "min_score": 0.1  # Base threshold to avoid very low relevance results
-            }
-            
-            # If the query has color terms, add a color proportion boost
-            if parsed_query['colors']:
-                # Add script score to boost by color proportion when color matches
-                color_script = {
-                    "script_score": {
-                        "script": {
-                            "source": """
-                                double score = 1.0;
-                                if (doc.containsKey('colors.dominant_colors') && 
-                                    !doc['colors.dominant_colors.empty'].value) {
-                                    for (int i = 0; i < doc['colors.dominant_colors.name'].length; ++i) {
-                                        String color = doc['colors.dominant_colors.name'][i].toLowerCase();
-                                        if (params.colors.contains(color)) {
-                                            score += doc['colors.dominant_colors.proportion'][i] * 2.0;
-                                        }
+                                "match": {
+                                    "patterns.stylistic_attributes.name": {
+                                        "query": query,
+                                        "boost": 1.5
                                     }
                                 }
-                                return score;
-                            """,
-                            "params": {
-                                "colors": parsed_query['colors']
+                            },
+                            {
+                                "match": {
+                                    "patterns.stylistic_attributes.name.partial": {
+                                        "query": query,
+                                        "boost": 1.0
+                                    }
+                                }
                             }
-                        }
-                    },
-                    "weight": 1.5
-                }
-                query_body["query"]["function_score"]["functions"].append(color_script)
-            
-            # Log the complete query
-            self._log_query_details(query_body)
-            
-            # Execute the search
-            logger.info("Executing Elasticsearch search...")
-            start_time = time.time()
-            response = self.client.search(index=self.index_name, body=query_body)
-            search_time = time.time() - start_time
-            logger.info(f"Elasticsearch query executed in {search_time:.2f}s")
-            
-            # Extract and format results
-            results = []
-            total_hits = response["hits"]["total"]["value"] if "total" in response["hits"] else len(response["hits"]["hits"])
-            logger.info(f"Search returned {total_hits} total hits")
-            
-            for i, hit in enumerate(response["hits"]["hits"]):
-                doc = hit["_source"]
-                # Instead of normalizing by max_score, we use the raw score
-                doc["similarity"] = hit["_score"]
-                
-                # Log each result with its score and whether it meets the threshold
-                meets_threshold = doc["similarity"] >= min_similarity
-                logger.info(f"Result {i+1}: id={doc.get('id', 'unknown')}, filename={doc.get('filename', 'unknown')}, score={hit['_score']:.4f}, meets_threshold={meets_threshold}")
-                
-                # Only include results above min_similarity threshold
-                if meets_threshold:
-                    results.append(doc)
-                else:
-                    logger.info(f"  Skipping result {i+1} as similarity {doc['similarity']:.4f} is below threshold {min_similarity}")
-            
-            # Log search performance
-            query_time = time.time() - search_start_time
-            logger.info(f"Total search process for '{query}' completed in {query_time:.2f}s")
-            logger.info(f"Found {total_hits} hits, returning {len(results)} results after filtering by min_similarity={min_similarity}")
-            logger.info("===== SEARCH PROCESS END =====")
-            
-            return results
-        except Exception as e:
-            logger.error(f"Search error: {str(e)}", exc_info=True)
-            logger.info("===== SEARCH PROCESS FAILED =====")
-            return []
-    
-    def _log_query_details(self, query_body: Dict[str, Any]) -> None:
-        """
-        Log the details of an Elasticsearch query, handling large query bodies appropriately.
-        
-        Args:
-            query_body: The Elasticsearch query body to log
-        """
-        import json
-        
-        try:
-            # Convert query to a formatted JSON string
-            query_json = json.dumps(query_body, indent=2)
-            
-            # Check if query is too large for a single log entry
-            if len(query_json) > 5000:
-                logger.info(f"Query body is large ({len(query_json)} chars). Logging summary:")
-                
-                # Log query structure overview
-                query_type = query_body.get("query", {})
-                if "bool" in query_type:
-                    should_clauses = query_type["bool"].get("should", [])
-                    logger.info(f"Bool query with {len(should_clauses)} should clauses")
-                    
-                    # Count clause types
-                    clause_types = {}
-                    for clause in should_clauses:
-                        for key in clause:
-                            if key not in clause_types:
-                                clause_types[key] = 0
-                            clause_types[key] += 1
-                    
-                    # Log clause type counts
-                    for clause_type, count in clause_types.items():
-                        logger.info(f"  - {clause_type}: {count} clauses")
-                
-                # Log size and other top-level parameters
-                for key, value in query_body.items():
-                    if key != "query":
-                        logger.info(f"  - {key}: {value}")
-            else:
-                # Log the entire query if it's reasonably sized
-                logger.info(f"Full query body:\n{query_json}")
-        except Exception as e:
-            logger.error(f"Error while logging query details: {str(e)}")
-            logger.info("Unable to log complete query details")
-    
-    def rebuild_index(self) -> bool:
-        """
-        Rebuild the index with new mappings and reindex all documents.
-        This is required after changing analyzers or mappings.
-        
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.is_connected():
-            logger.error("Cannot rebuild index: not connected to Elasticsearch")
-            return False
-            
-        try:
-            # Check if index exists
-            if not self.client.indices.exists(index=self.index_name):
-                logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
-                return self.create_index()
-                
-            # Create a temporary index name
-            temp_index = f"{self.index_name}_temp"
-            
-            logger.info(f"Rebuilding index '{self.index_name}' with new mappings")
-            
-            # 1. Create a new temporary index with the updated mappings
-            old_index = self.index_name
-            self.index_name = temp_index
-            temp_creation_success = self.create_index()
-            self.index_name = old_index
-            
-            if not temp_creation_success:
-                logger.error("Failed to create temporary index for reindexing")
-                return False
-            
-            # 2. Count documents in the original index
-            count_request = self.client.count(index=self.index_name)
-            total_docs = count_request["count"]
-            
-            if total_docs == 0:
-                logger.info("No documents to reindex. Deleting old index and creating new one.")
-                self.client.indices.delete(index=self.index_name)
-                self.index_name = temp_index
-                return True
-                
-            logger.info(f"Reindexing {total_docs} documents from '{self.index_name}' to '{temp_index}'")
-            
-            # 3. Reindex from old to new index
-            reindex_body = {
-                "source": {
-                    "index": self.index_name
-                },
-                "dest": {
-                    "index": temp_index
-                }
-            }
-            
-            # Execute reindex
-            self.client.reindex(body=reindex_body, wait_for_completion=True)
-            
-            # 4. Verify new index has all documents
-            new_count_request = self.client.count(index=temp_index)
-            new_total_docs = new_count_request["count"]
-            
-            if new_total_docs != total_docs:
-                logger.error(f"Document count mismatch after reindexing: {total_docs} vs {new_total_docs}")
-                # Clean up temp index
-                self.client.indices.delete(index=temp_index)
-                return False
-                
-            # 5. Delete the old index
-            logger.info(f"Reindexing complete. Deleting old index '{self.index_name}'")
-            self.client.indices.delete(index=self.index_name)
-            
-            # 6. Create an alias from the old name to the new index
-            logger.info(f"Creating alias from '{self.index_name}' to '{temp_index}'")
-            self.client.indices.update_aliases(body={
-                "actions": [
-                    {"add": {"index": temp_index, "alias": self.index_name}}
-                ]
-            })
-            
-            # Update our internal index name to point to the new one
-            self.index_name = temp_index
-            
-            logger.info(f"Index rebuild complete with new mappings and {new_total_docs} documents")
-            
-            # Invalidate cache since we've reindexed everything
-            from src.search_engine import search_engine  # Import here to avoid circular imports
-            if hasattr(search_engine, 'cache'):
-                search_engine.cache.invalidate_all()
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Failed to rebuild index: {str(e)}")
-            return False
-    
-    def find_similar(self, embedding, limit=20, min_similarity=0.1, exclude_id=None, text_query=None):
-        """
-        Find documents similar to the provided embedding vector.
-        
-        Args:
-            embedding: The vector embedding to use for similarity search
-            limit: Maximum number of results (default: 20)
-            min_similarity: Minimum similarity threshold (default: 0.1)
-            exclude_id: ID or filename to exclude from results (default: None)
-            text_query: Optional text query to combine with vector search (default: None)
-            
-        Returns:
-            List of documents sorted by similarity score
-        """
-        if not self.is_connected():
-            logger.error("Cannot search: not connected to Elasticsearch")
-            return []
-        
-        # Log search initialization with parameters
-        logger.info("===== VECTOR SIMILARITY SEARCH START =====")
-        logger.info(f"Search parameters: limit={limit}, min_similarity={min_similarity}, exclude_id={exclude_id}")
-        
-        # Start building the kNN query 
-        search_start_time = time.time()
-        
-        # Create the query body
-        query_body = {
-            "size": limit,
-            "query": {
-                "script_score": {
-                    "query": {
-                        "bool": {
-                            "must": [
-                                {"match_all": {}}
-                            ]
-                        }
-                    },
-                    "script": {
-                        "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                        "params": {
-                            "query_vector": embedding
-                        }
+                        ]
                     }
-                }
+                },
+                "score_mode": "max",
+                "boost": 1.5
+            }
+        })
+        
+        # 6. Nested query for colors
+        should_clauses.append({
+            "nested": {
+                "path": "colors.dominant_colors",
+                "query": {
+                    "bool": {
+                        "should": [
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name.raw": {
+                                        "query": query,
+                                        "boost": 2.0
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name": {
+                                        "query": query,
+                                        "boost": 1.5
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "colors.dominant_colors.name.partial": {
+                                        "query": query,
+                                        "boost": 1.0
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "score_mode": "avg",
+                "boost": 1.5
+            }
+        })
+        
+        # Build the main bool query
+        bool_query = {
+            "bool": {
+                "should": should_clauses,
+                "minimum_should_match": 1
             }
         }
         
-        # Add filter to exclude the reference image if specified
-        if exclude_id:
-            # Create a bool filter to exclude by id or filename
-            exclude_filter = {
-                "bool": {
-                    "must_not": [
-                        {"terms": {"id": [exclude_id]}},
-                        {"terms": {"filename": [exclude_id]}}
-                    ]
-                }
+        # Wrap in a function_score query to factor in confidence values
+        function_score_query = {
+            "function_score": {
+                "query": bool_query,
+                "functions": [
+                    {
+                        "field_value_factor": {
+                            "field": "patterns.main_theme_confidence",
+                            "factor": 1.5,
+                            "missing": 0.8,
+                            "modifier": "log1p"
+                        }
+                    },
+                    {
+                        "field_value_factor": {
+                            "field": "patterns.pattern_confidence",
+                            "factor": 1.2,
+                            "missing": 0.7,
+                            "modifier": "log1p"
+                        }
+                    },
+                    # Add recency boost
+                    {
+                        "gauss": {
+                            "timestamp": {
+                                "scale": "30d",
+                                "decay": 0.5
+                            }
+                        },
+                        "weight": 0.5
+                    }
+                ],
+                "score_mode": "multiply",
+                "boost_mode": "multiply"
             }
-            query_body["query"]["script_score"]["query"]["bool"]["filter"] = exclude_filter
+        }
         
-        # Add text query if provided (hybrid search)
-        if text_query:
-            # Parse the text query into components for hybrid search
-            parsed_query = self._parse_query_basic(text_query)
-            
-            # Add text query to the bool query
-            text_must = []
-            
-            # Add pattern terms
-            if parsed_query['patterns']:
-                pattern_query = {
-                    "multi_match": {
-                        "query": " ".join(parsed_query['patterns']),
-                        "fields": [
-                            "patterns.primary_pattern^3",
-                            "patterns.main_theme^2",
-                            "patterns.secondary_patterns.name^1.5",
-                            "patterns.elements.name",
-                            "patterns.style_keywords"
-                        ],
-                        "type": "best_fields",
-                        "operator": "or",
-                        "fuzziness": "AUTO"
-                    }
-                }
-                text_must.append(pattern_query)
-            
-            # Add color terms
-            if parsed_query['colors']:
-                color_query = {
-                    "multi_match": {
-                        "query": " ".join(parsed_query['colors']),
-                        "fields": [
-                            "colors.dominant_colors.name^2",
-                            "colors.color_palette.name"
-                        ],
-                        "type": "best_fields",
-                        "operator": "or"
-                    }
-                }
-                text_must.append(color_query)
-            
-            # Add other terms
-            if parsed_query['other']:
-                other_query = {
-                    "multi_match": {
-                        "query": " ".join(parsed_query['other']),
-                        "fields": [
-                            "patterns.description^2",
-                            "patterns.prompt.final_prompt"
-                        ],
-                        "type": "best_fields",
-                        "operator": "or",
-                        "fuzziness": "AUTO"
-                    }
-                }
-                text_must.append(other_query)
-            
-            # Add to the main query
-            if text_must:
-                query_body["query"]["script_score"]["query"]["bool"]["must"] = text_must
-        
-        # Log the query
-        self._log_query_details(query_body)
-        
-        try:
-            # Execute the search
-            logger.info("Executing vector similarity search...")
-            start_time = time.time()
-            response = self.client.search(index=self.index_name, body=query_body)
-            search_time = time.time() - start_time
-            logger.info(f"Vector search executed in {search_time:.2f}s")
-            
-            # Extract and format results
-            results = []
-            total_hits = response["hits"]["total"]["value"] if "total" in response["hits"] else len(response["hits"]["hits"])
-            logger.info(f"Search returned {total_hits} total hits")
-            
-            # Process hits
-            for i, hit in enumerate(response["hits"]["hits"]):
-                doc = hit["_source"]
-                
-                # Calculate similarity score - cosine similarity returns values from -1 to 1
-                # Scale to 0-1 range: (cosine_sim + 1) / 2
-                score = hit["_score"]
-                similarity = (score - 1.0) / 2.0  # Convert back to -1 to 1 range, then to 0 to 1 range
-                
-                # Ensure score is in valid range
-                similarity = max(0, min(similarity, 1.0))
-                
-                # Add similarity score
-                doc["similarity"] = similarity
-                
-                # Log each result with its score
-                logger.info(f"Result {i+1}: id={doc.get('id', 'unknown')}, filename={doc.get('filename', 'unknown')}, score={hit['_score']:.4f}, similarity={similarity:.4f}")
-                
-                # Only include results above min_similarity threshold
-                if similarity >= min_similarity:
-                    results.append(doc)
-                else:
-                    logger.info(f"  Skipping result {i+1} as similarity {similarity:.4f} is below threshold {min_similarity}")
-            
-            # Log search performance
-            query_time = time.time() - search_start_time
-            logger.info(f"Total vector search process completed in {query_time:.2f}s")
-            logger.info(f"Found {total_hits} hits, returning {len(results)} results after filtering by min_similarity={min_similarity}")
-            logger.info("===== VECTOR SIMILARITY SEARCH END =====")
-            
-            return results
-        except Exception as e:
-            logger.error(f"Vector search error: {str(e)}", exc_info=True)
-            logger.info("===== VECTOR SIMILARITY SEARCH FAILED =====")
-            return []
-            
-    def _parse_query_basic(self, query_string):
+        # Execute search with the function_score query
+        return self._execute_search(function_score_query, limit, min_similarity)
+    
+    def _execute_search(self, query_body, limit, min_similarity):
         """
-        Simple version of _parse_query for similarity search use.
-        Splits query terms into patterns, colors, and other.
+        Helper method to execute a search with the given query body
+        """
+        start_time = time.time()
+        try:
+            response = self.client.search(
+                index=self.index_name,
+                body={
+                    "size": limit,
+                    "query": query_body,
+                    "_source": True
+                }
+            )
+            
+            search_time = time.time() - start_time
+            logger.info(f"Search completed in {search_time:.2f}s")
+            
+            # Get max score for normalization
+            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
+            
+            # Process and normalize results
+            results = []
+            for hit in response["hits"]["hits"]:
+                doc = hit["_source"]
+                raw_score = hit["_score"]
+                
+                # Normalize score to 0-1 range
+                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
+                
+                # Add scores to the document
+                doc["similarity"] = max(min_similarity, similarity)
+                doc["raw_score"] = raw_score
+                
+                # Only include results above threshold
+                if doc["similarity"] >= min_similarity:
+                    results.append(doc)
+            
+            # Sort by similarity
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            
+            logger.info(f"Search returned {len(results)} results")
+            return results
+            
+        except Exception as e:
+            search_time = time.time() - start_time
+            logger.error(f"Search failed after {search_time:.2f}s: {str(e)}")
+            return []
+    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def find_similar(self, embedding=None, limit=20, min_similarity=0.1, exclude_id=None, 
+                   text_query=None):
+        """
+        Find similar documents based on text query or vector similarity
         
         Args:
-            query_string: The text query string
+            embedding: Vector embedding for similarity search
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity score threshold
+            exclude_id: ID of image to exclude from results
+            text_query: Text query for searching
             
         Returns:
-            Dict with 'patterns', 'colors', and 'other' lists
+            List of documents sorted by similarity
         """
-        # Normalize and clean the query
-        query = query_string.lower().strip()
-        
-        # Split by commas first, then spaces
-        terms = []
-        for part in query.split(','):
-            part = part.strip()
-            if ' ' in part:
-                # Multi-word term, keep it as a single unit
-                terms.append(part)
+        if not self.is_connected():
+            logger.error("Cannot perform similarity search: not connected to Elasticsearch")
+            return []
+            
+        # Build the main query
+        if text_query:
+            logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
+            
+            # Split query into terms for better matching control
+            query_terms = [term.strip() for term in text_query.split() if term.strip()]
+            min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
+            
+            # Build enhanced similar query with multiple fields and clauses
+            should_clauses = []
+            
+            # Match on all important fields with appropriate boosts
+            should_clauses.append({
+                "match": {
+                    "patterns.main_theme.raw": {
+                        "query": text_query,
+                        "boost": 5.0
+                    }
+                }
+            })
+            
+            should_clauses.append({
+                "match": {
+                    "patterns.primary_pattern.raw": {
+                        "query": text_query,
+                        "boost": 4.5
+                    }
+                }
+            })
+            
+            # Multi match across standard fields
+            should_clauses.append({
+                "multi_match": {
+                    "query": text_query,
+                    "fields": [
+                        "patterns.main_theme^3",
+                        "patterns.main_theme.partial^2.5",
+                        "patterns.primary_pattern^2.5",
+                        "patterns.primary_pattern.partial^2",
+                        "patterns.prompt.final_prompt^1.2",
+                        "patterns.prompt.final_prompt.partial^1"
+                    ],
+                    "type": "best_fields",
+                    "fuzziness": "AUTO",
+                    "prefix_length": 2,
+                    "boost": 3.0
+                }
+            })
+            
+            # Nested queries for content details and stylistic attributes
+            should_clauses.append({
+                "nested": {
+                    "path": "patterns.content_details",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"patterns.content_details.name": {"query": text_query, "boost": 2.0}}},
+                                {"match": {"patterns.content_details.name.partial": {"query": text_query, "boost": 1.5}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "max",
+                    "boost": 2.0
+                }
+            })
+            
+            should_clauses.append({
+                "nested": {
+                    "path": "patterns.stylistic_attributes",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"patterns.stylistic_attributes.name": {"query": text_query, "boost": 1.5}}},
+                                {"match": {"patterns.stylistic_attributes.name.partial": {"query": text_query, "boost": 1.0}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "max",
+                    "boost": 1.5
+                }
+            })
+            
+            # Add dominant color search
+            should_clauses.append({
+                "nested": {
+                    "path": "colors.dominant_colors",
+                    "query": {
+                        "bool": {
+                            "should": [
+                                {"match": {"colors.dominant_colors.name.raw": {"query": text_query, "boost": 2.0}}},
+                                {"match": {"colors.dominant_colors.name": {"query": text_query, "boost": 1.5}}},
+                                {"match": {"colors.dominant_colors.name.partial": {"query": text_query, "boost": 1.0}}}
+                            ]
+                        }
+                    },
+                    "score_mode": "avg",
+                    "boost": 1.5
+                }
+            })
+            
+            # Build bool query
+            bool_query = {
+                "bool": {
+                    "should": should_clauses,
+                    "minimum_should_match": 1
+                }
+            }
+            
+            # Wrap in function_score query to factor in confidence scores
+            query_body = {
+                "function_score": {
+                    "query": bool_query,
+                    "functions": [
+                        {
+                            "field_value_factor": {
+                                "field": "patterns.main_theme_confidence",
+                                "factor": 1.5,
+                                "missing": 0.8,
+                                "modifier": "log1p"
+                            }
+                        },
+                        {
+                            "field_value_factor": {
+                                "field": "patterns.pattern_confidence",
+                                "factor": 1.2,
+                                "missing": 0.7,
+                                "modifier": "log1p"
+                            }
+                        },
+                        # Add recency boost
+                        {
+                            "gauss": {
+                                "timestamp": {
+                                    "scale": "30d",
+                                    "decay": 0.5
+                                }
+                            },
+                            "weight": 0.5
+                        }
+                    ],
+                    "score_mode": "multiply",
+                    "boost_mode": "multiply"
+                }
+            }
+        elif embedding is not None:
+            # Vector similarity search
+            logger.info("Performing vector-based similarity search")
+            query_body = {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
+                        "params": {"query_vector": embedding}
+                    }
+                }
+            }
+        else:
+            # Fallback to general search
+            logger.info("Performing general similarity search")
+            query_body = {"match_all": {}}
+            
+        # Add exclusion if provided
+        if exclude_id:
+            # Create a must_not clause to exclude the reference document
+            if "function_score" in query_body:
+                if "bool" not in query_body["function_score"]["query"]:
+                    query_body["function_score"]["query"] = {
+                        "bool": {
+                            "must": [query_body["function_score"]["query"]],
+                            "must_not": []
+                        }
+                    }
+                
+                # Add exclusion by ID and filename
+                query_body["function_score"]["query"]["bool"]["must_not"] = [
+                    {"term": {"id": exclude_id}},
+                    {"term": {"filename": exclude_id}},
+                    {"term": {"path": exclude_id}}
+                ]
+            elif "script_score" in query_body:
+                # For vector search
+                if "bool" not in query_body["script_score"]["query"]:
+                    query_body["script_score"]["query"] = {
+                        "bool": {
+                            "must": [query_body["script_score"]["query"]],
+                            "must_not": []
+                        }
+                    }
+                
+                # Add exclusion
+                query_body["script_score"]["query"]["bool"]["must_not"] = [
+                    {"term": {"id": exclude_id}},
+                    {"term": {"filename": exclude_id}},
+                    {"term": {"path": exclude_id}}
+                ]
             else:
-                # Single word
-                if part:
-                    terms.append(part)
+                # For simple queries
+                query_body = {
+                    "bool": {
+                        "must": [query_body],
+                        "must_not": [
+                            {"term": {"id": exclude_id}},
+                            {"term": {"filename": exclude_id}},
+                            {"term": {"path": exclude_id}}
+                        ]
+                    }
+                }
+                
+            logger.info(f"Excluding ID: {exclude_id}")
         
-        # Pattern types for classification
-        pattern_types = [
-            "paisley", "floral", "geometric", "abstract", "animal", "stripe", 
-            "dots", "plaid", "check", "chevron", "herringbone", "tropical", 
-            "diamond", "swirl", "damask", "toile", "ikat", "medallion", "flower"
-        ]
-        
-        # Common color names
-        basic_colors = [
-            "red", "blue", "green", "yellow", "orange", "purple", "pink", 
-            "brown", "black", "white", "gray", "grey"
-        ]
-        
-        specific_colors = [
-            "teal", "turquoise", "maroon", "navy", "olive", "mint", "cyan", 
-            "magenta", "lavender", "violet", "indigo", "coral", "peach"
-        ]
-        
-        colors = basic_colors + specific_colors
-        
-        # Classify terms
-        pattern_terms = []
-        color_terms = []
-        other_terms = []
-        
-        for term in terms:
-            # First check if it's a pattern
-            if any(pattern in term for pattern in pattern_types):
-                pattern_terms.append(term)
-            # Then check if it's a color
-            elif any(color in term for color in colors):
-                color_terms.append(term)
-            # Otherwise it's an "other" term
-            else:
-                other_terms.append(term)
-        
-        # Log the parsing results
-        logger.info(f"Parsed similarity query '{query_string}' into:")
-        logger.info(f" - Patterns: {pattern_terms}")
-        logger.info(f" - Colors: {color_terms}")
-        logger.info(f" - Other: {other_terms}")
-        
-        return {
-            'patterns': pattern_terms,
-            'colors': color_terms,
-            'other': other_terms
-        } 
+        # Execute the search and process results
+        start_time = time.time()
+        try:
+            response = self.client.search(
+                index=self.index_name,
+                body={
+                    "size": limit,
+                    "query": query_body,
+                    "_source": True
+                }
+            )
+            
+            search_time = time.time() - start_time
+            logger.info(f"Similarity search completed in {search_time:.2f}s")
+            
+            # Process results
+            results = []
+            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
+            
+            for hit in response["hits"]["hits"]:
+                doc = hit["_source"]
+                raw_score = hit["_score"]
+                
+                # Normalize score to 0-1 range
+                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
+                
+                # Add similarity score
+                doc["raw_score"] = raw_score
+                doc["similarity"] = max(min_similarity, similarity)
+                
+                # Only include results above threshold
+                if doc["similarity"] >= min_similarity:
+                    results.append(doc)
+            
+            # Sort by similarity (descending)
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            
+            logger.info(f"Similarity search returned {len(results)} results (of {len(response['hits']['hits'])} total)")
+            return results
+            
+        except Exception as e:
+            search_time = time.time() - start_time
+            logger.error(f"Similarity search failed after {search_time:.2f}s: {str(e)}")
+            return [] 

@@ -5,6 +5,7 @@ import os
 import config
 from src.utils.logging_config import configure_logging
 import dotenv
+from pathlib import Path
 
 # Load environment variables from .env file if it exists
 dotenv.load_dotenv()
@@ -14,14 +15,20 @@ configure_logging()
 
 logger = logging.getLogger(__name__)
 
+def ensure_dir(directory):
+    """Create directory if it doesn't exist."""
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        logger.info(f"Ensured directory exists: {directory}")
+
 def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
     
-    # Enable CORS for all routes
+    # Enable CORS for all routes - more permissive for development
     CORS(app, resources={
         r"/*": {
-            "origins": ["http://localhost:3000"],
+            "origins": "*",  # Allow all origins in development
             "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
             "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
             "expose_headers": ["Content-Type", "Authorization"],
@@ -67,6 +74,12 @@ def ensure_directories():
 def start_app():
     """Start the Flask application."""
     app = create_app()
+    # Ensure required directories exist
+    ensure_dir(os.path.join(config.UPLOAD_DIR))
+    ensure_dir(os.path.join(config.THUMBNAIL_DIR))
+    ensure_dir(os.path.join(config.METADATA_DIR))
+    
+    # Run the Flask app
     app.run(debug=True, host='0.0.0.0', port=8000)
 
 if __name__ == '__main__':

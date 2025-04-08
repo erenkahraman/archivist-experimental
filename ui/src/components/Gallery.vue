@@ -28,7 +28,26 @@
       </div>
       <h3 v-if="searchActive" class="empty-title">No images found</h3>
       <h3 v-else class="empty-title">Your gallery is empty</h3>
-      <p v-if="searchActive" class="empty-description">Try adjusting your search criteria or upload new images</p>
+      <p v-if="searchActive" class="empty-description">
+        No similar images were found for your search. Make sure the reference image appears in the sidebar.
+        <br>If you're using drag & drop, try refreshing the page and trying again.
+      </p>
+      
+      <!-- Show reference image if we have one -->
+      <div v-if="searchActive && imageStore.searchQueryReferenceImage" class="reference-image-container">
+        <h4>Reference Image:</h4>
+        <div class="reference-image">
+          <img 
+            :src="getThumbnailUrl(imageStore.searchQueryReferenceImage.thumbnail_path)" 
+            :alt="getPatternName(imageStore.searchQueryReferenceImage)"
+          >
+          <div class="reference-info">
+            <p>{{ getPatternName(imageStore.searchQueryReferenceImage) }}</p>
+            <p class="ref-help">Try adjusting the minimum similarity threshold in the sidebar settings.</p>
+          </div>
+        </div>
+      </div>
+      
       <p v-else class="empty-description">Upload images to begin your collection</p>
     </div>
     
@@ -437,9 +456,18 @@ const handleDragStart = (image, event) => {
   // Store the image ID (or path) in the drag event
   const imageId = image.id || getFileName(image.thumbnail_path || image.path || image.original_path || '');
   event.dataTransfer.setData('text/plain', imageId);
+  
+  // Store thumbnail information for display in search results
+  const imageData = {
+    thumbnailPath: image.thumbnail_path,
+    originalPath: image.original_path || image.path,
+    patternName: getPatternName(image)
+  };
+  event.dataTransfer.setData('application/json', JSON.stringify(imageData));
+  
   event.dataTransfer.effectAllowed = 'copy';
   
-  // Optional: you can add a CSS class for visual feedback
+  // Add a CSS class for visual feedback
   event.target.closest('.gallery-item').classList.add('is-dragging');
   
   // Add a dragend event listener to remove the class when dragging ends
@@ -548,6 +576,47 @@ const getFileName = (path) => {
   color: var(--color-text-light);
   margin: 0;
   max-width: 400px;
+}
+
+.reference-image-container {
+  margin-top: var(--space-4);
+  width: 100%;
+  max-width: 400px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.reference-image-container h4 {
+  font-size: 0.9rem;
+  color: var(--color-text-light);
+  margin-top: 0;
+  margin-bottom: var(--space-2);
+}
+
+.reference-image {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.reference-image img {
+  width: 100px;
+  height: 100px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+}
+
+.reference-info p {
+  margin: 0;
+  font-size: 0.9rem;
+}
+
+.reference-info .ref-help {
+  color: var(--color-text-lighter);
+  font-size: 0.85rem;
+  margin-top: var(--space-2);
 }
 
 .gallery-grid {

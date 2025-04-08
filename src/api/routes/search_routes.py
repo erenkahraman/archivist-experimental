@@ -37,72 +37,86 @@ def search():
         if not query:
             return jsonify({'error': 'Search query is required'}), 400
             
+        # Check if Elasticsearch is available
+        if not search_engine.use_elasticsearch or not search_engine.es_client.is_connected():
+            return jsonify({
+                'error': 'Search service is temporarily unavailable. Please try again later.',
+                'details': 'Elasticsearch is not available'
+            }), 503
+            
         # Log search request
         if DEBUG:
             logger.info(f"Search request: query='{query}', limit={limit}, min_similarity={min_similarity}")
         
-        # Perform search using the enhanced search function
-        results = search_engine.search(query, k=limit)
-        
-        # Filter by minimum similarity if specified
-        if min_similarity > 0:
-            results = [r for r in results if r.get('similarity', 0) >= min_similarity]
-        
-        # Format the results for the response
-        formatted_results = []
-        for result in results:
-            # Create a clean copy without internal fields
-            item = {
-                'id': result.get('id'),
-                'filename': result.get('filename'),
-                'path': result.get('path'),
-                'thumbnail_path': result.get('thumbnail_path'),
-                'similarity': result.get('similarity', 0.0),
-                'timestamp': result.get('timestamp'),
-            }
+        try:
+            # Perform search using Elasticsearch
+            results = search_engine.search(query, k=limit)
             
-            # Include pattern information
-            if 'patterns' in result:
-                item['pattern'] = {
-                    'primary': result['patterns'].get('primary_pattern', 'Unknown'),
-                    'confidence': result['patterns'].get('pattern_confidence', 0.0),
-                    'secondary': [p.get('name') for p in result['patterns'].get('secondary_patterns', [])],
-                    'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in result['patterns'].get('elements', [])]
+            # Filter by minimum similarity if specified
+            if min_similarity > 0:
+                results = [r for r in results if r.get('similarity', 0) >= min_similarity]
+            
+            # Format the results for the response
+            formatted_results = []
+            for result in results:
+                # Create a clean copy without internal fields
+                item = {
+                    'id': result.get('id'),
+                    'filename': result.get('filename'),
+                    'path': result.get('path'),
+                    'thumbnail_path': result.get('thumbnail_path'),
+                    'similarity': result.get('similarity', 0.0),
+                    'timestamp': result.get('timestamp'),
                 }
                 
-                # Include style keywords
-                item['style_keywords'] = result['patterns'].get('style_keywords', [])
+                # Include pattern information
+                if 'patterns' in result:
+                    item['pattern'] = {
+                        'primary': result['patterns'].get('primary_pattern', 'Unknown'),
+                        'confidence': result['patterns'].get('pattern_confidence', 0.0),
+                        'secondary': [p.get('name') if isinstance(p, dict) else str(p) for p in result['patterns'].get('secondary_patterns', [])],
+                        'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in result['patterns'].get('elements', [])]
+                    }
+                    
+                    # Include style keywords
+                    item['style_keywords'] = result['patterns'].get('style_keywords', [])
+                    
+                    # Include prompt if available
+                    if 'prompt' in result['patterns'] and 'final_prompt' in result['patterns']['prompt']:
+                        item['prompt'] = result['patterns']['prompt']['final_prompt']
                 
-                # Include prompt if available
-                if 'prompt' in result['patterns'] and 'final_prompt' in result['patterns']['prompt']:
-                    item['prompt'] = result['patterns']['prompt']['final_prompt']
-            
-            # Include color information
-            if 'colors' in result:
-                item['colors'] = []
-                for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
-                    item['colors'].append({
-                        'name': color.get('name', ''),
-                        'hex': color.get('hex', ''),
-                        'proportion': color.get('proportion', 0.0)
-                    })
-            
-            # Add score components if available (for debugging)
-            if DEBUG and 'pattern_score' in result and 'color_score' in result and 'other_score' in result:
-                item['score_components'] = {
-                    'pattern_score': result.get('pattern_score', 0.0),
-                    'color_score': result.get('color_score', 0.0),
-                    'other_score': result.get('other_score', 0.0)
-                }
+                # Include color information
+                if 'colors' in result:
+                    item['colors'] = []
+                    for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
+                        item['colors'].append({
+                            'name': color.get('name', ''),
+                            'hex': color.get('hex', ''),
+                            'proportion': color.get('proportion', 0.0)
+                        })
                 
-            formatted_results.append(item)
+                # Add score components if available (for debugging)
+                if DEBUG and 'raw_score' in result:
+                    item['score_components'] = {
+                        'raw_score': result.get('raw_score', 0.0)
+                    }
+                    
+                formatted_results.append(item)
+            
+            return jsonify({
+                'query': query,
+                'result_count': len(formatted_results),
+                'results': formatted_results
+            })
         
-        return jsonify({
-            'query': query,
-            'result_count': len(formatted_results),
-            'results': formatted_results
-        })
-        
+        except RuntimeError as e:
+            # Handle the case where Elasticsearch is required but not available
+            logger.error(f"Search engine error: {str(e)}")
+            return jsonify({
+                'error': 'Search service is temporarily unavailable. Please try again later.',
+                'details': str(e)
+            }), 503
+            
     except Exception as e:
         logger.error(f"Error in search: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
@@ -146,7 +160,7 @@ def generate_prompt():
 @api.route('/similar/<path:filename>', methods=['GET'])
 def similar_by_id(filename):
     """
-    Find images similar to a specific image by its ID or filename.
+    Find images similar to a specific image by its ID or filename using Elasticsearch.
     
     The similarity is based on the image's patterns, colors, and other visual features.
     
@@ -156,6 +170,7 @@ def similar_by_id(filename):
     Query parameters:
     - limit: Maximum number of results (optional, default: 20)
     - min_similarity: Minimum similarity score threshold (optional, default: 0.1)
+    - sort: Whether to sort by similarity score (optional, default: true)
     
     Returns:
     - List of similar images with their metadata and similarity scores
@@ -164,148 +179,143 @@ def similar_by_id(filename):
         # Get query parameters
         limit = min(int(request.args.get('limit', config.DEFAULT_SEARCH_LIMIT)), 100)  # Cap at 100 results
         min_similarity = max(0.0, min(float(request.args.get('min_similarity', config.DEFAULT_MIN_SIMILARITY)), 1.0))
+        sort_by_similarity = request.args.get('sort', 'true').lower() == 'true'
         
         if DEBUG:
-            logger.info(f"Similar search request for: {filename}, limit={limit}, min_similarity={min_similarity}")
+            logger.info(f"Similar search request for: {filename}, limit={limit}, min_similarity={min_similarity}, sort={sort_by_similarity}")
         
+        # Verify Elasticsearch is available
+        if not search_engine.es_client or not search_engine.es_client.is_connected():
+            logger.error("Elasticsearch not available for similarity search")
+            return jsonify({
+                'error': 'Elasticsearch is required for similarity search and is not available',
+                'results': [], 
+                'result_count': 0
+            }), 503
+            
         # First, get metadata for the reference image
         ref_metadata = None
+        ref_id = None
         
-        # Try direct match with filename
+        # Clean up the filename - sometimes it comes with URL encoding or extra parameters
+        clean_filename = filename.split('?')[0]  # Remove URL parameters if present
+        
+        # Try different ways to match the reference image
         for path, meta in search_engine.metadata.items():
-            if path.endswith(filename) or (meta.get('filename') == filename):
+            # Match by filename, id, or path ending with the filename
+            if path.endswith(clean_filename) or meta.get('filename') == clean_filename or meta.get('id') == clean_filename:
                 ref_metadata = meta
+                ref_id = meta.get('id')
+                logger.info(f"Found reference image: {ref_id} ({meta.get('filename')})")
                 break
         
         if not ref_metadata:
-            # Try by ID if not found by filename
-            for path, meta in search_engine.metadata.items():
-                if meta.get('id') == filename:
-                    ref_metadata = meta
-                    break
-        
-        if not ref_metadata:
-            return jsonify({'error': f'Reference image not found: {filename}'}), 404
-        
-        # Use the search engine to find similar images
-        # If Elasticsearch is available, use its more efficient similarity search
-        if search_engine.use_elasticsearch and search_engine.es_client.is_connected():
-            # Extract image embedding if available
-            if 'embedding' not in ref_metadata:
-                return jsonify({'error': 'Reference image has no embedding for similarity search'}), 400
-                
-            # Perform vector similarity search
-            results = search_engine.es_client.find_similar(
-                ref_metadata['embedding'], 
-                limit=limit,
-                min_similarity=min_similarity,
-                exclude_id=filename  # Exclude the reference image itself
-            )
-        else:
-            # Fall back to in-memory search using color and pattern matching
-            # Create a search query based on the reference image's attributes
-            search_terms = []
+            logger.warning(f"Reference image not found: {filename}")
+            return jsonify({
+                'error': f'Reference image not found: {filename}', 
+                'results': [], 
+                'result_count': 0
+            }), 404
             
-            # Add pattern information
-            patterns = ref_metadata.get('patterns', {})
-            if patterns:
+        logger.info(f"Found reference image metadata: {ref_id}")
+        
+        # Perform the similarity search
+        try:
+            # Get the text query parameters from the metadata
+            text_query = None
+            if ref_metadata.get('patterns'):
+                patterns = ref_metadata.get('patterns', {})
                 primary_pattern = patterns.get('primary_pattern')
-                if primary_pattern:
-                    search_terms.append(primary_pattern)
-                
-                # Add secondary patterns
-                for pattern in patterns.get('secondary_patterns', []):
-                    if isinstance(pattern, dict) and 'name' in pattern:
-                        search_terms.append(pattern['name'])
-                    elif isinstance(pattern, str):
-                        search_terms.append(pattern)
+                main_theme = patterns.get('main_theme')
+                if primary_pattern and main_theme:
+                    text_query = f"{primary_pattern} {main_theme}"
+                elif primary_pattern:
+                    text_query = primary_pattern
+                elif main_theme:
+                    text_query = main_theme
+                    
+                # Add style keywords if available
+                style_keywords = patterns.get('style_keywords', [])
+                if style_keywords and isinstance(style_keywords, list) and len(style_keywords) > 0:
+                    # Limit to first 3 keywords to avoid overspecific queries
+                    keywords_str = " ".join(style_keywords[:3])
+                    if text_query:
+                        text_query = f"{text_query} {keywords_str}"
+                    else:
+                        text_query = keywords_str
+                        
+            # Log the search parameters
+            logger.info(f"Performing similarity search with text_query='{text_query}', exclude_id={ref_id}")
             
-            # Add color information
-            colors = ref_metadata.get('colors', {}).get('dominant_colors', [])
-            for color in colors[:2]:  # Use top 2 colors
-                if isinstance(color, dict) and 'name' in color:
-                    search_terms.append(color['name'])
+            # Execute the search
+            results = search_engine.es_client.find_similar(
+                text_query=text_query,
+                exclude_id=ref_id,
+                limit=limit,
+                min_similarity=min_similarity
+            )
             
-            # Construct search query
-            query = ", ".join(search_terms)
-            
-            if not query:
-                return jsonify({'error': 'Could not construct a search query from reference image'}), 400
+            # Check results
+            if not results:
+                logger.info(f"No similar images found for {filename}")
+                return jsonify({
+                    'results': [],
+                    'result_count': 0,
+                    'reference_id': ref_id
+                })
                 
-            try:
-                # Perform text-based search
-                results = search_engine.search(query, k=limit+1)  # +1 to account for possible self-match
-                
-                # Filter out the reference image itself
-                results = [r for r in results if r.get('filename') != filename and r.get('id') != filename]
-                
-                # Filter by similarity
-                results = [r for r in results if r.get('similarity', 0) >= min_similarity]
-                
-                # Limit results
-                results = results[:limit]
-            except TypeError as cache_error:
-                # Handle cache-related errors more gracefully
-                if "SearchCache.get()" in str(cache_error) or "SearchCache.set()" in str(cache_error):
-                    logger.warning(f"Cache error, performing search without caching: {cache_error}")
-                    # Fall back to a more direct approach without using cache
-                    results = search_engine._in_memory_search(query, k=limit+1)
-                    results = [r for r in results if r.get('filename') != filename and r.get('id') != filename]
-                    results = [r for r in results if r.get('similarity', 0) >= min_similarity]
-                    results = results[:limit]
-                else:
-                    # Re-raise if it's a different TypeError
-                    raise
-        
-        # Format the results
-        formatted_results = []
-        for result in results:
-            # Create a clean copy without internal fields
-            item = {
-                'id': result.get('id'),
-                'filename': result.get('filename'),
-                'path': result.get('path'),
-                'thumbnail_path': result.get('thumbnail_path'),
-                'similarity': result.get('similarity', 0.0),
-                'timestamp': result.get('timestamp'),
-            }
-            
-            # Include pattern information
-            if 'patterns' in result:
-                item['pattern'] = {
-                    'primary': result['patterns'].get('primary_pattern', 'Unknown'),
-                    'confidence': result['patterns'].get('pattern_confidence', 0.0),
-                    'secondary': [p.get('name') for p in result['patterns'].get('secondary_patterns', [])],
-                    'elements': [e.get('name') if isinstance(e, dict) else str(e) for e in result['patterns'].get('elements', [])]
+            # Format results for the response
+            formatted_results = []
+            for result in results:
+                # Format each result with essential fields
+                item = {
+                    'id': result.get('id'),
+                    'filename': result.get('filename'),
+                    'path': result.get('path'),
+                    'thumbnail_path': result.get('thumbnail_path'),
+                    'similarity': result.get('similarity', 0.0)
                 }
                 
-                # Include style keywords
-                item['style_keywords'] = result['patterns'].get('style_keywords', [])
-                
-                # Include prompt if available
-                if 'prompt' in result['patterns'] and 'final_prompt' in result['patterns']['prompt']:
-                    item['prompt'] = result['patterns']['prompt']['final_prompt']
-            
-            # Include color information
-            if 'colors' in result:
-                item['colors'] = []
-                for color in result['colors'].get('dominant_colors', [])[:5]:  # Top 5 colors
-                    item['colors'].append({
-                        'name': color.get('name', ''),
-                        'hex': color.get('hex', ''),
-                        'proportion': color.get('proportion', 0.0)
-                    })
+                # Include pattern information if available
+                if 'patterns' in result:
+                    item['pattern'] = {
+                        'primary': result['patterns'].get('primary_pattern', 'Unknown'),
+                        'confidence': result['patterns'].get('pattern_confidence', 0.0)
+                    }
                     
-            formatted_results.append(item)
-        
-        # Return response
-        reference_name = ref_metadata.get('filename', filename)
-        return jsonify({
-            'reference_image': reference_name,
-            'result_count': len(formatted_results),
-            'results': formatted_results
-        })
-        
+                # Include color information if available
+                if 'colors' in result and 'dominant_colors' in result['colors']:
+                    item['colors'] = [
+                        {
+                            'name': color.get('name', ''),
+                            'hex': color.get('hex', ''),
+                            'proportion': color.get('proportion', 0.0)
+                        }
+                        for color in result['colors'].get('dominant_colors', [])[:3]  # Top 3 colors
+                    ]
+                    
+                formatted_results.append(item)
+                
+            # Sort by similarity if requested
+            if sort_by_similarity:
+                formatted_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+                
+            logger.info(f"Returning {len(formatted_results)} similar images for {filename}")
+            
+            return jsonify({
+                'results': formatted_results,
+                'result_count': len(formatted_results),
+                'reference_id': ref_id
+            })
+            
+        except Exception as e:
+            logger.error(f"Error in similarity search: {str(e)}", exc_info=True)
+            return jsonify({
+                'error': f'Error in similarity search: {str(e)}',
+                'results': [],
+                'result_count': 0
+            }), 500
+            
     except Exception as e:
-        logger.error(f"Error in similarity search: {str(e)}", exc_info=True)
+        logger.error(f"Error in similar_by_id: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500 

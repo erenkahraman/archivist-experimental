@@ -776,15 +776,15 @@ onMounted(() => {
   position: fixed;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 200;
+  width: 100%;
+  height: 100%;
   display: flex;
-  align-items: center;
   justify-content: center;
+  align-items: center;
+  z-index: 1000;
   opacity: 0;
   visibility: hidden;
-  transition: all 0.3s ease;
+  transition: opacity 0.3s ease, visibility 0.3s ease;
 }
 
 .modal-container.is-open {
@@ -793,36 +793,33 @@ onMounted(() => {
 }
 
 .modal-backdrop {
-  position: absolute;
+  position: fixed;
   top: 0;
   left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.7);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  width: 100%;
+  height: 100%;
+  background-color: rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(5px);
+  z-index: -1;
 }
 
 .modal {
-  position: relative;
   width: 90%;
-  max-width: 1200px;
+  max-width: 1000px;
   max-height: 90vh;
-  background: rgba(15, 23, 42, 0.85);
+  background-color: rgba(18, 18, 18, 0.95);
   border-radius: var(--radius-lg);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.3),
-              0 0 15px rgba(99, 102, 241, 0.2),
-              0 0 30px rgba(34, 211, 238, 0.1);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 
+              0 0 0 1px rgba(30, 30, 30, 0.3), 
+              0 0 40px rgba(0, 0, 0, 0.4);
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  overflow: hidden;
-  transform: scale(0.95);
-  transition: transform 0.3s ease;
-  animation: modal-appear 0.3s forwards;
+  animation: modalEnter 0.3s ease forwards;
+  border: 1px solid #252525;
 }
 
-@keyframes modal-appear {
+@keyframes modalEnter {
   0% {
     opacity: 0;
     transform: scale(0.95);
@@ -835,44 +832,40 @@ onMounted(() => {
 
 .modal-header {
   display: flex;
-  align-items: center;
   justify-content: space-between;
+  align-items: center;
   padding: var(--space-4) var(--space-6);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  border-bottom: 1px solid rgba(40, 40, 40, 0.3);
+  background-color: rgba(25, 25, 25, 0.5);
 }
 
 .modal-header h3 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: 1.1rem;
   font-weight: 600;
-  background: linear-gradient(135deg, #f1f5f9, #94a3b8);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+  color: #aaaaaa;
 }
 
 .close-button {
   background: none;
   border: none;
-  font-size: 1.5rem;
-  line-height: 1;
-  cursor: pointer;
   color: var(--color-text-light);
-  padding: var(--space-1);
-  border-radius: 50%;
+  font-size: 1.5rem;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0;
+  width: 30px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  border-radius: 50%;
   transition: all 0.2s ease;
 }
 
 .close-button:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: white;
-  transform: none;
-  box-shadow: none;
+  color: #aaaaaa;
+  background-color: rgba(40, 40, 40, 0.3);
 }
 
 .modal-content {
@@ -900,7 +893,7 @@ onMounted(() => {
 }
 
 .modal-content::-webkit-scrollbar-thumb {
-  background-color: rgba(99, 102, 241, 0.3);
+  background-color: rgba(58, 58, 58, 0.3);
   border-radius: 20px;
 }
 
@@ -946,8 +939,8 @@ onMounted(() => {
 
 .try-thumbnail-btn {
   padding: var(--space-2) var(--space-4);
-  background-color: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  background-color: rgba(58, 58, 58, 0.2);
+  border: 1px solid rgba(58, 58, 58, 0.3);
   color: var(--color-primary-light);
   border-radius: var(--radius-md);
   cursor: pointer;
@@ -955,7 +948,7 @@ onMounted(() => {
 }
 
 .try-thumbnail-btn:hover {
-  background-color: rgba(99, 102, 241, 0.2);
+  background-color: rgba(58, 58, 58, 0.3);
   border-color: var(--color-primary);
 }
 
@@ -974,7 +967,7 @@ onMounted(() => {
 .spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid rgba(99, 102, 241, 0.1);
+  border: 3px solid rgba(58, 58, 58, 0.1);
   border-top-color: var(--color-primary);
   border-radius: 50%;
   animation: spin 1s infinite linear;
@@ -1010,16 +1003,16 @@ onMounted(() => {
 }
 
 .tab-button:hover {
-  background-color: rgba(255, 255, 255, 0.05);
+  background-color: rgba(40, 40, 40, 0.2);
   color: var(--color-text);
   transform: none;
   box-shadow: none;
 }
 
 .tab-button.active {
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(34, 211, 238, 0.1));
-  color: var(--color-primary-light);
-  border-bottom: 2px solid var(--color-primary);
+  background-color: rgba(30, 30, 30, 0.5);
+  color: #aaaaaa;
+  border-bottom: 2px solid #3a3a3a;
 }
 
 .tab-content {
@@ -1044,9 +1037,9 @@ onMounted(() => {
   font-size: 1.1rem;
   font-weight: 600;
   margin-bottom: var(--space-3);
-  color: var(--color-text-light);
+  color: #aaaaaa;
   padding-bottom: var(--space-2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(40, 40, 40, 0.3);
 }
 
 .pattern-primary {
@@ -1057,16 +1050,16 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-2);
   padding: var(--space-3);
-  background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(34, 211, 238, 0.05));
+  background: rgba(30, 30, 30, 0.3);
   border-radius: var(--radius-md);
-  border: 1px solid rgba(99, 102, 241, 0.1);
+  border: 1px solid #3a3a3a;
 }
 
 .inline-confidence {
   font-size: 0.8rem;
   padding: var(--space-1) var(--space-2);
-  background-color: rgba(99, 102, 241, 0.1);
-  color: var(--color-primary-light);
+  background-color: rgba(40, 40, 40, 0.4);
+  color: #aaaaaa;
   border-radius: var(--radius-full);
   font-weight: normal;
 }
@@ -1086,8 +1079,8 @@ onMounted(() => {
 .tag {
   display: inline-block;
   padding: var(--space-2) var(--space-3);
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background-color: rgba(30, 30, 30, 0.3);
+  border: 1px solid rgba(40, 40, 40, 0.3);
   color: var(--color-text);
   border-radius: var(--radius-full);
   font-size: 0.85rem;
@@ -1098,9 +1091,9 @@ onMounted(() => {
   line-height: 1.6;
   color: var(--color-text);
   padding: var(--space-3);
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(40, 40, 40, 0.3);
 }
 
 .keyword-tags {
@@ -1111,11 +1104,11 @@ onMounted(() => {
 
 .keyword-tag {
   padding: var(--space-1) var(--space-3);
-  background-color: rgba(34, 211, 238, 0.1);
-  color: var(--color-accent);
+  background-color: rgba(40, 40, 40, 0.3);
+  color: #aaaaaa;
   border-radius: var(--radius-full);
   font-size: 0.8rem;
-  border: 1px solid rgba(34, 211, 238, 0.2);
+  border: 1px solid rgba(40, 40, 40, 0.3);
 }
 
 /* Colors Tab */
@@ -1128,9 +1121,9 @@ onMounted(() => {
   align-items: center;
   gap: var(--space-4);
   padding: var(--space-3);
-  background-color: rgba(255, 255, 255, 0.02);
+  background-color: rgba(0, 0, 0, 0.2);
   border-radius: var(--radius-md);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(40, 40, 40, 0.3);
 }
 
 .color-preview {
@@ -1202,7 +1195,7 @@ onMounted(() => {
 
 .details-table td {
   padding: var(--space-3);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid rgba(40, 40, 40, 0.2);
   display: table-cell;
 }
 
@@ -1212,7 +1205,7 @@ onMounted(() => {
 
 .details-label {
   font-weight: 500;
-  color: var(--color-text-light);
+  color: #777777;
   width: 120px;
 }
 

@@ -90,33 +90,41 @@
       </div>
       
       <div class="search-results-info" v-if="imageStore.hasSearchResults">
-        <div class="result-count">
-          <strong>{{ imageStore.searchResults.length }}</strong> results for 
-          <span class="search-terms">{{ imageStore.searchQuery }}</span>
+        <!-- Search results summary and reset button -->
+        <div class="search-header">
+          <div class="results-summary">
+            <div class="result-count-badge">
+              <strong>{{ imageStore.searchResults.length }}</strong>
+            </div>
+            <div class="results-description">
+              results for <span class="search-terms">{{ imageStore.searchQuery }}</span>
+            </div>
+          </div>
+          
+          <button class="reset-search-button" @click="resetSearch">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M4 4V9H4.58152M19.9381 11C19.446 7.05369 16.0796 4 12 4C8.64262 4 5.76829 6.06817 4.58152 9M4.58152 9H9M20 20V15H19.4185M19.4185 15C18.2317 17.9318 15.3574 20 12 20C7.92038 20 4.55399 16.9463 4.06189 13M19.4185 15H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+            <span>Reset Search</span>
+          </button>
         </div>
-        <button class="reset-button" @click="resetSearch">
-          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M4 4V9H4.58152M19.9381 11C19.446 7.05369 16.0796 4 12 4C8.64262 4 5.76829 6.06817 4.58152 9M4.58152 9H9M20 20V15H19.4185M19.4185 15C18.2317 17.9318 15.3574 20 12 20C7.92038 20 4.55399 16.9463 4.06189 13M19.4185 15H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-          <span>Reset</span>
-        </button>
+        
+        <!-- Reference image thumbnail (if available) -->
+        <div v-if="imageStore.searchQueryReferenceImage" class="reference-image-container">
+          <div class="reference-image-wrapper">
+            <img 
+              :src="getThumbnailUrl(imageStore.searchQueryReferenceImage.thumbnail_path)" 
+              alt="Reference image" 
+              class="reference-image"
+            />
+          </div>
+          <span class="reference-label">Reference Image</span>
+        </div>
       </div>
     </div>
     
     <!-- Quick search examples -->
-    <div class="search-examples-section">
-      <h3 class="examples-title">Try Natural Language Queries</h3>
-      <div class="example-buttons">
-        <button 
-          v-for="example in searchExamples" 
-          :key="example"
-          class="example-button"
-          @click="runExampleSearch(example)"
-        >
-          {{ example }}
-        </button>
-      </div>
-    </div>
+    <!-- Search examples section removed as requested -->
 
     <!-- Add an info hint about advanced search -->
     <div class="search-hint">
@@ -168,18 +176,50 @@ const handleDrop = async (event) => {
   try {
     // Get the image ID or filename from the dataTransfer
     const imageId = event.dataTransfer.getData('text/plain')
+    const thumbnailDataJson = event.dataTransfer.getData('application/json')
     
     if (!imageId) {
       console.error('No image ID received in drop')
+      alert('Unable to identify the image. Please try selecting an image from the gallery directly.')
       return
     }
     
     console.log('Image dropped with ID:', imageId)
     
-    // Call the store method for similarity search
-    await imageStore.searchSimilarById(imageId)
+    // Parse the thumbnail data if available
+    let imageData = null
+    if (thumbnailDataJson) {
+      try {
+        imageData = JSON.parse(thumbnailDataJson)
+        console.log('Received image data:', imageData)
+      } catch (e) {
+        console.error('Failed to parse image data:', e)
+      }
+    }
+    
+    // Clear any previous search to ensure clean state
+    imageStore.clearSearch()
+    
+    // Call the store method for similarity search with lower threshold
+    await imageStore.searchSimilarById(imageId, {
+      limit: parseInt(resultCount.value),
+      minSimilarity: Math.min(parseFloat(minSimilarity.value), 0.05) // Use a minimum threshold to ensure some results
+    }, imageData)
+    
+    // Check if we got any results
+    if (imageStore.searchResults.length === 0) {
+      // No results found, provide feedback to the user
+      console.warn('No similar images found for the dropped image')
+      
+      // Try to get info about the reference image
+      const refImage = imageStore.searchQueryReferenceImage
+      const refPattern = refImage?.patterns?.primary_pattern || refImage?.pattern?.primary || 'unknown pattern'
+      
+      alert(`No similar images found for the ${refPattern}. Try adjusting the minimum similarity threshold or adding more images to your collection.`)
+    }
   } catch (error) {
     console.error('Error handling image drop:', error)
+    alert(`Error searching for similar images: ${error.message}`)
   }
 }
 
@@ -217,19 +257,17 @@ const resetSearch = async () => {
   await imageStore.clearSearch()
 }
 
-// Examples of common searches
-const searchExamples = [
-  "vibrant paisley pattern", 
-  "blue floral designs",
-  "traditional red patterns",
-  "geometric patterns with green",
-  "modern abstract designs", 
-  "natural leaf motifs"
-]
-
-const runExampleSearch = (example) => {
-  searchQuery.value = example
-  handleSearch()
+// Helper function to get the thumbnail URL from a path
+const getThumbnailUrl = (path) => {
+  if (!path) return '';
+  
+  // Get just the filename
+  const filename = path.includes('/') ? 
+    path.split('/').pop() : 
+    path; // Use path directly if it's already just a filename
+  
+  // Construct API URL
+  return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
 }
 </script>
 
@@ -237,15 +275,14 @@ const runExampleSearch = (example) => {
 .sidebar-search-container {
   display: flex;
   flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-5);
+  gap: var(--space-2);
+  padding: var(--space-3);
   padding-top: 0; /* No top padding to allow logo to use all space */
-  padding-bottom: var(--space-8); /* Extra padding at bottom */
+  padding-bottom: var(--space-3); /* Reduced bottom padding */
   transition: all 0.3s ease;
   height: 100%;
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: rgba(99, 102, 241, 0.3) transparent;
+  overflow-y: hidden; /* Prevent scrolling */
+  min-height: 0;
 }
 
 /* For WebKit browsers */
@@ -258,25 +295,25 @@ const runExampleSearch = (example) => {
 }
 
 .sidebar-search-container::-webkit-scrollbar-thumb {
-  background-color: rgba(99, 102, 241, 0.3);
+  background-color: rgba(58, 58, 58, 0.5);
   border-radius: var(--radius-full);
 }
 
 .sidebar-search-container::-webkit-scrollbar-thumb:hover {
-  background-color: rgba(99, 102, 241, 0.5);
+  background-color: rgba(58, 58, 58, 0.7);
 }
 
 .sidebar-search-container.is-dragover {
-  background-color: rgba(79, 70, 229, 0.1);
-  border: 2px dashed var(--color-primary);
+  background-color: rgba(40, 40, 40, 0.2);
+  border: 2px dashed #3a3a3a;
   border-radius: var(--radius-lg);
   animation: pulse 1.5s infinite;
 }
 
 @keyframes pulse {
-  0% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0.4); }
-  70% { box-shadow: 0 0 0 10px rgba(79, 70, 229, 0); }
-  100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); }
+  0% { box-shadow: 0 0 0 0 rgba(58, 58, 58, 0.4); }
+  70% { box-shadow: 0 0 0 10px rgba(58, 58, 58, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(58, 58, 58, 0); }
 }
 
 /* AI Search Header */
@@ -285,65 +322,56 @@ const runExampleSearch = (example) => {
   flex-direction: column;
   align-items: flex-start;
   gap: var(--space-1);
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-1); /* Reduced margin */
 }
 
 .ai-badge {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1) var(--space-3);
-  background: linear-gradient(90deg, rgba(99, 102, 241, 0.1), rgba(34, 211, 238, 0.1));
-  border-radius: var(--radius-full);
-  color: var(--color-accent);
-  font-size: 0.8rem;
+  gap: 4px; /* Reduced gap */
+  background: rgba(37, 37, 37, 0.5);
+  border: 1px solid var(--color-primary-dark);
+  color: var(--color-secondary);
+  font-size: 0.7rem;
   font-weight: 600;
-  letter-spacing: 0.5px;
-  text-transform: uppercase;
-  border: 1px solid rgba(34, 211, 238, 0.3);
-  box-shadow: 0 0 10px rgba(34, 211, 238, 0.1);
+  padding: 2px 6px; /* Reduced padding */
+  border-radius: var(--radius-full);
+  margin-bottom: 0; /* Removed margin */
 }
 
 .ai-pulse {
-  width: 8px;
-  height: 8px;
-  background-color: var(--color-accent);
+  width: 6px;
+  height: 6px;
+  background-color: var(--color-primary-light);
   border-radius: 50%;
-  position: relative;
-  display: inline-block;
+  animation: pulse 2s infinite;
+  flex-shrink: 0;
 }
 
-.ai-pulse::before {
-  content: '';
-  position: absolute;
-  inset: -2px;
-  background-color: rgba(34, 211, 238, 0.5);
-  border-radius: 50%;
-  animation: pulse-animation 2s infinite;
-}
-
-@keyframes pulse-animation {
-  0% { transform: scale(1); opacity: 1; }
-  70% { transform: scale(1.5); opacity: 0; }
-  100% { transform: scale(1.5); opacity: 0; }
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(119, 119, 119, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(119, 119, 119, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(119, 119, 119, 0);
+  }
 }
 
 .sidebar-title {
-  font-size: 1.5rem;
-  font-weight: 600;
-  margin: 0;
-  background: linear-gradient(135deg, #6366f1, #22d3ee);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  text-shadow: 0 0 10px rgba(99, 102, 241, 0.2);
+  font-size: 1.25rem; /* Smaller font */
+  font-weight: 700;
+  margin: 0 0 var(--space-2) 0; /* Reduced margin */
+  color: var(--color-secondary);
 }
 
 .search-form {
   display: flex;
   flex-direction: column;
-  gap: var(--space-3);
-  margin-bottom: var(--space-2);
+  gap: var(--space-2); /* Reduced gap */
+  margin-bottom: var(--space-1); /* Reduced margin */
 }
 
 .search-input-wrapper {
@@ -363,10 +391,10 @@ const runExampleSearch = (example) => {
 
 .search-input {
   width: 100%;
-  padding: var(--space-3) var(--space-3) var(--space-3) calc(var(--space-3) + 24px);
-  border: 1px solid rgba(99, 102, 241, 0.2);
+  padding: var(--space-2) var(--space-2) var(--space-2) calc(var(--space-2) + 24px); /* Reduced padding */
+  border: 1px solid rgba(58, 58, 58, 0.3);
   border-radius: var(--radius-md);
-  font-size: 0.95rem;
+  font-size: 0.9rem; /* Smaller font */
   background-color: rgba(255, 255, 255, 0.03);
   color: var(--color-text);
   transition: all 0.3s ease;
@@ -375,7 +403,7 @@ const runExampleSearch = (example) => {
 
 .search-input:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.15), 0 0 10px rgba(99, 102, 241, 0.1);
+  box-shadow: 0 0 0 3px rgba(58, 58, 58, 0.15), 0 0 10px rgba(58, 58, 58, 0.1);
   outline: none;
   background-color: rgba(255, 255, 255, 0.05);
 }
@@ -408,31 +436,25 @@ const runExampleSearch = (example) => {
 }
 
 .search-button {
+  background: var(--color-primary);
+  color: var(--color-text);
+  border: 1px solid var(--color-primary-dark);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2); /* Reduced padding */
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  padding: var(--space-3) var(--space-4);
-  background: linear-gradient(135deg, #6366f1, #22d3ee);
-  color: white;
-  border: none;
-  border-radius: var(--radius-md);
-  font-weight: 500;
+  gap: var(--space-1); /* Reduced gap */
+  font-weight: 600;
+  font-size: 0.9rem; /* Smaller font */
   cursor: pointer;
-  transition: all 0.3s ease;
-  font-size: 0.95rem;
-  box-shadow: 0 4px 15px rgba(99, 102, 241, 0.25);
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
 }
 
-.search-button svg {
-  width: 18px;
-  height: 18px;
-}
-
-.search-button:hover:not(:disabled) {
-  background: linear-gradient(135deg, #4f46e5, #0ea5e9);
+.search-button:hover {
+  background: var(--color-primary-dark);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
   transform: translateY(-1px);
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.3);
 }
 
 .search-button:active:not(:disabled) {
@@ -445,51 +467,58 @@ const runExampleSearch = (example) => {
   cursor: not-allowed;
 }
 
+.search-button svg {
+  width: 16px;
+  height: 16px;
+  color: var(--color-text);
+}
+
 /* Settings section */
 .search-settings-section {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: var(--space-4);
+  padding-top: var(--space-2); /* Reduced padding */
+  margin-top: var(--space-1); /* Added small margin */
 }
 
 .settings-title {
-  font-size: 1rem;
+  font-size: 0.9rem; /* Smaller font */
   font-weight: 600;
-  margin: 0 0 var(--space-3) 0;
+  margin: 0 0 var(--space-1) 0; /* Reduced margin */
   color: var(--color-text-light);
 }
 
 .settings-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: var(--space-3);
+  gap: var(--space-2); /* Reduced gap */
 }
 
 .setting-item {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-1);
 }
 
 .setting-label {
-  font-size: 0.8rem;
+  font-size: 0.7rem;
   font-weight: 500;
   color: var(--color-text-light);
-  margin-left: var(--space-2);
+  margin-left: var(--space-1);
 }
 
 .setting-select {
-  padding: var(--space-2);
+  padding: var(--space-1); /* Reduced padding */
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: var(--radius-md);
   background-color: rgba(255, 255, 255, 0.05);
   color: var(--color-text);
-  font-size: 0.85rem;
+  font-size: 0.8rem; /* Smaller font */
   transition: all 0.2s ease;
 }
 
 .setting-select:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(79, 70, 229, 0.1);
+  box-shadow: 0 0 0 2px rgba(58, 58, 58, 0.2);
   outline: none;
 }
 
@@ -510,7 +539,7 @@ const runExampleSearch = (example) => {
 .search-spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid rgba(34, 211, 238, 0.2);
+  border: 2px solid rgba(58, 58, 58, 0.2);
   border-top-color: var(--color-accent);
   border-radius: 50%;
   animation: spin 1s infinite linear;
@@ -524,102 +553,155 @@ const runExampleSearch = (example) => {
 .search-results-info {
   display: flex;
   flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-4);
+  width: 100%;
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  padding: var(--space-4);
+  margin: var(--space-3) 0;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.search-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
   gap: var(--space-3);
 }
 
-.result-count {
+.results-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.result-count-badge {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  min-width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 var(--space-2);
+  background: var(--color-primary);
+  border-radius: var(--radius-full);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.results-description {
   font-size: 0.9rem;
   color: var(--color-text-light);
+  padding: var(--space-1) var(--space-2);
 }
 
 .search-terms {
-  font-style: italic;
-  color: var(--color-primary-light);
+  color: var(--color-secondary);
+  font-weight: 600;
 }
 
-.reset-button {
+.reset-search-button {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   padding: var(--space-2) var(--space-3);
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: var(--color-text);
-  font-size: 0.85rem;
+  background: #505050;
+  border: 1px solid #3a3a3a;
+  color: white;
+  font-size: 0.9rem;
+  font-weight: 600;
   border-radius: var(--radius-md);
   transition: all 0.2s ease;
   cursor: pointer;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
 }
 
-.reset-button svg {
-  width: 16px;
-  height: 16px;
+.reset-search-button svg {
+  width: 18px;
+  height: 18px;
 }
 
-.reset-button:hover {
-  background-color: rgba(255, 255, 255, 0.1);
-  color: var(--color-primary-light);
-  border-color: var(--color-primary-light);
+.reset-search-button:hover {
+  background: #3a3a3a;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-/* Search examples section */
-.search-examples-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: var(--space-4);
-}
-
-.examples-title {
-  font-size: 1rem;
-  font-weight: 600;
-  margin: 0 0 var(--space-3) 0;
-  color: var(--color-text-light);
-}
-
-.example-buttons {
+.reference-image-container {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  align-items: center;
   gap: var(--space-2);
+  margin-top: var(--space-2);
+  background: rgba(58, 58, 58, 0.1);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(58, 58, 58, 0.2);
+  width: 100%;
+  position: relative;
 }
 
-.example-button {
-  font-size: 0.8rem;
-  padding: var(--space-2) var(--space-3);
-  background-color: rgba(99, 102, 241, 0.1);
-  border: 1px solid rgba(99, 102, 241, 0.2);
-  color: var(--color-primary-light);
+.reference-image-wrapper {
+  width: 100px;
+  height: 100px;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.reference-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.3s ease;
+}
+
+.reference-image-wrapper:hover .reference-image {
+  transform: scale(1.1);
+}
+
+.reference-label {
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
   border-radius: var(--radius-full);
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.example-button:hover {
-  background-color: rgba(99, 102, 241, 0.2);
-  border-color: var(--color-primary);
-  color: var(--color-primary-light);
-  box-shadow: 0 0 10px rgba(99, 102, 241, 0.15);
+  margin-top: var(--space-2);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 /* Hints */
 .search-hint {
   display: flex;
   align-items: center;
-  gap: var(--space-2);
-  font-size: 0.8rem;
+  gap: var(--space-1); /* Reduced gap */
+  font-size: 0.7rem; /* Smaller font */
   color: var(--color-text-light);
-  padding: var(--space-3);
-  background-color: rgba(255, 255, 255, 0.03);
+  padding: var(--space-1) var(--space-2); /* Reduced padding */
+  background-color: rgba(58, 58, 58, 0.1);
   border-radius: var(--radius-md);
-  border-left: 3px solid var(--color-primary);
-  margin-top: var(--space-2);
+  border-left: 2px solid var(--color-primary); /* Thinner border */
+  margin-top: var(--space-1); /* Reduced margin */
 }
 
 .drag-hint {
   border-left-color: var(--color-accent);
+  margin-bottom: var(--space-1); /* Greatly reduced margin */
 }
 
 .hint-icon {
-  font-size: 1rem;
+  font-size: 0.8rem; /* Smaller icon */
 }
 
 .hint-text {
@@ -664,14 +746,14 @@ const runExampleSearch = (example) => {
   display: flex;
   justify-content: center;
   align-items: center;
-  margin: 0 0 2rem 0;
-  padding: 1.5rem 1rem;
+  margin: 0 0 1rem 0; /* Reduced margin */
+  padding: 1rem 0.5rem; /* Reduced padding */
   background-color: transparent;
   box-shadow: none;
 }
 
 .sidebar-logo img {
-  width: 200px;
+  width: 160px; /* Reduced logo size */
   height: auto;
   object-fit: contain;
   filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.5));

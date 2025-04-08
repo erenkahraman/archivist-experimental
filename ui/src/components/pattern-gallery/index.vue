@@ -32,7 +32,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
-import { useImageStore } from '../../store/imageStore'
+import { useImageStore } from '../../stores/imageStore'
 import ItemGrid from './item-grid.vue'
 import EmptyState from './empty-state.vue'
 import DetailModal from './modals/detail-modal.vue'

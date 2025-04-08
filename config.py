@@ -32,12 +32,12 @@ API_HOST = "0.0.0.0"  # Allow access from all IPs
 API_PORT = 5000
 
 # Elasticsearch settings
-ELASTICSEARCH_HOSTS = os.environ.get("ELASTICSEARCH_HOSTS", "").split(",") if os.environ.get("ELASTICSEARCH_HOSTS") else []
+ELASTICSEARCH_HOSTS = ["http://localhost:9200"]  # Default local Elasticsearch instance
 ELASTICSEARCH_INDEX = os.environ.get("ELASTICSEARCH_INDEX", "archivist")
-ELASTICSEARCH_CLOUD_ID = os.environ.get("ELASTICSEARCH_CLOUD_ID")
-ELASTICSEARCH_API_KEY = os.environ.get("ELASTICSEARCH_API_KEY")
-ELASTICSEARCH_USERNAME = os.environ.get("ELASTICSEARCH_USERNAME")
-ELASTICSEARCH_PASSWORD = os.environ.get("ELASTICSEARCH_PASSWORD")
+ELASTICSEARCH_CLOUD_ID = None
+ELASTICSEARCH_API_KEY = None
+ELASTICSEARCH_USERNAME = None
+ELASTICSEARCH_PASSWORD = None
 
 # Search settings
 DEFAULT_SEARCH_LIMIT = 20
