@@ -118,21 +118,21 @@ class SearchEngine:
         try:
             metadata_path = config.BASE_DIR / "metadata.json"
             if metadata_path.exists():
-                with open(metadata_path, 'r') as f:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             return {}
-        except Exception as e:
-            logger.error(f"Error loading metadata: {e}")
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error("Error loading metadata: %s", e)
             return {}
 
     def save_metadata(self):
         """Save metadata to file."""
         try:
             metadata_path = config.BASE_DIR / "metadata.json"
-            with open(metadata_path, 'w') as f:
+            with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(self.metadata, f)
-        except Exception as e:
-            logger.error(f"Error saving metadata: {e}")
+        except OSError as e:
+            logger.error("Error saving metadata: %s", e)
 
     def set_gemini_api_key(self, api_key: str):
         """Set or update the Gemini API key"""
@@ -151,17 +151,17 @@ class SearchEngine:
     def process_image(self, image_path: Path) -> Dict[str, Any]:
         """Process an image and extract metadata including patterns and colors."""
         try:
-            logger.info(f"Processing image: {image_path}")
+            logger.info("Processing image: %s", image_path)
             
             # Check if file exists
             if not image_path.exists():
-                logger.error(f"Image file not found: {image_path}")
+                logger.error("Image file not found: %s", image_path)
                 return None
                 
             # Create thumbnail
             thumbnail_path = self.create_thumbnail(image_path)
             if not thumbnail_path:
-                logger.error(f"Failed to create thumbnail for: {image_path}")
+                logger.error("Failed to create thumbnail for: %s", image_path)
                 return None
                 
             # Get relative paths for storage
@@ -215,11 +215,11 @@ class SearchEngine:
                 else:
                     logger.warning(f"Failed to index {image_path.name} in Elasticsearch")
             
-            logger.info(f"Image processed successfully: {image_path}")
+            logger.info("Image processed successfully: %s", image_path)
             return metadata
             
-        except Exception as e:
-            logger.error(f"Error processing image: {e}", exc_info=True)
+        except OSError as e:
+            logger.error("Error processing image: %s", e, exc_info=True)
             return None
 
     def create_thumbnail(self, image_path: Path) -> Path:
