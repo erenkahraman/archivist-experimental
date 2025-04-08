@@ -83,7 +83,6 @@ class ElasticsearchClient:
         elif username and password:
             self.connection_params["basic_auth"] = (username, password)
             
-
         # Add sensible timeouts
         self.connection_params["request_timeout"] = 30
         self.connection_params["retry_on_timeout"] = True
@@ -119,7 +118,7 @@ class ElasticsearchClient:
         if not self.client:
             return False
         try:
-            return self.es.ping()
+            return self.client.ping()
         except Exception as e:
             logger.error(f"Elasticsearch connection error: {str(e)}")
             return False
@@ -135,7 +134,7 @@ class ElasticsearchClient:
         if not self.is_connected():
             return False
         return self.client.indices.exists(index=self.index_name)
-    
+
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def create_index(self, force_recreate=False) -> bool:
         """
@@ -338,7 +337,8 @@ class ElasticsearchClient:
                         }
                     }
                 }
-            }            
+            }
+            
             # Create the index with both settings and mappings
             self.client.indices.create(
                 index=self.index_name,
@@ -351,8 +351,8 @@ class ElasticsearchClient:
             return True
         except Exception as e:
             logger.error(f"Failed to create index: {str(e)}")
-            return False
-    
+            return False 
+
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def index_document(self, document: Dict[str, Any]) -> bool:
         """
@@ -402,7 +402,6 @@ class ElasticsearchClient:
             
         if not documents:
             logger.warning("No documents to bulk index")
-
             return True
             
         # Make sure the index exists
@@ -430,7 +429,6 @@ class ElasticsearchClient:
         if not actions:
             logger.warning("No valid documents to bulk index")
             return False
-
             
         # Execute bulk indexing
         success, failed = helpers.bulk(
@@ -442,13 +440,39 @@ class ElasticsearchClient:
         
         logger.info(f"Bulk indexed {success} documents, {len(failed) if failed else 0} failed")
         return success > 0
-    
+        
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def delete_document(self, doc_id: str) -> bool:
+        """
+        Delete a document from Elasticsearch by ID
+        
+        Args:
+            doc_id: Document ID to delete
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.is_connected():
+            logger.error("Cannot delete document: not connected to Elasticsearch")
+            return False
+        
+        try:
+            self.client.delete(index=self.index_name, id=doc_id)
+            logger.info(f"Document with ID {doc_id} deleted successfully")
+            return True
+        except Exception as e:
+            # Document not found is not an error in this context
+            if "404" in str(e) or "not_found" in str(e).lower():
+                logger.warning(f"Document with ID {doc_id} not found for deletion")
+                return False
+            # Other errors
+            logger.error(f"Error deleting document with ID {doc_id}: {str(e)}")
+            return False 
+
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-
         Enhanced search function using composite query structure
-
         
         Args:
             query: The search query string
@@ -712,8 +736,8 @@ class ElasticsearchClient:
         except Exception as e:
             search_time = time.time() - start_time
             logger.error(f"Search failed after {search_time:.2f}s: {str(e)}")
-            return []
-    
+            return [] 
+
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def find_similar(self, embedding=None, limit=20, min_similarity=0.1, exclude_id=None, 
                    text_query=None):
@@ -726,7 +750,7 @@ class ElasticsearchClient:
             min_similarity: Minimum similarity score threshold
             exclude_id: ID of image to exclude from results
             text_query: Text query for searching
-
+            
         Returns:
             List of documents sorted by similarity
         """
@@ -734,7 +758,6 @@ class ElasticsearchClient:
             logger.error("Cannot perform similarity search: not connected to Elasticsearch")
             return []
             
-
         # Build the main query
         if text_query:
             logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
@@ -817,7 +840,6 @@ class ElasticsearchClient:
                 }
             })
             
-
             # Add dominant color search
             should_clauses.append({
                 "nested": {
@@ -914,7 +936,6 @@ class ElasticsearchClient:
                     {"term": {"id": exclude_id}},
                     {"term": {"filename": exclude_id}},
                     {"term": {"path": exclude_id}}
-
                 ]
             elif "script_score" in query_body:
                 # For vector search

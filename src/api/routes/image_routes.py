@@ -142,18 +142,38 @@ def delete_image(filename):
             if DEBUG:
                 logger.info(f"Deleted thumbnail: {thumbnail_path}")
             
-        # Remove metadata if it exists
-        if filename in search_engine.metadata:
-            del search_engine.metadata[filename]
-            if DEBUG:
-                logger.info(f"Removed metadata for: {filename}")
-            
-        # Save metadata
-        search_engine.save_metadata()
+        # Remove metadata and clean up elasticsearch
+        success = search_engine.delete_image(filename)
+        
+        if success:
+            logger.info(f"Successfully deleted image and metadata for: {filename}")
+        else:
+            logger.warning(f"Deleted files but couldn't find metadata for: {filename}")
         
         return jsonify({'status': 'success'}), 200
     except Exception as e:
         logger.error(f"Delete error: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@api.route('/cleanup-metadata', methods=['POST', 'OPTIONS'])
+def cleanup_metadata():
+    """Clean up metadata for missing files to fix gallery display issues"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Run the cleanup operation
+        cleaned_count = search_engine.cleanup_missing_files()
+        
+        # Return results
+        return jsonify({
+            'status': 'success', 
+            'cleaned_entries': cleaned_count,
+            'message': f"Cleaned up {cleaned_count} missing file entries"
+        }), 200
+    except Exception as e:
+        logger.error(f"Cleanup error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 @api.route('/purge-all', methods=['POST', 'OPTIONS'])
