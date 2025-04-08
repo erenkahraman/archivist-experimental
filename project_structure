@@ -1,15 +1,58 @@
-image_retrieval/
+archivist/
+├── .env.example
+├── .gitignore
+├── .gitattributes
+├── README.md
 ├── requirements.txt
-├── config.py
+├── setup.py
+├── main.py
+├── docs/
+│   ├── api.md
+│   ├── development.md
+│   └── elasticsearch_setup.md
 ├── src/
 │   ├── __init__.py
-│   ├── image_processor.py
-│   ├── embedding_extractor.py
-│   ├── vector_store.py
+│   ├── app.py
+│   ├── config_prompts.py
+│   ├── logging_config.py
+│   ├── analyzers/
+│   │   ├── __init__.py
+│   │   ├── color_analyzer.py
+│   │   └── gemini_analyzer.py
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes/
+│   ├── config/
+│   │   ├── __init__.py
+│   │   └── settings.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   └── image_processor.py
+│   ├── search/
+│   │   ├── __init__.py
+│   │   ├── elasticsearch_client.py
+│   │   └── vector_store.py
 │   ├── search_engine.py
-│   └── api.py
+│   └── utils/
+│       ├── __init__.py
+│       └── helpers.py
+├── scripts/
+│   ├── fix_index.py
+│   └── migrations/
+├── tests/
+│   ├── __init__.py
+│   ├── test_api.py
+│   ├── test_analyzers.py
+│   └── test_search.py
 ├── ui/
 │   ├── index.html
-│   ├── style.css
-│   └── app.js
-└── main.py 
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── src/
+│   │   ├── components/
+│   │   ├── assets/
+│   │   └── App.vue
+│   └── dist/
+├── data/
+│   └── placeholder.txt
+└── config.py 
