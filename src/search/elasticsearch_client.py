@@ -83,6 +83,7 @@ class ElasticsearchClient:
         elif username and password:
             self.connection_params["basic_auth"] = (username, password)
             
+
         # Add sensible timeouts
         self.connection_params["request_timeout"] = 30
         self.connection_params["retry_on_timeout"] = True
@@ -118,7 +119,7 @@ class ElasticsearchClient:
         if not self.client:
             return False
         try:
-            return self.client.ping()
+            return self.es.ping()
         except Exception as e:
             logger.error(f"Elasticsearch connection error: {str(e)}")
             return False
@@ -337,8 +338,7 @@ class ElasticsearchClient:
                         }
                     }
                 }
-            }
-            
+            }            
             # Create the index with both settings and mappings
             self.client.indices.create(
                 index=self.index_name,
@@ -402,6 +402,7 @@ class ElasticsearchClient:
             
         if not documents:
             logger.warning("No documents to bulk index")
+
             return True
             
         # Make sure the index exists
@@ -429,6 +430,7 @@ class ElasticsearchClient:
         if not actions:
             logger.warning("No valid documents to bulk index")
             return False
+
             
         # Execute bulk indexing
         success, failed = helpers.bulk(
@@ -444,7 +446,9 @@ class ElasticsearchClient:
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
+
         Enhanced search function using composite query structure
+
         
         Args:
             query: The search query string
@@ -722,7 +726,7 @@ class ElasticsearchClient:
             min_similarity: Minimum similarity score threshold
             exclude_id: ID of image to exclude from results
             text_query: Text query for searching
-            
+
         Returns:
             List of documents sorted by similarity
         """
@@ -730,6 +734,7 @@ class ElasticsearchClient:
             logger.error("Cannot perform similarity search: not connected to Elasticsearch")
             return []
             
+
         # Build the main query
         if text_query:
             logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
@@ -812,6 +817,7 @@ class ElasticsearchClient:
                 }
             })
             
+
             # Add dominant color search
             should_clauses.append({
                 "nested": {
@@ -908,6 +914,7 @@ class ElasticsearchClient:
                     {"term": {"id": exclude_id}},
                     {"term": {"filename": exclude_id}},
                     {"term": {"path": exclude_id}}
+
                 ]
             elif "script_score" in query_body:
                 # For vector search

@@ -123,6 +123,36 @@ class MemoryCache:
             "hit_ratio": self.hits / (self.hits + self.misses) if (self.hits + self.misses) > 0 else 0
         }
 
+    def invalidate_for_key_prefix(self, prefix: str) -> None:
+        """
+        Invalidate all cache entries that start with the given prefix
+        
+        Args:
+            prefix: The prefix to match against cache keys
+        """
+        if not self.enabled:
+            return
+        
+        try:
+            # For Redis cache
+            if self.redis:
+                # Get all keys with the prefix
+                keys = self.redis.keys(f"{prefix}*")
+                if keys:
+                    # Delete all matching keys
+                    self.redis.delete(*keys)
+                    logger.info(f"Invalidated {len(keys)} cache entries with prefix '{prefix}'")
+            # For in-memory cache
+            elif self.memory_cache:
+                # Identify keys to delete
+                keys_to_delete = [k for k in self.memory_cache.keys() if k.startswith(prefix)]
+                # Delete matching keys
+                for key in keys_to_delete:
+                    self.memory_cache.pop(key, None)
+                logger.info(f"Invalidated {len(keys_to_delete)} in-memory cache entries with prefix '{prefix}'")
+        except Exception as e:
+            logger.error(f"Error invalidating cache with prefix '{prefix}': {e}")
+
 
 def cached(function=None, ttl=None, key_prefix=None):
     """

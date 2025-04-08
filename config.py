@@ -27,6 +27,9 @@ N_CLUSTERS = 5
 INDEX_TYPE = "IVFFlat"
 NLIST = 100  # Number of clusters for IVF index
 
+# Search settings
+DEFAULT_MIN_SIMILARITY = 0.1  # Default minimum similarity threshold for search results
+
 # API settings
 API_HOST = "0.0.0.0"  # Allow access from all IPs
 API_PORT = 5000

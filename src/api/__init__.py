@@ -1,4 +1,5 @@
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, Flask
+from flask_cors import CORS
 import logging
 import os
 import dotenv
@@ -42,6 +43,7 @@ else:
     # Mask API key for secure logging
     masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
     logger.info(f"Using Gemini API key: {masked_key}")
+
 
 # Create API blueprint
 api = Blueprint('api', __name__)
@@ -89,3 +91,33 @@ def home():
 
 # Import routes after api is created to avoid circular imports
 from .routes import image_routes, search_routes, settings_routes
+
+def create_app():
+    """
+    Create and configure the Flask application
+    """
+    app = Flask(__name__)
+    
+    # Configure CORS to allow requests from frontend
+    CORS(app, resources={
+        r"/api/*": {
+            "origins": [
+                "http://localhost:3000", 
+                "http://localhost:5000",
+                "http://127.0.0.1:3000",
+                "http://127.0.0.1:5000"
+            ],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+            "allow_headers": [
+                "Content-Type", 
+                "Authorization", 
+                "Accept",
+                "Cache-Control"
+            ]
+        }
+    })
+    
+    # Register the API blueprint
+    app.register_blueprint(api, url_prefix='/api')
+    
+    return app

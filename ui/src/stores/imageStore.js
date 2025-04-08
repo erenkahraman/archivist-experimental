@@ -136,8 +136,11 @@ export const useImageStore = defineStore('images', () => {
         await fetchImages()
       }
       
+      // Add a cache busting parameter to prevent cached results
+      const cacheBuster = Date.now()
+      
       // Call the search API
-      const response = await fetch(`${API_BASE_URL}/search`, {
+      const response = await fetch(`${API_BASE_URL}/search?_=${cacheBuster}`, {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
