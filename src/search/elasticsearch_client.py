@@ -990,4 +990,32 @@ class ElasticsearchClient:
         except Exception as e:
             search_time = time.time() - start_time
             logger.error(f"Similarity search failed after {search_time:.2f}s: {str(e)}")
-            return [] 
+            return []
+    
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def delete_document(self, doc_id: str) -> bool:
+        """
+        Delete a document from Elasticsearch by ID
+        
+        Args:
+            doc_id: Document ID to delete
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        if not self.is_connected():
+            logger.error("Cannot delete document: not connected to Elasticsearch")
+            return False
+        
+        try:
+            self.client.delete(index=self.index_name, id=doc_id)
+            logger.info(f"Document with ID {doc_id} deleted successfully")
+            return True
+        except Exception as e:
+            # Document not found is not an error in this context
+            if "404" in str(e) or "not_found" in str(e).lower():
+                logger.warning(f"Document with ID {doc_id} not found for deletion")
+                return False
+            # Other errors
+            logger.error(f"Error deleting document with ID {doc_id}: {str(e)}")
+            return False

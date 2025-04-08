@@ -665,28 +665,123 @@ class SearchEngine:
             bool: True if successful, False otherwise
         """
         try:
-            # Remove from in-memory metadata
-            if image_path in self.metadata:
-                metadata = self.metadata.pop(image_path)
+            # Handle both full paths and just filenames
+            if os.path.sep in image_path:
+                # It's a path, check if it exists as is
+                key = image_path
+                # Also check if it's stored with a different path format
+                filename = os.path.basename(image_path)
+            else:
+                # It's just a filename, find it in metadata by filename
+                filename = image_path
+                key = None
+                for k, v in self.metadata.items():
+                    if v.get('filename') == filename:
+                        key = k
+                        break
+            
+            # Remove from in-memory metadata using the correct key
+            if key and key in self.metadata:
+                metadata = self.metadata.pop(key)
                 self.save_metadata()
                 
                 # Remove from Elasticsearch if enabled
                 if self.use_elasticsearch:
-                    doc_id = metadata.get("id", image_path)
+                    doc_id = metadata.get("id", os.path.basename(key))
                     self.es_client.delete_document(doc_id)
                     
                 # Invalidate cache
                 self.cache.invalidate_all()
                     
-                logger.info(f"Deleted image metadata: {image_path}")
+                logger.info(f"Deleted image metadata for: {filename}")
                 return True
+            elif filename:
+                # Try to find by ID or filename in Elasticsearch
+                if self.use_elasticsearch:
+                    # Try to delete by filename as ID
+                    self.es_client.delete_document(filename)
+                    # Also try by filename without extension
+                    name_without_ext = os.path.splitext(filename)[0]
+                    self.es_client.delete_document(name_without_ext)
+                    # Invalidate cache
+                    self.cache.invalidate_all()
+                    logger.info(f"Deleted image from Elasticsearch by filename: {filename}")
+                    return True
+                
+                logger.warning(f"Image not found in metadata by filename: {filename}")
+                return False
             else:
                 logger.warning(f"Image not found in metadata: {image_path}")
                 return False
         except Exception as e:
             logger.error(f"Error deleting image: {e}")
             return False
+
+    def cleanup_missing_files(self) -> int:
+        """
+        Clean up metadata for files that no longer exist.
+        This helps prevent "missing thumbnail" errors in the UI.
+        
+        Returns:
+            int: Number of entries cleaned up
+        """
+        try:
+            if not self.metadata:
+                logger.info("No metadata to clean up")
+                return 0
+                
+            entries_to_remove = []
             
+            # Check each metadata entry for missing files
+            for rel_path, metadata in self.metadata.items():
+                # Get the full paths to check
+                image_path = config.UPLOAD_DIR / rel_path if isinstance(rel_path, str) else None
+                thumbnail_path = config.THUMBNAIL_DIR / metadata.get('filename') if metadata.get('filename') else None
+                
+                # Check if the image file exists
+                if not image_path or not image_path.exists():
+                    entries_to_remove.append(rel_path)
+                    logger.info(f"Adding missing image to cleanup: {rel_path}")
+                    continue
+                    
+                # If image exists but thumbnail doesn't, recreate the thumbnail
+                if thumbnail_path and not thumbnail_path.exists():
+                    try:
+                        logger.info(f"Recreating missing thumbnail for: {rel_path}")
+                        self.create_thumbnail(image_path)
+                    except Exception as thumb_err:
+                        logger.error(f"Failed to recreate thumbnail for {rel_path}: {thumb_err}")
+                        # If we can't recreate the thumbnail, the entry should be removed
+                        entries_to_remove.append(rel_path)
+            
+            # Remove the entries for missing files
+            for rel_path in entries_to_remove:
+                if rel_path in self.metadata:
+                    metadata = self.metadata.pop(rel_path)
+                    
+                    # Remove from Elasticsearch if enabled
+                    if self.use_elasticsearch:
+                        doc_id = metadata.get("id", rel_path) 
+                        filename = metadata.get("filename", "")
+                        # Try multiple ways to delete from Elasticsearch
+                        self.es_client.delete_document(doc_id)
+                        if filename:
+                            self.es_client.delete_document(filename)
+                            name_without_ext = os.path.splitext(filename)[0]
+                            self.es_client.delete_document(name_without_ext)
+            
+            # Save the updated metadata if any entries were removed
+            if entries_to_remove:
+                self.save_metadata()
+                # Invalidate cache to ensure consistency
+                self.cache.invalidate_all()
+                
+            return len(entries_to_remove)
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up missing files: {e}")
+            return 0
+
     def update_image_metadata(self, image_path: str, new_metadata: Dict[str, Any]) -> bool:
         """
         Update image metadata and in Elasticsearch if enabled.
