@@ -199,48 +199,60 @@ class ElasticsearchClient:
                         "pattern_synonym_filter": {
                             "type": "synonym",
                             "synonyms": [
-                                "floral, flower, botanical, bloom, garden",
-                                "geometric, geometry, shape, pattern",
-                                "stripe, striped, linear, line, banded",
-                                "dot, dots, polka dot, spotted, circular pattern",
-                                "plaid, tartan, check, checkered",
-                                "paisley, paisleys",
-                                "abstract, non-representational",
-                                "tropical, exotic, jungle, palm",
-                                "damask, scroll, acanthus",
-                                "chevron, zigzag, herringbone",
-                                "animal, wildlife, fauna, creature"
+                                "floral, flower, botanical, blossom, bloom",
+                                "geometric, geometry, shapes, abstract",
+                                "stripe, striped, linear, line",
+                                "check, checked, plaid, tartan, gingham",
+                                "dot, dots, polka dot, spotted, circular",
+                                "paisley, teardrop, boteh, persian",
+                                "animal, fauna, wildlife, creature",
+                                "tropical, exotic, jungle, rainforest",
+                                "damask, jacquard, brocade, ornate",
+                                "abstract, non-representational, modern",
+                                "ethnic, tribal, folk, cultural, indigenous",
+                                "retro, vintage, nostalgic, classic",
+                                "minimalist, minimal, simple, clean"
                             ]
                         }
                     }
                 }
             }
-
-            # Enhanced mappings
+            
+            # Define mappings
             mappings = {
                 "properties": {
                     "id": {"type": "keyword"},
                     "filename": {"type": "keyword"},
                     "path": {"type": "keyword"},
                     "thumbnail_path": {"type": "keyword"},
-                    "timestamp": {"type": "date", "format": "epoch_second||epoch_millis||strict_date_optional_time"},
-                    "embedding": {"type": "dense_vector", "dims": 512},
+                    "added_date": {"type": "date"},
+                    "last_modified": {"type": "date"},
+                    "file_size": {"type": "long"},
+                    "width": {"type": "integer"},
+                    "height": {"type": "integer"},
                     "patterns": {
                         "properties": {
                             "main_theme": {
                                 "type": "text",
-                                "analyzer": "standard",
-                                "boost": 3.0,
+                                "analyzer": "english",
                                 "fields": {
                                     "raw": {"type": "keyword"},
                                     "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                 }
                             },
                             "main_theme_confidence": {"type": "float"},
+                            "category": {
+                                "type": "text",
+                                "analyzer": "english",
+                                "fields": {
+                                    "raw": {"type": "keyword"},
+                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                }
+                            },
+                            "category_confidence": {"type": "float"},
                             "primary_pattern": {
                                 "type": "text",
-                                "analyzer": "standard",
-                                "boost": 2.5,
+                                "analyzer": "english",
                                 "fields": {
                                     "raw": {"type": "keyword"},
                                     "partial": {"type": "text", "analyzer": "partial_analyzer"}
@@ -252,8 +264,7 @@ class ElasticsearchClient:
                                 "properties": {
                                     "name": {
                                         "type": "text",
-                                        "analyzer": "standard",
-                                        "boost": 2.0,
+                                        "analyzer": "english",
                                         "fields": {
                                             "raw": {"type": "keyword"},
                                             "partial": {"type": "text", "analyzer": "partial_analyzer"}
@@ -267,36 +278,13 @@ class ElasticsearchClient:
                                 "properties": {
                                     "name": {
                                         "type": "text",
-                                        "analyzer": "standard",
-                                        "boost": 1.5,
+                                        "analyzer": "english",
                                         "fields": {
                                             "raw": {"type": "keyword"},
                                             "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
-                                }
-                            },
-                            "category": {
-                                "type": "text",
-                                "analyzer": "standard",
-                                "fields": {
-                                    "raw": {"type": "keyword"},
-                                    "partial": {"type": "text", "analyzer": "partial_analyzer"}
-                                }
-                            },
-                            "category_confidence": {"type": "float"},
-                            "style_keywords": {"type": "text"},
-                            "prompt": {
-                                "properties": {
-                                    "final_prompt": {
-                                        "type": "text",
-                                        "analyzer": "standard",
-                                        "boost": 1.0,
-                                        "fields": {
-                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
-                                        }
-                                    }
                                 }
                             },
                             "secondary_patterns": {
@@ -304,13 +292,53 @@ class ElasticsearchClient:
                                 "properties": {
                                     "name": {
                                         "type": "text",
-                                        "analyzer": "standard",
+                                        "analyzer": "english",
                                         "fields": {
                                             "raw": {"type": "keyword"},
                                             "partial": {"type": "text", "analyzer": "partial_analyzer"}
                                         }
                                     },
                                     "confidence": {"type": "float"}
+                                }
+                            },
+                            "style_keywords": {
+                                "type": "text",
+                                "analyzer": "english",
+                                "fields": {
+                                    "raw": {"type": "keyword"}
+                                }
+                            },
+                            "prompt": {
+                                "properties": {
+                                    "final_prompt": {
+                                        "type": "text",
+                                        "analyzer": "english",
+                                        "fields": {
+                                            "raw": {"type": "keyword"},
+                                            "partial": {"type": "text", "analyzer": "partial_analyzer"}
+                                        }
+                                    }
+                                }
+                            },
+                            "colors": {
+                                "properties": {
+                                    "dominant_colors": {
+                                        "type": "nested",
+                                        "properties": {
+                                            "name": {
+                                                "type": "text",
+                                                "analyzer": "standard",
+                                                "fields": {
+                                                    "raw": {"type": "keyword"},
+                                                    "partial": {"type": "text", "analyzer": "partial_analyzer"},
+                                                    "synonym": {"type": "text", "analyzer": "standard", "search_analyzer": "standard", "term_vector": "with_positions_offsets"}
+                                                }
+                                            },
+                                            "hex": {"type": "keyword"},
+                                            "proportion": {"type": "float"}
+                                        }
+                                    },
+                                    "color_distribution": {"type": "object"}
                                 }
                             }
                         }
@@ -501,12 +529,12 @@ class ElasticsearchClient:
         # Build the main compound query
         should_clauses = []
         
-        # 1. Exact matches on main_theme with high boost
+        # 1. Exact matches on main_theme with highest boost
         should_clauses.append({
             "match": {
                 "patterns.main_theme.raw": {
                     "query": query,
-                    "boost": 5.0
+                    "boost": 6.0
                 }
             }
         })
@@ -516,31 +544,12 @@ class ElasticsearchClient:
             "match": {
                 "patterns.primary_pattern.raw": {
                     "query": query,
-                    "boost": 4.5
+                    "boost": 5.0
                 }
             }
         })
         
-        # 3. Multi-match across all relevant fields
-        should_clauses.append({
-            "multi_match": {
-                "query": query,
-                "fields": [
-                    "patterns.main_theme^3",
-                    "patterns.main_theme.partial^2.5",
-                    "patterns.primary_pattern^2.5",
-                    "patterns.primary_pattern.partial^2",
-                    "patterns.prompt.final_prompt^1.2",
-                    "patterns.prompt.final_prompt.partial^1"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "boost": 3.0
-            }
-        })
-        
-        # 4. Nested query for content details
+        # 3. Nested query for content details with enhanced boosting
         should_clauses.append({
             "nested": {
                 "path": "patterns.content_details",
@@ -549,7 +558,66 @@ class ElasticsearchClient:
                         "should": [
                             {
                                 "match": {
+                                    "patterns.content_details.name.raw": {
+                                        "query": query,
+                                        "boost": 4.5
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
                                     "patterns.content_details.name": {
+                                        "query": query,
+                                        "boost": 4.0
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "patterns.content_details.name.partial": {
+                                        "query": query,
+                                        "boost": 3.5
+                                    }
+                                }
+                            }
+                        ]
+                    }
+                },
+                "score_mode": "max",
+                "boost": 4.0
+            }
+        })
+        
+        # 4. Multi-match across all relevant text fields
+        should_clauses.append({
+            "multi_match": {
+                "query": query,
+                "fields": [
+                    "patterns.main_theme^4.0",
+                    "patterns.main_theme.partial^3.5",
+                    "patterns.primary_pattern^3.0",
+                    "patterns.primary_pattern.partial^2.5",
+                    "patterns.prompt.final_prompt^2.0",
+                    "patterns.prompt.final_prompt.partial^1.5",
+                    "patterns.style_keywords^1.5"
+                ],
+                "type": "best_fields",
+                "fuzziness": "AUTO",
+                "prefix_length": 2,
+                "boost": 3.0
+            }
+        })
+        
+        # 5. Nested query for stylistic attributes
+        should_clauses.append({
+            "nested": {
+                "path": "patterns.stylistic_attributes",
+                "query": {
+                    "bool": {
+                        "should": [
+                            {
+                                "match": {
+                                    "patterns.stylistic_attributes.name.raw": {
                                         "query": query,
                                         "boost": 2.0
                                     }
@@ -557,7 +625,15 @@ class ElasticsearchClient:
                             },
                             {
                                 "match": {
-                                    "patterns.content_details.name.partial": {
+                                    "patterns.stylistic_attributes.name": {
+                                        "query": query,
+                                        "boost": 1.8
+                                    }
+                                }
+                            },
+                            {
+                                "match": {
+                                    "patterns.stylistic_attributes.name.partial": {
                                         "query": query,
                                         "boost": 1.5
                                     }
@@ -571,26 +647,26 @@ class ElasticsearchClient:
             }
         })
         
-        # 5. Nested query for stylistic attributes
+        # 6. Nested query for secondary patterns
         should_clauses.append({
             "nested": {
-                "path": "patterns.stylistic_attributes",
+                "path": "patterns.secondary_patterns",
                 "query": {
                     "bool": {
                         "should": [
                             {
                                 "match": {
-                                    "patterns.stylistic_attributes.name": {
+                                    "patterns.secondary_patterns.name.raw": {
                                         "query": query,
-                                        "boost": 1.5
+                                        "boost": 2.0
                                     }
                                 }
                             },
                             {
                                 "match": {
-                                    "patterns.stylistic_attributes.name.partial": {
+                                    "patterns.secondary_patterns.name": {
                                         "query": query,
-                                        "boost": 1.0
+                                        "boost": 1.8
                                     }
                                 }
                             }
@@ -602,7 +678,7 @@ class ElasticsearchClient:
             }
         })
         
-        # 6. Nested query for colors
+        # 7. Nested query for colors
         should_clauses.append({
             "nested": {
                 "path": "colors.dominant_colors",
@@ -613,7 +689,7 @@ class ElasticsearchClient:
                                 "match": {
                                     "colors.dominant_colors.name.raw": {
                                         "query": query,
-                                        "boost": 2.0
+                                        "boost": 1.5
                                     }
                                 }
                             },
@@ -621,15 +697,7 @@ class ElasticsearchClient:
                                 "match": {
                                     "colors.dominant_colors.name": {
                                         "query": query,
-                                        "boost": 1.5
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "colors.dominant_colors.name.partial": {
-                                        "query": query,
-                                        "boost": 1.0
+                                        "boost": 1.2
                                     }
                                 }
                             }
@@ -637,7 +705,7 @@ class ElasticsearchClient:
                     }
                 },
                 "score_mode": "avg",
-                "boost": 1.5
+                "boost": 1.0
             }
         })
         
@@ -657,7 +725,7 @@ class ElasticsearchClient:
                     {
                         "field_value_factor": {
                             "field": "patterns.main_theme_confidence",
-                            "factor": 1.5,
+                            "factor": 2.0,
                             "missing": 0.8,
                             "modifier": "log1p"
                         }
@@ -665,9 +733,17 @@ class ElasticsearchClient:
                     {
                         "field_value_factor": {
                             "field": "patterns.pattern_confidence",
-                            "factor": 1.2,
+                            "factor": 1.5,
                             "missing": 0.7,
                             "modifier": "log1p"
+                        }
+                    },
+                    # Reduce score for fallback analysis results
+                    {
+                        "script_score": {
+                            "script": {
+                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
+                            }
                         }
                     },
                     # Add recency boost

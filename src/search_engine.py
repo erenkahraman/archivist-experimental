@@ -6,8 +6,9 @@ import json
 from PIL import Image
 import numpy as np
 import logging
-import time as import_time
+import time
 import os
+from datetime import datetime
 
 # Relative imports from the same package
 from .analyzers.color_analyzer import ColorAnalyzer
@@ -189,37 +190,55 @@ class SearchEngine:
             # Then use Gemini for pattern analysis
             pattern_info = self.gemini_analyzer.analyze_image(str(image_path))
             
+            # Check if this is a fallback result and log accordingly
+            is_fallback = pattern_info.get("is_fallback", False)
+            if is_fallback:
+                logger.warning(f"Using fallback analysis for {image_path.name} due to API limitations")
+            
             # Validate and enhance pattern_info if needed
             pattern_info = self._enhance_pattern_info(pattern_info)
             
             # Generate metadata
+            timestamp = int(time.time())
+            file_stats = image_path.stat()
+            
             metadata = {
                 'id': str(image_path.stem),
                 'filename': image_path.name,
                 'path': str(rel_image_path),
                 'thumbnail_path': str(rel_thumbnail_path),
+                'timestamp': timestamp,
+                'added_date': datetime.fromtimestamp(timestamp).isoformat(),
+                'last_modified': datetime.fromtimestamp(file_stats.st_mtime).isoformat(),
+                'file_size': file_stats.st_size,
+                'width': width,
+                'height': height,
                 'patterns': pattern_info,
                 'colors': color_info,
-                'timestamp': int(import_time.time())
+                'has_fallback_analysis': is_fallback
             }
             
-            # Store metadata in memory
-            self.metadata[str(rel_image_path)] = metadata
+            # Generate embedding for similarity search
+            # embedding = self.get_image_embedding(image)
+            # if embedding is not None:
+            #     metadata['embedding'] = embedding.tolist()
+            
+            # Add to metadata store
+            self.metadata[str(image_path)] = metadata
             self.save_metadata()
             
-            # Index in Elasticsearch if enabled
+            # Index in Elasticsearch if available
             if self.use_elasticsearch:
-                indexing_successful = self.es_client.index_document(metadata)
-                if indexing_successful:
+                result = self.es_client.index_document(metadata)
+                if result:
                     logger.info(f"Successfully indexed {image_path.name} in Elasticsearch")
                 else:
-                    logger.warning(f"Failed to index {image_path.name} in Elasticsearch")
+                    logger.error(f"Failed to index {image_path.name} in Elasticsearch")
             
             logger.info("Image processed successfully: %s", image_path)
             return metadata
-            
-        except OSError as e:
-            logger.error("Error processing image: %s", e, exc_info=True)
+        except Exception as e:
+            logger.error("Error processing image %s: %s", image_path, str(e), exc_info=True)
             return None
 
     def create_thumbnail(self, image_path: Path) -> Path:
@@ -292,7 +311,7 @@ class SearchEngine:
             user_id: Optional user identifier
         """
         try:
-            timestamp = int(import_time.time())
+            timestamp = int(time.time())
             log_entry = {
                 "timestamp": timestamp,
                 "query": query,
@@ -300,7 +319,7 @@ class SearchEngine:
                 "search_time": search_time,
                 "session_id": session_id,
                 "user_id": user_id,
-                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+                "date": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
             }
             
             self.search_logs["queries"].append(log_entry)
@@ -331,7 +350,7 @@ class SearchEngine:
             user_id: Optional user identifier
         """
         try:
-            timestamp = int(import_time.time())
+            timestamp = int(time.time())
             log_entry = {
                 "timestamp": timestamp,
                 "query": query,
@@ -339,7 +358,7 @@ class SearchEngine:
                 "rank": rank,
                 "session_id": session_id,
                 "user_id": user_id,
-                "date": import_time.strftime("%Y-%m-%d %H:%M:%S", import_time.localtime(timestamp))
+                "date": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
             }
             
             self.search_logs["clicks"].append(log_entry)
@@ -368,7 +387,7 @@ class SearchEngine:
         """
         try:
             # Calculate cutoff timestamp
-            cutoff = int(import_time.time()) - (days * 24 * 60 * 60)
+            cutoff = int(time.time()) - (days * 24 * 60 * 60)
             
             # Filter queries and clicks by time range
             recent_queries = [q for q in self.search_logs["queries"] 
@@ -449,7 +468,7 @@ class SearchEngine:
         """
         # Log analytics info and timing
         logger.info(f"Searching for: '{query}'")
-        search_start_time = int(import_time.time())
+        search_start_time = int(time.time())
         
         # Check cache first
         cache_key = f"search:{query}:{k}"
@@ -458,7 +477,7 @@ class SearchEngine:
         if cached_results:
             logger.info(f"Cache hit for '{query}'")
             # Log the search for analytics
-            search_time = int(import_time.time()) - search_start_time
+            search_time = int(time.time()) - search_start_time
             self.log_search_query(query, len(cached_results), search_time, session_id, user_id)
             return cached_results
         
@@ -472,7 +491,7 @@ class SearchEngine:
             self.cache.set(cache_key, results)
             
             # Log the search for analytics
-            search_time = int(import_time.time()) - search_start_time
+            search_time = int(time.time()) - search_start_time
             self.log_search_query(query, len(results), search_time, session_id, user_id)
             
             return results
@@ -485,170 +504,185 @@ class SearchEngine:
             self.cache.set(cache_key, results)
             
             # Log the search for analytics
-            search_time = int(import_time.time()) - search_start_time
+            search_time = int(time.time()) - search_start_time
             self.log_search_query(query, len(results), search_time, session_id, user_id)
             
             return results
 
     def _in_memory_search(self, query: str, k: int = 10) -> List[Dict]:
         """
-        Perform in-memory search when Elasticsearch is not available.
-        Enhanced to match the Elasticsearch search capabilities.
+        Perform in-memory search when Elasticsearch is not available
         
         Args:
-            query: Search query
-            k: Maximum number of results
+            query: Search query string
+            k: Number of results to return
             
         Returns:
-            List of results sorted by relevance
+            List of matching documents
         """
-        logger.info(f"Performing enhanced in-memory search for: '{query}'")
-        
         if not self.metadata:
-            logger.warning("No metadata available for in-memory search")
             return []
         
-        # Convert query to lowercase for case-insensitive matching
-        query_lower = query.lower()
+        if query == "*" or not query.strip():
+            # For empty queries or wildcards, return all sorted by timestamp
+            results = sorted(
+                self.metadata.values(), 
+                key=lambda x: x.get("timestamp", 0),
+                reverse=True
+            )
+            return results[:k]
         
-        # Split query into terms for more flexible matching
-        query_terms = [term.strip() for term in query_lower.split() if term.strip()]
+        # Calculate match scores for all images
+        scored_results = []
         
-        # Calculate similarity scores for each document
-        scored_docs = []
-        for doc_id, doc in self.metadata.items():
-            # Initialize score components
-            score_components = {
-                "main_theme_exact": 0.0,
-                "main_theme_partial": 0.0,
-                "primary_pattern_exact": 0.0,
-                "primary_pattern_partial": 0.0,
-                "content_details": 0.0,
-                "stylistic_attributes": 0.0,
-                "colors": 0.0,
-                "prompt": 0.0
-            }
+        # Lowercase the query for case-insensitive matching
+        query = query.lower()
+        
+        # Split query into terms for term matching
+        query_terms = [term.strip() for term in query.split() if term.strip()]
+        
+        for doc in self.metadata.values():
+            # Skip if missing required data
+            if not doc.get("patterns") or not doc.get("colors"):
+                continue
             
-            # Get patterns data
+            # Start with a base score
+            score = 0.0
+            pattern_matches = 0
+            
+            # Extract pattern info
             patterns = doc.get("patterns", {})
             
-            # Exact match on main_theme (highest weight)
-            main_theme = patterns.get("main_theme", "").lower()
-            if main_theme:
-                if main_theme == query_lower:
-                    score_components["main_theme_exact"] = 5.0
-                elif any(term in main_theme for term in query_terms):
-                    score_components["main_theme_partial"] = 3.0
+            # Check if this is a fallback analysis
+            is_fallback = doc.get("has_fallback_analysis", False) or patterns.get("is_fallback", False)
             
-            # Exact match on primary_pattern
-            primary_pattern = patterns.get("primary_pattern", "").lower()
-            if primary_pattern:
-                if primary_pattern == query_lower:
-                    score_components["primary_pattern_exact"] = 4.5
-                elif any(term in primary_pattern for term in query_terms):
-                    score_components["primary_pattern_partial"] = 2.5
+            # Get the main theme and primary pattern
+            main_theme = str(patterns.get("main_theme", "")).lower()
+            primary_pattern = str(patterns.get("primary_pattern", "")).lower()
             
-            # Check content details with weights
+            # Get content details and style info
             content_details = patterns.get("content_details", [])
-            content_score = 0.0
-            for detail in content_details:
-                if not isinstance(detail, dict):
-                    continue
-                    
-                name = detail.get("name", "").lower()
-                confidence = detail.get("confidence", 0.7)
-                
-                if name and name == query_lower:
-                    content_score += 2.0 * confidence
-                elif name and any(term in name for term in query_terms):
-                    content_score += 1.5 * confidence
-            
-            score_components["content_details"] = min(content_score, 2.0)  # Cap content score
-            
-            # Check stylistic attributes
-            stylistic_attrs = patterns.get("stylistic_attributes", [])
-            style_score = 0.0
-            for attr in stylistic_attrs:
-                if not isinstance(attr, dict):
-                    continue
-                    
-                name = attr.get("name", "").lower()
-                confidence = attr.get("confidence", 0.6)
-                
-                if name and name == query_lower:
-                    style_score += 1.5 * confidence
-                elif name and any(term in name for term in query_terms):
-                    style_score += 1.0 * confidence
-            
-            score_components["stylistic_attributes"] = min(style_score, 1.5)  # Cap style score
-            
-            # Check prompt
+            stylistic_attributes = patterns.get("stylistic_attributes", [])
             prompt = patterns.get("prompt", {}).get("final_prompt", "").lower()
-            if prompt:
-                if query_lower in prompt:
-                    score_components["prompt"] = 1.2
-                elif any(term in prompt for term in query_terms):
-                    score_components["prompt"] = 0.8
+            style_keywords = [str(kw).lower() for kw in patterns.get("style_keywords", [])]
             
-            # Check colors
-            colors = doc.get("colors", {})
-            dominant_colors = colors.get("dominant_colors", [])
-            color_score = 0.0
-            for color in dominant_colors:
-                if not isinstance(color, dict):
-                    continue
-                    
-                name = color.get("name", "").lower()
-                proportion = color.get("proportion", 0.5)
-                
-                if name and name == query_lower:
-                    color_score += 2.0 * proportion
-                elif name and any(term in name for term in query_terms):
-                    color_score += 1.5 * proportion
-            
-            score_components["colors"] = min(color_score, 1.5)  # Cap color score
-            
-            # Calculate base score as sum of components
-            base_score = sum(score_components.values())
-            
-            # Apply confidence boosting similar to function_score query
+            # Get confidence scores
             main_theme_confidence = patterns.get("main_theme_confidence", 0.8)
             pattern_confidence = patterns.get("pattern_confidence", 0.7)
             
-            # Apply confidence multipliers
-            confidence_boost = 1.0
-            if base_score > 0:
-                confidence_boost = 1.0 + (0.5 * main_theme_confidence) + (0.3 * pattern_confidence)
+            # Check exact matches on main theme and primary pattern
+            if query in main_theme:
+                score += 10.0 * main_theme_confidence
+                pattern_matches += 1
+            
+            if query in primary_pattern:
+                score += 8.0 * pattern_confidence
+                pattern_matches += 1
+            
+            # Check content details for matches
+            for item in content_details:
+                item_name = str(item.get("name", "")).lower()
+                item_confidence = item.get("confidence", 0.7)
+                
+                if query in item_name:
+                    score += 7.0 * item_confidence
+                    pattern_matches += 1
+                
+                # Check for partial term matches
+                for term in query_terms:
+                    if term in item_name:
+                        score += 3.0 * item_confidence
+                        pattern_matches += 1
+            
+            # Check stylistic attributes for matches
+            for item in stylistic_attributes:
+                item_name = str(item.get("name", "")).lower()
+                item_confidence = item.get("confidence", 0.7)
+                
+                if query in item_name:
+                    score += 6.0 * item_confidence
+                    pattern_matches += 1
+                
+                # Check for partial term matches
+                for term in query_terms:
+                    if term in item_name:
+                        score += 2.5 * item_confidence
+                        pattern_matches += 1
+            
+            # Check style keywords
+            for keyword in style_keywords:
+                if query in keyword:
+                    score += 5.0
+                    pattern_matches += 1
+                
+                # Check for partial term matches
+                for term in query_terms:
+                    if term in keyword:
+                        score += 2.0
+                        pattern_matches += 1
+            
+            # Check the prompt
+            if query in prompt:
+                score += 4.0
+                pattern_matches += 1
+            
+            # Check for partial term matches in prompt
+            for term in query_terms:
+                if term in prompt:
+                    score += 1.5
+                    pattern_matches += 1
+            
+            # Check dominant colors
+            colors = doc.get("colors", {})
+            color_matches = 0
+            
+            for color in colors.get("dominant_colors", []):
+                color_name = str(color.get("name", "")).lower()
+                proportion = color.get("proportion", 0.0)
+                
+                if query in color_name:
+                    score += 3.0 * proportion
+                    color_matches += 1
+                
+                # Check for partial term matches
+                for term in query_terms:
+                    if term in color_name:
+                        score += 1.0 * proportion
+                        color_matches += 1
+            
+            # Add bonus if we matched both patterns and colors
+            if pattern_matches > 0 and color_matches > 0:
+                score += 2.0
             
             # Apply recency boost
             recency_boost = 1.0
             timestamp = doc.get("timestamp", 0)
-            current_time = int(import_time.time())
+            current_time = int(time.time())
             days_old = (current_time - timestamp) / (24 * 60 * 60)
             if days_old < 30:  # Less than 30 days old
-                recency_boost = 1.0 + (0.5 * (1 - (days_old / 30)))
+                recency_boost = 1.0 + (1.0 - days_old / 30) * 0.5  # Up to 50% boost for very recent
+            
+            # Apply penalties for fallback results
+            fallback_penalty = 0.75 if is_fallback else 1.0
             
             # Calculate final score
-            final_score = base_score * confidence_boost * recency_boost
+            final_score = score * recency_boost * fallback_penalty
             
-            # If any match found, add to results
+            # Only include results that have some relevance
             if final_score > 0:
-                # Add document with its score
-                doc_copy = doc.copy()
-                doc_copy["similarity"] = min(final_score / 15.0, 1.0)  # Normalize to [0,1] range and cap at 1.0
-                doc_copy["score_components"] = score_components  # For debugging
-                scored_docs.append(doc_copy)
+                similarity = min(1.0, final_score / 20.0)  # Normalize to 0-1 range
+                
+                # Add to results with normalized score
+                result = doc.copy()
+                result["similarity"] = similarity
+                result["raw_score"] = final_score
+                scored_results.append(result)
         
-        # Sort by similarity (descending)
-        scored_docs.sort(key=lambda x: x["similarity"], reverse=True)
-        
-        # Remove score_components from final results
-        for doc in scored_docs:
-            if "score_components" in doc:
-                del doc["score_components"]
+        # Sort by score (descending)
+        scored_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
         
         # Return top k results
-        return scored_docs[:k]
+        return scored_results[:k]
 
     def delete_image(self, image_path: str) -> bool:
         """
