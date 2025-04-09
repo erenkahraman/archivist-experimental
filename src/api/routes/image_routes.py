@@ -131,16 +131,37 @@ def delete_image(filename):
         file_path = config.UPLOAD_DIR / filename
         thumbnail_path = config.THUMBNAIL_DIR / filename
         
+        deleted_original = False
+        deleted_thumbnail = False
+        
         # Delete files if they exist
         if file_path.exists():
             os.remove(file_path)
-            if DEBUG:
-                logger.info(f"Deleted file: {file_path}")
+            deleted_original = True
+            logger.info(f"Deleted original file: {file_path}")
+        else:
+            # Try to find the file by basename in uploads directory
+            basename = os.path.basename(filename)
+            for file in config.UPLOAD_DIR.glob(f"*{basename}*"):
+                if file.is_file():
+                    os.remove(file)
+                    deleted_original = True
+                    logger.info(f"Deleted original file: {file}")
+                    break
             
         if thumbnail_path.exists():
             os.remove(thumbnail_path)
-            if DEBUG:
-                logger.info(f"Deleted thumbnail: {thumbnail_path}")
+            deleted_thumbnail = True
+            logger.info(f"Deleted thumbnail: {thumbnail_path}")
+        else:
+            # Try to find the thumbnail by basename
+            basename = os.path.basename(filename)
+            for file in config.THUMBNAIL_DIR.glob(f"*{basename}*"):
+                if file.is_file():
+                    os.remove(file)
+                    deleted_thumbnail = True
+                    logger.info(f"Deleted thumbnail: {file}")
+                    break
             
         # Remove metadata and clean up elasticsearch
         success = search_engine.delete_image(filename)
@@ -150,7 +171,13 @@ def delete_image(filename):
         else:
             logger.warning(f"Deleted files but couldn't find metadata for: {filename}")
         
-        return jsonify({'status': 'success'}), 200
+        # Return detailed status
+        return jsonify({
+            'status': 'success',
+            'deleted_original': deleted_original,
+            'deleted_thumbnail': deleted_thumbnail,
+            'deleted_metadata': success
+        }), 200
     except Exception as e:
         logger.error(f"Delete error: {str(e)}")
         return jsonify({'error': str(e)}), 500
@@ -204,4 +231,66 @@ def purge_all_images():
         return jsonify({'status': 'success', 'message': 'All images and metadata purged'}), 200
     except Exception as e:
         logger.error(f"Error purging images: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@api.route('/repair-thumbnails', methods=['POST', 'OPTIONS'])
+def repair_thumbnails():
+    """Repair missing thumbnails and synchronize metadata with actual files"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        results = {
+            'thumbnails_recreated': 0,
+            'entries_cleaned': 0,
+            'new_images_added': 0
+        }
+        
+        # First, clean up missing file entries
+        results['entries_cleaned'] = search_engine.cleanup_missing_files()
+        
+        # Then recreate any missing thumbnails for existing images
+        for file_path in config.UPLOAD_DIR.glob("*"):
+            if not file_path.is_file():
+                continue
+                
+            filename = file_path.name
+            thumbnail_path = config.THUMBNAIL_DIR / filename
+            
+            if not thumbnail_path.exists():
+                logger.info(f"Recreating missing thumbnail for: {filename}")
+                try:
+                    thumbnail = search_engine.create_thumbnail(file_path)
+                    if thumbnail:
+                        results['thumbnails_recreated'] += 1
+                except Exception as e:
+                    logger.error(f"Error recreating thumbnail for {filename}: {e}")
+            
+            # Check if this image is in metadata, if not, add it
+            rel_path = str(file_path.relative_to(config.BASE_DIR))
+            found = False
+            
+            for meta_path, metadata in search_engine.metadata.items():
+                if metadata.get('filename') == filename or meta_path == rel_path:
+                    found = True
+                    break
+                    
+            if not found:
+                # Process the new image
+                logger.info(f"Adding missing image to metadata: {filename}")
+                try:
+                    metadata = search_engine.process_image(file_path)
+                    if metadata:
+                        results['new_images_added'] += 1
+                except Exception as e:
+                    logger.error(f"Error processing missing image {filename}: {e}")
+        
+        return jsonify({
+            'status': 'success',
+            'message': f"Repair complete: {results['thumbnails_recreated']} thumbnails recreated, {results['entries_cleaned']} entries cleaned, {results['new_images_added']} new images added",
+            'results': results
+        }), 200
+    except Exception as e:
+        logger.error(f"Error repairing thumbnails: {str(e)}")
         return jsonify({'error': str(e)}), 500 

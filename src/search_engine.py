@@ -118,21 +118,21 @@ class SearchEngine:
         try:
             metadata_path = config.BASE_DIR / "metadata.json"
             if metadata_path.exists():
-                with open(metadata_path, 'r') as f:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
                     return json.load(f)
             return {}
-        except Exception as e:
-            logger.error(f"Error loading metadata: {e}")
+        except (OSError, json.JSONDecodeError) as e:
+            logger.error("Error loading metadata: %s", e)
             return {}
 
     def save_metadata(self):
         """Save metadata to file."""
         try:
             metadata_path = config.BASE_DIR / "metadata.json"
-            with open(metadata_path, 'w') as f:
+            with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(self.metadata, f)
-        except Exception as e:
-            logger.error(f"Error saving metadata: {e}")
+        except OSError as e:
+            logger.error("Error saving metadata: %s", e)
 
     def set_gemini_api_key(self, api_key: str):
         """Set or update the Gemini API key"""
@@ -151,17 +151,17 @@ class SearchEngine:
     def process_image(self, image_path: Path) -> Dict[str, Any]:
         """Process an image and extract metadata including patterns and colors."""
         try:
-            logger.info(f"Processing image: {image_path}")
+            logger.info("Processing image: %s", image_path)
             
             # Check if file exists
             if not image_path.exists():
-                logger.error(f"Image file not found: {image_path}")
+                logger.error("Image file not found: %s", image_path)
                 return None
                 
             # Create thumbnail
             thumbnail_path = self.create_thumbnail(image_path)
             if not thumbnail_path:
-                logger.error(f"Failed to create thumbnail for: {image_path}")
+                logger.error("Failed to create thumbnail for: %s", image_path)
                 return None
                 
             # Get relative paths for storage
@@ -215,11 +215,11 @@ class SearchEngine:
                 else:
                     logger.warning(f"Failed to index {image_path.name} in Elasticsearch")
             
-            logger.info(f"Image processed successfully: {image_path}")
+            logger.info("Image processed successfully: %s", image_path)
             return metadata
             
-        except Exception as e:
-            logger.error(f"Error processing image: {e}", exc_info=True)
+        except OSError as e:
+            logger.error("Error processing image: %s", e, exc_info=True)
             return None
 
     def create_thumbnail(self, image_path: Path) -> Path:
@@ -728,6 +728,7 @@ class SearchEngine:
                 return 0
                 
             entries_to_remove = []
+            thumbnails_recreated = 0
             
             # Check each metadata entry for missing files
             for rel_path, metadata in self.metadata.items():
@@ -737,15 +738,33 @@ class SearchEngine:
                 
                 # Check if the image file exists
                 if not image_path or not image_path.exists():
-                    entries_to_remove.append(rel_path)
-                    logger.info(f"Adding missing image to cleanup: {rel_path}")
-                    continue
+                    # Try to find image by filename
+                    filename = metadata.get('filename')
+                    if filename:
+                        alternate_path = config.UPLOAD_DIR / filename
+                        if alternate_path.exists():
+                            logger.info(f"Found image at alternate path: {alternate_path}")
+                            image_path = alternate_path
+                        else:
+                            entries_to_remove.append(rel_path)
+                            logger.info(f"Adding missing image to cleanup: {rel_path}")
+                            continue
+                    else:
+                        entries_to_remove.append(rel_path)
+                        logger.info(f"Adding missing image to cleanup: {rel_path}")
+                        continue
                     
                 # If image exists but thumbnail doesn't, recreate the thumbnail
                 if thumbnail_path and not thumbnail_path.exists():
                     try:
                         logger.info(f"Recreating missing thumbnail for: {rel_path}")
-                        self.create_thumbnail(image_path)
+                        new_thumbnail = self.create_thumbnail(image_path)
+                        if new_thumbnail:
+                            thumbnails_recreated += 1
+                        else:
+                            logger.error(f"Failed to recreate thumbnail for {rel_path}")
+                            # If we can't recreate the thumbnail, the entry should be removed
+                            entries_to_remove.append(rel_path)
                     except Exception as thumb_err:
                         logger.error(f"Failed to recreate thumbnail for {rel_path}: {thumb_err}")
                         # If we can't recreate the thumbnail, the entry should be removed
@@ -768,11 +787,12 @@ class SearchEngine:
                             self.es_client.delete_document(name_without_ext)
             
             # Save the updated metadata if any entries were removed
-            if entries_to_remove:
+            if entries_to_remove or thumbnails_recreated > 0:
                 self.save_metadata()
                 # Invalidate cache to ensure consistency
                 self.cache.invalidate_all()
                 
+            logger.info(f"Cleanup complete: {len(entries_to_remove)} entries removed, {thumbnails_recreated} thumbnails recreated")
             return len(entries_to_remove)
             
         except Exception as e:

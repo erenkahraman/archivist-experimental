@@ -7,6 +7,8 @@ from PIL import Image
 import base64
 import io
 import time
+import hashlib
+from pathlib import Path
 from src.config.prompts import GEMINI_CONFIG
 
 logger = logging.getLogger(__name__)
@@ -26,6 +28,12 @@ class GeminiAnalyzer:
             logger.info(f"Using Gemini API key: {masked_key}")
             # Configure the API client but don't store the raw key
             genai.configure(api_key=self._api_key)
+            
+        # Set up cache directory
+        cache_dir = Path(os.environ.get("CACHE_DIR", "cache/gemini"))
+        self.cache_dir = Path(cache_dir)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Gemini analysis cache directory: {self.cache_dir}")
     
     def _mask_api_key(self, key):
         """Safely mask API key for logging purposes."""
@@ -57,124 +65,155 @@ class GeminiAnalyzer:
         Returns:
             Dictionary containing pattern analysis results
         """
-        try:
-            if not self._api_key:
-                logger.error("Gemini API key not set")
-                return self._get_default_response()
+        # Check if result is cached first
+        cache_result = self._get_from_cache(image_path)
+        if cache_result:
+            logger.info(f"Using cached Gemini analysis for {os.path.basename(image_path)}")
+            return cache_result
             
-            # Load the image and resize for token efficiency
-            image = Image.open(image_path)
-            
-            # Get image dimensions
-            width, height = image.size
-            
-            # Resize to smaller dimensions for token efficiency
-            max_dim = 220
-            if width > max_dim or height > max_dim:
-                if width > height:
-                    new_width = max_dim
-                    new_height = int(height * (max_dim / width))
-                else:
-                    new_height = max_dim
-                    new_width = int(width * (max_dim / height))
-                image = image.resize((new_width, new_height), Image.LANCZOS)
-            
-            # Convert to JPEG with compression for token reduction
-            buffer = io.BytesIO()
-            image.convert('RGB').save(buffer, format="JPEG", quality=75)
-            buffer.seek(0)
-            optimized_image = Image.open(buffer)
-            
-            # Get file name from path
-            file_name = os.path.basename(image_path)
-            
-            # Define the enhanced analysis prompt for more granular data
-            analysis_prompt = f"""
-            Analyze this textile/fabric pattern image in detail, identifying specific elements and characteristics.
-
-            Output a structured JSON with the following:
-
-            {{
-              "main_theme": "The most specific, primary pattern name that accurately describes this design (e.g. 'paisley', 'abstract geometric', 'floral damask')",
-              "main_theme_confidence": 0.95,
-              "category": "Base category (geometric, floral, abstract, figurative, ethnic/tribal, typographic)",
-              "category_confidence": 0.90,
-              "primary_pattern": "The dominant pattern type",
-              "pattern_confidence": 0.90,
-              "content_details": [
-                {{"name": "specific motif or element in the pattern", "confidence": 0.85}},
-                {{"name": "another specific motif or element", "confidence": 0.80}}
-              ],
-              "stylistic_attributes": [
-                {{"name": "art style or design characteristic (e.g. 'vintage', 'intricate', 'minimalist')", "confidence": 0.85}},
-                {{"name": "another style descriptor", "confidence": 0.80}}
-              ],
-              "secondary_patterns": [
-                {{"name": "a secondary pattern if present", "confidence": 0.75}}
-              ],
-              "style_keywords": ["5-7 descriptive keywords that capture unique aspects"],
-              "prompt": {{"final_prompt": "A detailed description of the pattern including arrangement, scale, style and cultural influences"}}
-            }}
-
-            Guidelines:
-            1. Be specific and precise - use the most accurate terminology for each pattern type
-            2. For main_theme and primary_pattern, identify the most specific term possible (e.g. "paisley" rather than "curvy pattern")
-            3. In content_details, list 2-4 specific motifs, shapes or distinctive elements
-            4. In stylistic_attributes, include 2-4 design characteristic terms that describe the aesthetic
-            5. Include confidence scores (0.0-1.0) that reflect your certainty about each identification
-            6. For any unfamiliar patterns, create descriptive names based on visual characteristics
-            7. Ensure all field names match exactly as specified
-            """
-            
-            # Set up the Gemini model
-            generation_config = {
-                "temperature": 0.0,
-                "top_p": 0.95,
-                "top_k": 10,
-                "max_output_tokens": 1024,
-            }
-            
-            # Load the model
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                generation_config=generation_config
-            )
-            
-            # Generate content
-            response = model.generate_content([analysis_prompt, optimized_image])
-            
-            # Extract and parse JSON
-            result_text = response.text
-            json_start = result_text.find('{')
-            json_end = result_text.rfind('}') + 1
-            
-            if json_start >= 0 and json_end > json_start:
-                json_content = result_text[json_start:json_end]
-                try:
-                    result = json.loads(json_content)
-                    # Add image dimensions and path
-                    result["dimensions"] = {"width": width, "height": height}
-                    result["original_path"] = image_path
-                    # Validate and fix the response
-                    validated_result = self._validate_and_fix_response(result)
-                    return validated_result
-                except json.JSONDecodeError:
-                    logger.error("Failed to parse JSON from Gemini response")
-                    return self._get_default_response(image_path, width, height)
-            else:
-                logger.error("No JSON found in Gemini response")
-                return self._get_default_response(image_path, width, height)
-                
-        except Exception as e:
-            logger.error(f"Error in Gemini analysis: {str(e)}")
-            # Try to get dimensions if image was loaded
-            width, height = 0, 0
+        max_retries = 3
+        retry_delay = 2  # Start with 2 seconds
+        attempt = 0
+        
+        while attempt < max_retries:
             try:
-                if 'image' in locals() and image:
-                    width, height = image.size
-            except:
-                pass
-            return self._get_default_response(image_path, width, height)
+                if not self._api_key:
+                    logger.error("Gemini API key not set")
+                    return self._get_default_response()
+                
+                # Load the image and resize for token efficiency
+                image = Image.open(image_path)
+                
+                # Get image dimensions
+                width, height = image.size
+                
+                # Resize to smaller dimensions for token efficiency
+                max_dim = 220
+                if width > max_dim or height > max_dim:
+                    if width > height:
+                        new_width = max_dim
+                        new_height = int(height * (max_dim / width))
+                    else:
+                        new_height = max_dim
+                        new_width = int(width * (max_dim / height))
+                    image = image.resize((new_width, new_height), Image.LANCZOS)
+                
+                # Convert to JPEG with compression for token reduction
+                buffer = io.BytesIO()
+                image.convert('RGB').save(buffer, format="JPEG", quality=75)
+                buffer.seek(0)
+                optimized_image = Image.open(buffer)
+                
+                # Get file name from path
+                file_name = os.path.basename(image_path)
+                
+                # Define the enhanced analysis prompt for more granular data
+                analysis_prompt = f"""
+                Analyze this textile/fabric pattern image in detail, identifying specific elements and characteristics.
+
+                Output a structured JSON with the following:
+
+                {{
+                  "main_theme": "The most specific, primary pattern name that accurately describes this design (e.g. 'paisley', 'abstract geometric', 'floral damask')",
+                  "main_theme_confidence": 0.95,
+                  "category": "Base category (geometric, floral, abstract, figurative, ethnic/tribal, typographic)",
+                  "category_confidence": 0.90,
+                  "primary_pattern": "The dominant pattern type",
+                  "pattern_confidence": 0.90,
+                  "content_details": [
+                    {{"name": "specific motif or element in the pattern", "confidence": 0.85}},
+                    {{"name": "another specific motif or element", "confidence": 0.80}}
+                  ],
+                  "stylistic_attributes": [
+                    {{"name": "art style or design characteristic (e.g. 'vintage', 'intricate', 'minimalist')", "confidence": 0.85}},
+                    {{"name": "another style descriptor", "confidence": 0.80}}
+                  ],
+                  "secondary_patterns": [
+                    {{"name": "a secondary pattern if present", "confidence": 0.75}}
+                  ],
+                  "style_keywords": ["5-7 descriptive keywords that capture unique aspects"],
+                  "prompt": {{"final_prompt": "A detailed description of the pattern including arrangement, scale, style and cultural influences"}}
+                }}
+
+                Guidelines:
+                1. Be specific and precise - use the most accurate terminology for each pattern type
+                2. For main_theme and primary_pattern, identify the most specific term possible (e.g. "paisley" rather than "curvy pattern")
+                3. In content_details, list 2-4 specific motifs, shapes or distinctive elements
+                4. In stylistic_attributes, include 2-4 design characteristic terms that describe the aesthetic
+                5. Include confidence scores (0.0-1.0) that reflect your certainty about each identification
+                6. For any unfamiliar patterns, create descriptive names based on visual characteristics
+                7. Ensure all field names match exactly as specified
+                """
+                
+                # Set up the Gemini model
+                generation_config = {
+                    "temperature": 0.0,
+                    "top_p": 0.95,
+                    "top_k": 10,
+                    "max_output_tokens": 1024,
+                }
+                
+                # Load the model
+                model = genai.GenerativeModel(
+                    model_name="gemini-1.5-pro",
+                    generation_config=generation_config
+                )
+                
+                # Generate content
+                response = model.generate_content([analysis_prompt, optimized_image])
+                
+                # Extract and parse JSON
+                result_text = response.text
+                json_start = result_text.find('{')
+                json_end = result_text.rfind('}') + 1
+                
+                if json_start >= 0 and json_end > json_start:
+                    json_content = result_text[json_start:json_end]
+                    try:
+                        result = json.loads(json_content)
+                        # Add image dimensions and path
+                        result["dimensions"] = {"width": width, "height": height}
+                        result["original_path"] = image_path
+                        # Validate and fix the response
+                        validated_result = self._validate_and_fix_response(result)
+                        
+                        # Cache the result
+                        self._cache_result(image_path, validated_result)
+                        
+                        return validated_result
+                    except json.JSONDecodeError:
+                        logger.error("Failed to parse JSON from Gemini response")
+                        return self._get_default_response(image_path, width, height)
+                else:
+                    logger.error("No JSON found in Gemini response")
+                    return self._get_default_response(image_path, width, height)
+                    
+            except Exception as e:
+                error_message = str(e)
+                logger.error(f"Error in Gemini analysis: {error_message}", exc_info=True)
+                
+                # Check if this is a rate limit error (429)
+                if "429" in error_message or "quota" in error_message.lower() or "rate limit" in error_message.lower():
+                    attempt += 1
+                    if attempt < max_retries:
+                        wait_time = retry_delay * (2 ** (attempt - 1))  # Exponential backoff
+                        logger.info(f"Rate limit exceeded. Retrying in {wait_time} seconds (attempt {attempt}/{max_retries})...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.warning(f"Maximum retry attempts ({max_retries}) reached for rate limit error.")
+                
+                # Try to get dimensions if image was loaded
+                width, height = 0, 0
+                try:
+                    if 'image' in locals() and image:
+                        width, height = image.size
+                except:
+                    pass
+                return self._get_default_response(image_path, width, height)
+        
+        # If we've exhausted retries or encountered a different error
+        return self._get_default_response(image_path, width, height)
     
     def _validate_and_fix_response(self, response: Dict) -> Dict:
         """Validate and fix the Gemini response to ensure it has all required fields"""
@@ -318,7 +357,7 @@ class GeminiAnalyzer:
         
         # Ensure density has proper structure
         if not isinstance(response.get("density"), dict):
-            response["density"] = default["density"]
+            response["density"] = {"type": "regular", "confidence": 0.7}
         else:
             if "type" not in response["density"]:
                 response["density"]["type"] = "regular"
@@ -457,6 +496,59 @@ class GeminiAnalyzer:
             "style_keywords": ["unknown"],
             "prompt": {"final_prompt": "Unknown pattern"},
             "dimensions": {"width": width, "height": height},
-            "original_path": image_path
+            "original_path": image_path,
+            "density": {"type": "regular", "confidence": 0.5},
+            "layout": {"type": "balanced", "confidence": 0.5},
+            "scale": {"type": "medium", "confidence": 0.5},
+            "texture_type": {"type": "smooth", "confidence": 0.5},
+            "cultural_influence": {"type": "contemporary", "confidence": 0.5},
+            "historical_period": {"type": "modern", "confidence": 0.5},
+            "mood": {"type": "neutral", "confidence": 0.5}
         }
         return default_response 
+    
+    def _get_cache_path(self, image_path: str) -> Path:
+        """Generate a unique cache file path for an image"""
+        # Create a hash of the image path to use as the cache file name
+        hash_obj = hashlib.md5(image_path.encode())
+        file_hash = hash_obj.hexdigest()
+        cache_path = self.cache_dir / f"{file_hash}.json"
+        return cache_path
+    
+    def _get_from_cache(self, image_path: str) -> Dict[str, Any]:
+        """Try to get cached analysis results for an image"""
+        try:
+            # Check if original image still exists
+            if not os.path.exists(image_path):
+                return None
+                
+            # Check image modification time
+            image_mtime = os.path.getmtime(image_path)
+            
+            # Get cache file path
+            cache_path = self._get_cache_path(image_path)
+            
+            # Check if cache file exists and is newer than the image
+            if cache_path.exists():
+                cache_mtime = os.path.getmtime(cache_path)
+                # Only use cache if it's newer than the image file
+                if cache_mtime >= image_mtime:
+                    with open(cache_path, 'r') as f:
+                        return json.load(f)
+            
+            return None
+        except Exception as e:
+            logger.error(f"Error reading from cache: {str(e)}")
+            return None
+            
+    def _cache_result(self, image_path: str, result: Dict[str, Any]) -> bool:
+        """Cache analysis results for an image"""
+        try:
+            cache_path = self._get_cache_path(image_path)
+            with open(cache_path, 'w') as f:
+                json.dump(result, f)
+            logger.debug(f"Cached Gemini analysis for {os.path.basename(image_path)}")
+            return True
+        except Exception as e:
+            logger.error(f"Error writing to cache: {str(e)}")
+            return False 
