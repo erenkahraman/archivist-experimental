@@ -728,6 +728,7 @@ class SearchEngine:
                 return 0
                 
             entries_to_remove = []
+            thumbnails_recreated = 0
             
             # Check each metadata entry for missing files
             for rel_path, metadata in self.metadata.items():
@@ -737,15 +738,33 @@ class SearchEngine:
                 
                 # Check if the image file exists
                 if not image_path or not image_path.exists():
-                    entries_to_remove.append(rel_path)
-                    logger.info(f"Adding missing image to cleanup: {rel_path}")
-                    continue
+                    # Try to find image by filename
+                    filename = metadata.get('filename')
+                    if filename:
+                        alternate_path = config.UPLOAD_DIR / filename
+                        if alternate_path.exists():
+                            logger.info(f"Found image at alternate path: {alternate_path}")
+                            image_path = alternate_path
+                        else:
+                            entries_to_remove.append(rel_path)
+                            logger.info(f"Adding missing image to cleanup: {rel_path}")
+                            continue
+                    else:
+                        entries_to_remove.append(rel_path)
+                        logger.info(f"Adding missing image to cleanup: {rel_path}")
+                        continue
                     
                 # If image exists but thumbnail doesn't, recreate the thumbnail
                 if thumbnail_path and not thumbnail_path.exists():
                     try:
                         logger.info(f"Recreating missing thumbnail for: {rel_path}")
-                        self.create_thumbnail(image_path)
+                        new_thumbnail = self.create_thumbnail(image_path)
+                        if new_thumbnail:
+                            thumbnails_recreated += 1
+                        else:
+                            logger.error(f"Failed to recreate thumbnail for {rel_path}")
+                            # If we can't recreate the thumbnail, the entry should be removed
+                            entries_to_remove.append(rel_path)
                     except Exception as thumb_err:
                         logger.error(f"Failed to recreate thumbnail for {rel_path}: {thumb_err}")
                         # If we can't recreate the thumbnail, the entry should be removed
@@ -768,11 +787,12 @@ class SearchEngine:
                             self.es_client.delete_document(name_without_ext)
             
             # Save the updated metadata if any entries were removed
-            if entries_to_remove:
+            if entries_to_remove or thumbnails_recreated > 0:
                 self.save_metadata()
                 # Invalidate cache to ensure consistency
                 self.cache.invalidate_all()
                 
+            logger.info(f"Cleanup complete: {len(entries_to_remove)} entries removed, {thumbnails_recreated} thumbnails recreated")
             return len(entries_to_remove)
             
         except Exception as e:
