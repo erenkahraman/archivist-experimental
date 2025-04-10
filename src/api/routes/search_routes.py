@@ -2,6 +2,7 @@ from flask import request, jsonify
 import logging
 import sys
 from pathlib import Path
+import os
 
 # Add the project root to the path for local imports
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
@@ -171,6 +172,10 @@ def similar_by_id(filename):
     - limit: Maximum number of results (optional, default: 20)
     - min_similarity: Minimum similarity score threshold (optional, default: 0.1)
     - sort: Whether to sort by similarity score (optional, default: true)
+    - use_embedding: Whether to use vector embedding for similarity (optional, default: true)
+    - use_text: Whether to use text for similarity (optional, default: true)
+    - image_weight: Weight for image similarity in hybrid search (optional, default: 0.7)
+    - text_weight: Weight for text similarity in hybrid search (optional, default: 0.3)
     
     Returns:
     - List of similar images with their metadata and similarity scores
@@ -181,8 +186,16 @@ def similar_by_id(filename):
         min_similarity = max(0.0, min(float(request.args.get('min_similarity', config.DEFAULT_MIN_SIMILARITY)), 1.0))
         sort_by_similarity = request.args.get('sort', 'true').lower() == 'true'
         
+        # New parameters for controlling search behavior
+        use_embedding = request.args.get('use_embedding', 'true').lower() == 'true'
+        use_text = request.args.get('use_text', 'true').lower() == 'true'
+        image_weight = float(request.args.get('image_weight', 0.7))
+        text_weight = float(request.args.get('text_weight', 0.3))
+        
         if DEBUG:
-            logger.info(f"Similar search request for: {filename}, limit={limit}, min_similarity={min_similarity}, sort={sort_by_similarity}")
+            logger.info(f"Similar search request for: {filename}, limit={limit}, min_similarity={min_similarity}, "
+                       f"sort={sort_by_similarity}, use_embedding={use_embedding}, use_text={use_text}, "
+                       f"image_weight={image_weight}, text_weight={text_weight}")
         
         # Verify Elasticsearch is available
         if not search_engine.es_client or not search_engine.es_client.is_connected():
@@ -221,9 +234,35 @@ def similar_by_id(filename):
         
         # Perform the similarity search
         try:
+            # Get embedding from metadata if available and requested
+            embedding = None
+            if use_embedding and 'embedding' in ref_metadata:
+                embedding = ref_metadata['embedding']
+                logger.info("Using stored CLIP embedding for similarity search")
+            elif use_embedding:
+                # If embedding not in metadata but requested, try to generate it
+                try:
+                    # Get the image path
+                    image_path = os.path.join(config.UPLOAD_DIR, ref_metadata.get('path', ''))
+                    if os.path.exists(image_path):
+                        # Load image and generate embedding
+                        from PIL import Image
+                        image = Image.open(image_path).convert('RGB')
+                        embedding = search_engine.get_image_embedding(image)
+                        if embedding is not None:
+                            embedding = embedding.tolist()  # Convert numpy array to list
+                            logger.info("Generated CLIP embedding for similarity search")
+                        else:
+                            logger.warning("Failed to generate CLIP embedding, falling back to text search")
+                    else:
+                        logger.warning(f"Image file not found: {image_path}, falling back to text search")
+                except Exception as embed_err:
+                    logger.error(f"Error generating embedding: {str(embed_err)}")
+                    logger.warning("Falling back to text-based search due to embedding generation error")
+            
             # Get the text query parameters from the metadata
             text_query = None
-            if ref_metadata.get('patterns'):
+            if use_text and ref_metadata.get('patterns'):
                 patterns = ref_metadata.get('patterns', {})
                 primary_pattern = patterns.get('primary_pattern')
                 main_theme = patterns.get('main_theme')
@@ -245,14 +284,17 @@ def similar_by_id(filename):
                         text_query = keywords_str
                         
             # Log the search parameters
-            logger.info(f"Performing similarity search with text_query='{text_query}', exclude_id={ref_id}")
+            logger.info(f"Performing similarity search with: embedding={embedding is not None}, text_query='{text_query}', exclude_id={ref_id}")
             
-            # Execute the search
+            # Execute the search using all available parameters
             results = search_engine.es_client.find_similar(
+                embedding=embedding,
                 text_query=text_query,
                 exclude_id=ref_id,
                 limit=limit,
-                min_similarity=min_similarity
+                min_similarity=min_similarity,
+                image_weight=image_weight,
+                text_weight=text_weight
             )
             
             # Check results
@@ -261,7 +303,12 @@ def similar_by_id(filename):
                 return jsonify({
                     'results': [],
                     'result_count': 0,
-                    'reference_id': ref_id
+                    'reference_id': ref_id,
+                    'search_info': {
+                        'used_embedding': embedding is not None,
+                        'used_text': text_query is not None,
+                        'min_similarity': min_similarity
+                    }
                 })
                 
             # Format results for the response
@@ -305,7 +352,12 @@ def similar_by_id(filename):
             return jsonify({
                 'results': formatted_results,
                 'result_count': len(formatted_results),
-                'reference_id': ref_id
+                'reference_id': ref_id,
+                'search_info': {
+                    'used_embedding': embedding is not None,
+                    'used_text': text_query is not None,
+                    'min_similarity': min_similarity
+                }
             })
             
         except Exception as e:

@@ -6,6 +6,14 @@ archivist/
 ├── requirements.txt
 ├── setup.py
 ├── main.py
+├── app.py
+├── config.py
+├── start_elasticsearch.sh
+├── start_elasticsearch_bg.sh
+├── stop_elasticsearch.sh
+├── check_es.sh
+├── run_es.sh
+├── vite.config.js
 ├── docs/
 │   ├── api.md
 │   ├── development.md
@@ -13,8 +21,11 @@ archivist/
 ├── src/
 │   ├── __init__.py
 │   ├── app.py
+│   ├── app_log.txt
 │   ├── config_prompts.py
 │   ├── logging_config.py
+│   ├── search_engine.py
+│   ├── README.md
 │   ├── analyzers/
 │   │   ├── __init__.py
 │   │   ├── color_analyzer.py
@@ -32,12 +43,17 @@ archivist/
 │   │   ├── __init__.py
 │   │   ├── elasticsearch_client.py
 │   │   └── vector_store.py
-│   ├── search_engine.py
 │   └── utils/
 │       ├── __init__.py
-│       └── helpers.py
+│       ├── helpers.py
+│       ├── logging_config.py
+│       └── cache.py
 ├── scripts/
 │   ├── fix_index.py
+│   ├── reindex_embeddings.py
+│   ├── cleanup_metadata.py
+│   ├── test_search.py
+│   ├── es_health_check.py
 │   └── migrations/
 ├── tests/
 │   ├── __init__.py
@@ -47,12 +63,24 @@ archivist/
 ├── ui/
 │   ├── index.html
 │   ├── package.json
+│   ├── package-lock.json
 │   ├── vite.config.js
+│   ├── style.css
+│   ├── app.js
 │   ├── src/
 │   │   ├── components/
-│   │   ├── assets/
-│   │   └── App.vue
+│   │   └── assets/
 │   └── dist/
 ├── data/
 │   └── placeholder.txt
-└── config.py 
+├── uploads/
+├── thumbnails/
+├── metadata/
+├── cache/
+├── vectors/
+├── logs/
+├── catalogs/
+└── tmp/
+    └── elastic/
+        ├── data/
+        └── logs/ 

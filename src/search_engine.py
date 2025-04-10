@@ -42,6 +42,15 @@ class SearchEngine:
             self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
             
+            # Initialize CLIP model for embeddings
+            logger.info("Loading CLIP model for embeddings...")
+            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+            # Move to GPU if available
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.clip_model = self.clip_model.to(self.device)
+            logger.info(f"CLIP model loaded successfully (using {self.device})")
+            
             # Initialize Elasticsearch client
             self.use_elasticsearch = self._init_elasticsearch()
             
@@ -149,6 +158,68 @@ class SearchEngine:
         else:
             logger.warning("Attempted to set empty API key")
 
+    def get_image_embedding(self, image: Image.Image) -> np.ndarray:
+        """
+        Generate CLIP embeddings for an image.
+        
+        Args:
+            image: PIL Image to process
+            
+        Returns:
+            Normalized embedding vector as numpy array
+        """
+        try:
+            # Ensure the image is in RGB mode
+            if image.mode != "RGB":
+                image = image.convert("RGB")
+                logger.debug("Converted image to RGB mode for CLIP processing")
+                
+            if self.clip_model is None or self.clip_processor is None:
+                logger.error("CLIP model or processor not initialized correctly")
+                return None
+                
+            # Process image through CLIP
+            with torch.no_grad():
+                try:
+                    # Prepare image for CLIP
+                    inputs = self.clip_processor(images=image, return_tensors="pt").to(self.device)
+                    
+                    # Get image features
+                    outputs = self.clip_model.get_image_features(**inputs)
+                    
+                    # Convert to numpy and normalize to unit vector
+                    embedding = outputs.cpu().numpy()[0]
+                    norm = np.linalg.norm(embedding)
+                    if norm > 0:
+                        embedding = embedding / norm
+                    
+                    # Verify embedding shape
+                    if embedding.shape[0] != 512:
+                        logger.warning(f"Unexpected embedding shape: {embedding.shape}, expected (512,)")
+                    
+                    logger.info(f"Successfully generated CLIP embedding with shape {embedding.shape}")
+                    return embedding
+                except RuntimeError as e:
+                    if "CUDA out of memory" in str(e):
+                        logger.error("CUDA out of memory error. Trying with CPU fallback.")
+                        # Try with CPU fallback
+                        self.device = "cpu"
+                        self.clip_model = self.clip_model.to("cpu")
+                        # Retry with CPU
+                        inputs = self.clip_processor(images=image, return_tensors="pt")
+                        outputs = self.clip_model.get_image_features(**inputs)
+                        embedding = outputs.cpu().numpy()[0]
+                        norm = np.linalg.norm(embedding)
+                        if norm > 0:
+                            embedding = embedding / norm
+                        logger.info(f"Successfully generated CLIP embedding on CPU with shape {embedding.shape}")
+                        return embedding
+                    else:
+                        raise
+        except Exception as e:
+            logger.error(f"Error generating CLIP embedding: {e}", exc_info=True)
+            return None
+
     def process_image(self, image_path: Path) -> Dict[str, Any]:
         """Process an image and extract metadata including patterns and colors."""
         try:
@@ -202,6 +273,24 @@ class SearchEngine:
             timestamp = int(time.time())
             file_stats = image_path.stat()
             
+            # Generate embedding for similarity search - use the original image for best quality
+            logger.info(f"Generating embedding for {image_path.name}")
+            try:
+                # Use the full resolution image for embedding generation
+                original_image = Image.open(image_path).convert('RGB')
+                embedding = self.get_image_embedding(original_image)
+                
+                if embedding is None:
+                    logger.error(f"Failed to generate embedding for {image_path.name}")
+                elif not isinstance(embedding, np.ndarray):
+                    logger.error(f"Invalid embedding type for {image_path.name}: {type(embedding)}")
+                    embedding = None
+                else:
+                    logger.info(f"Successfully generated embedding for {image_path.name} with shape {embedding.shape}")
+            except Exception as e:
+                logger.error(f"Error during embedding generation for {image_path.name}: {str(e)}", exc_info=True)
+                embedding = None
+            
             metadata = {
                 'id': str(image_path.stem),
                 'filename': image_path.name,
@@ -218,10 +307,17 @@ class SearchEngine:
                 'has_fallback_analysis': is_fallback
             }
             
-            # Generate embedding for similarity search
-            # embedding = self.get_image_embedding(image)
-            # if embedding is not None:
-            #     metadata['embedding'] = embedding.tolist()
+            # Add embedding if available
+            if embedding is not None:
+                try:
+                    # Convert numpy array to list
+                    embedding_list = embedding.tolist()
+                    metadata['embedding'] = embedding_list
+                    logger.info(f"Added embedding with {len(embedding_list)} dimensions to metadata for {image_path.name}")
+                except Exception as e:
+                    logger.error(f"Error converting embedding to list for {image_path.name}: {str(e)}")
+            else:
+                logger.warning(f"No embedding available for {image_path.name}")
             
             # Add to metadata store
             self.metadata[str(image_path)] = metadata
@@ -229,11 +325,22 @@ class SearchEngine:
             
             # Index in Elasticsearch if available
             if self.use_elasticsearch:
+                if 'embedding' not in metadata or metadata['embedding'] is None:
+                    logger.warning(f"Indexing {image_path.name} in Elasticsearch without embedding")
+                
                 result = self.es_client.index_document(metadata)
                 if result:
                     logger.info(f"Successfully indexed {image_path.name} in Elasticsearch")
                 else:
                     logger.error(f"Failed to index {image_path.name} in Elasticsearch")
+                    
+                    # Try to identify why indexing failed
+                    if not self.es_client.is_connected():
+                        logger.error("Elasticsearch connection lost")
+                    elif not self.es_client.index_exists():
+                        logger.error("Elasticsearch index does not exist")
+            else:
+                logger.info(f"Elasticsearch not available, skipping indexing for {image_path.name}")
             
             logger.info("Image processed successfully: %s", image_path)
             return metadata
@@ -993,3 +1100,289 @@ class SearchEngine:
             pattern_info['prompt']['final_prompt'] = pattern_info.get('main_theme', 'Unknown pattern')
             
         return pattern_info 
+
+    def find_similar_images(self, image_path: str = None, image: Image.Image = None, 
+                         text_query: str = None, k: int = 20, exclude_source: bool = True,
+                         image_weight: float = 0.7, text_weight: float = 0.3) -> List[Dict]:
+        """
+        Find images similar to the provided image and/or matching the text query.
+        This implements a hybrid search approach using both visual and textual similarity.
+        
+        Args:
+            image_path: Path to the reference image
+            image: PIL Image object (alternative to image_path)
+            text_query: Optional text query to combine with image similarity
+            k: Maximum number of results to return
+            exclude_source: Whether to exclude the source image from results
+            image_weight: Weight for image similarity (when using hybrid search)
+            text_weight: Weight for text similarity (when using hybrid search)
+            
+        Returns:
+            List of similar images sorted by similarity score
+        """
+        try:
+            # Validate inputs
+            if not image_path and image is None:
+                logger.error("Either image_path or image must be provided")
+                return []
+                
+            # Load the image if path is provided
+            if image_path:
+                if not os.path.exists(image_path):
+                    logger.error(f"Image not found: {image_path}")
+                    return []
+                    
+                image = Image.open(image_path).convert('RGB')
+                image_id = os.path.basename(image_path)
+            else:
+                # Generate a temporary ID for the query image
+                image_id = f"query_image_{int(time.time())}"
+                
+            logger.info(f"Finding similar images to {image_id}" + 
+                       (f" with text query '{text_query}'" if text_query else ""))
+                
+            # Generate embedding using CLIP
+            embedding = self.get_image_embedding(image)
+            
+            if embedding is None:
+                logger.error("Failed to generate image embedding")
+                return []
+                
+            # Use Elasticsearch for similarity search if available
+            if self.use_elasticsearch and self.es_client.is_connected():
+                logger.info("Using Elasticsearch for similarity search")
+                
+                # Determine the exclude ID if needed
+                exclude_id = image_id if exclude_source else None
+                
+                # Perform similarity search
+                results = self.es_client.find_similar(
+                    embedding=embedding.tolist(),
+                    text_query=text_query,
+                    limit=k,
+                    min_similarity=0.1,
+                    exclude_id=exclude_id,
+                    image_weight=image_weight,
+                    text_weight=text_weight
+                )
+                
+                logger.info(f"Found {len(results)} similar images")
+                return results
+            else:
+                logger.warning("Elasticsearch is not available. Falling back to in-memory similarity search.")
+                # Implement a simple in-memory cosine similarity search
+                return self._in_memory_similarity_search(embedding, text_query, k, exclude_source, image_id)
+        except Exception as e:
+            logger.error(f"Error finding similar images: {str(e)}", exc_info=True)
+            return []
+            
+    def _in_memory_similarity_search(self, query_embedding, text_query=None, k=20, 
+                                  exclude_source=True, source_id=None) -> List[Dict]:
+        """
+        Perform in-memory similarity search when Elasticsearch is not available
+        
+        Args:
+            query_embedding: The embedding vector to compare against
+            text_query: Optional text query to filter results
+            k: Number of results to return
+            exclude_source: Whether to exclude the source image
+            source_id: ID of source image to exclude
+            
+        Returns:
+            List of similar documents
+        """
+        if not self.metadata:
+            return []
+            
+        # Calculate similarity scores
+        results = []
+        
+        for doc_id, doc in self.metadata.items():
+            # Skip if it's the source image
+            if exclude_source and source_id and (
+                source_id == doc_id or 
+                source_id == doc.get("id") or 
+                source_id == doc.get("filename")
+            ):
+                continue
+                
+            # Get embedding if available
+            doc_embedding = doc.get("embedding")
+            
+            if doc_embedding is None:
+                # Skip documents without embeddings
+                continue
+                
+            # Convert to numpy array if it's a list
+            if isinstance(doc_embedding, list):
+                doc_embedding = np.array(doc_embedding)
+                
+            # Calculate cosine similarity
+            similarity = np.dot(query_embedding, doc_embedding)
+            
+            # If text query is provided, also perform text matching
+            text_match_score = 0.0
+            if text_query:
+                text_match_score = self._calculate_text_match(doc, text_query.lower())
+                
+                # Combine scores (70% visual, 30% text by default)
+                final_score = 0.7 * similarity + 0.3 * text_match_score
+            else:
+                final_score = similarity
+                
+            # Create result object
+            result = doc.copy()
+            result["similarity"] = float(final_score)
+            results.append(result)
+            
+        # Sort by similarity (descending)
+        results.sort(key=lambda x: x["similarity"], reverse=True)
+        
+        # Return top k results
+        return results[:k]
+        
+    def _calculate_text_match(self, doc, query):
+        """Calculate a simple text match score for in-memory similarity search"""
+        if not doc.get("patterns"):
+            return 0.0
+            
+        patterns = doc["patterns"]
+        score = 0.0
+        
+        # Check exact matches on main fields
+        for field, weight in [
+            ("main_theme", 5.0),
+            ("primary_pattern", 4.5),
+            ("category", 4.0)
+        ]:
+            value = str(patterns.get(field, "")).lower()
+            if query in value:
+                score += weight
+                # Bonus for exact match
+                if query == value:
+                    score += weight * 0.5
+                    
+        # Check content details
+        for item in patterns.get("content_details", []):
+            if query in str(item.get("name", "")).lower():
+                score += 3.0 * item.get("confidence", 0.7)
+                
+        # Check style keywords
+        for keyword in patterns.get("style_keywords", []):
+            if query in str(keyword).lower():
+                score += 2.0
+                
+        # Normalize to 0-1 range
+        return min(1.0, score / 10.0) 
+
+    def reindex_all_with_embeddings(self, force=False):
+        """
+        Regenerate embeddings for all images and reindex them in Elasticsearch.
+        
+        Args:
+            force: If True, regenerate all embeddings even if they already exist
+                  If False, only regenerate for images missing embeddings
+                  
+        Returns:
+            Dict with statistics about the reindexing process
+        """
+        if not self.use_elasticsearch:
+            logger.error("Elasticsearch is not available, cannot reindex")
+            return {"error": "Elasticsearch not available", "success": False}
+            
+        if not self.metadata:
+            logger.warning("No metadata to reindex")
+            return {"error": "No metadata found", "success": False}
+            
+        logger.info(f"Starting reindexing of {len(self.metadata)} images with embeddings")
+        
+        # Statistics to track progress
+        stats = {
+            "total": len(self.metadata),
+            "processed": 0,
+            "success": 0,
+            "failed": 0,
+            "already_had_embedding": 0,
+            "missing_file": 0,
+            "invalid_path": 0
+        }
+        
+        # List to collect documents for bulk indexing
+        documents_to_index = []
+        
+        # Process each image
+        for image_path_str, metadata in self.metadata.items():
+            stats["processed"] += 1
+            
+            try:
+                # Check if this entry already has an embedding and we're not forcing regeneration
+                if not force and 'embedding' in metadata and metadata['embedding'] is not None:
+                    logger.info(f"Image {image_path_str} already has embedding and force=False")
+                    stats["already_had_embedding"] += 1
+                    # Still add to documents to reindex
+                    documents_to_index.append(metadata)
+                    continue
+                
+                # Convert string path to Path object
+                try:
+                    image_path = Path(image_path_str)
+                    if not image_path.exists():
+                        logger.warning(f"Image file not found: {image_path}")
+                        stats["missing_file"] += 1
+                        continue
+                except Exception as e:
+                    logger.error(f"Invalid path: {image_path_str} - {str(e)}")
+                    stats["invalid_path"] += 1
+                    continue
+                
+                # Generate embedding
+                logger.info(f"Regenerating embedding for {image_path.name}")
+                try:
+                    # Use the full resolution image for embedding generation
+                    original_image = Image.open(image_path).convert('RGB')
+                    embedding = self.get_image_embedding(original_image)
+                    
+                    if embedding is None:
+                        logger.error(f"Failed to generate embedding for {image_path.name}")
+                        stats["failed"] += 1
+                        continue
+                    
+                    # Update metadata with new embedding
+                    metadata['embedding'] = embedding.tolist()
+                    
+                    # Update in-memory metadata store
+                    self.metadata[image_path_str] = metadata
+                    
+                    # Add to list for bulk indexing
+                    documents_to_index.append(metadata)
+                    
+                    stats["success"] += 1
+                    logger.info(f"Successfully regenerated embedding for {image_path.name}")
+                except Exception as e:
+                    logger.error(f"Error regenerating embedding for {image_path.name}: {str(e)}", exc_info=True)
+                    stats["failed"] += 1
+            except Exception as e:
+                logger.error(f"Unexpected error processing {image_path_str}: {str(e)}", exc_info=True)
+                stats["failed"] += 1
+        
+        # Save updated metadata
+        self.save_metadata()
+        logger.info(f"Saved updated metadata with {stats['success']} new embeddings")
+        
+        # Bulk index to Elasticsearch
+        if documents_to_index:
+            logger.info(f"Bulk indexing {len(documents_to_index)} documents to Elasticsearch")
+            result = self.es_client.bulk_index(documents_to_index)
+            if result:
+                logger.info(f"Successfully bulk indexed {len(documents_to_index)} documents")
+                stats["bulk_index_success"] = True
+            else:
+                logger.error("Failed to bulk index documents")
+                stats["bulk_index_success"] = False
+        else:
+            logger.warning("No documents to index after processing")
+            stats["bulk_index_success"] = False
+        
+        # Return statistics
+        stats["success_overall"] = stats["success"] > 0 and stats.get("bulk_index_success", False)
+        return stats 
