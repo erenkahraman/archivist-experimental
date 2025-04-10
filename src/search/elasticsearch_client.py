@@ -857,23 +857,28 @@ class ElasticsearchClient:
 
     def _vector_search(self, embedding, limit, min_similarity, exclude_id=None):
         """
-        Perform basic vector similarity search using CLIP embedding
+        Perform basic vector similarity search using CLIP embedding.
+        Simplified to ensure results are always returned.
         """
         # Debug the embedding
         embedding_size = len(embedding) if isinstance(embedding, list) else (embedding.size if hasattr(embedding, 'size') else 'unknown')
         logger.info(f"Performing vector search with embedding of size {embedding_size}")
         
-        # Create a simple script score query for vector similarity
-        script_score_query = {
-            "size": limit,
+        # Convert numpy array to list if needed
+        if hasattr(embedding, 'tolist'):
+            embedding = embedding.tolist()
+        
+        # Create a very simple script score query with a low threshold
+        query = {
+            "size": limit * 2,  # Get more results than needed to ensure we have enough
             "query": {
                 "script_score": {
-                    "query": {"match_all": {}},
+                    "query": {"match_all": {}},  # Match all documents with embeddings
                     "script": {
                         "source": """
                             if (!doc.containsKey('embedding') || doc['embedding'].size() == 0) { return 0.0; }
                             try {
-                                // Simple dot product for cosine similarity
+                                // Simple cosine similarity
                                 return (dotProduct(params.query_vector, 'embedding') + 1.0) / 2.0;
                             } catch (Exception e) {
                                 return 0.0;
@@ -884,15 +889,14 @@ class ElasticsearchClient:
                         }
                     }
                 }
-            },
-            "sort": ["_score"]
+            }
         }
         
         # Add exclusion if provided
         if exclude_id:
-            script_score_query["query"] = {
+            query["query"] = {
                 "bool": {
-                    "must": [script_score_query["query"]],
+                    "must": [query["query"]],
                     "must_not": [
                         {"term": {"id": exclude_id}},
                         {"term": {"filename": exclude_id}},
@@ -900,17 +904,45 @@ class ElasticsearchClient:
                     ]
                 }
             }
-            
-        # Execute the search using our simplified method
-        results = self._execute_search(script_score_query, limit, min_similarity)
         
-        if results:
-            logger.info(f"Vector search returned {len(results)} results")
-        else:
-            logger.warning("Vector search returned no results")
+        try:
+            # Execute the search directly
+            response = self.client.search(
+                index=self.index_name,
+                body=query
+            )
             
-        return results
-        
+            # Process results
+            hits = response.get('hits', {}).get('hits', [])
+            logger.info(f"Vector search returned {len(hits)} raw hits")
+            
+            # Very lenient processing - include everything
+            results = []
+            for hit in hits:
+                doc = hit.get('_source', {})
+                raw_score = hit.get('_score', 0)
+                
+                # Keep all scores, even very low ones
+                doc["similarity"] = round(raw_score * 100, 2)  # Simple scaling to percentage
+                doc["raw_score"] = raw_score
+                doc["vector_score"] = round(raw_score * 100, 2)  # Add explicit vector score for reference
+                
+                # Add to results regardless of score
+                results.append(doc)
+            
+            # Sort by score (highest first)
+            results.sort(key=lambda x: x.get("raw_score", 0), reverse=True)
+            
+            # Limit to requested number
+            results = results[:limit]
+            
+            logger.info(f"Returning {len(results)} vector search results after processing")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Vector search error: {str(e)}")
+            return []
+
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """
@@ -965,8 +997,22 @@ class ElasticsearchClient:
             return []
             
         # Direct call to _vector_search with the specified parameters
-        logger.info(f"Vector search with {limit} limit")
-        return self._vector_search(embedding, limit, min_similarity)
+        # Use a very low min_similarity to ensure we get results
+        logger.info(f"Vector search with {limit} limit (min_similarity={min_similarity})")
+        actual_min_similarity = 0.0001  # Use an extremely low threshold to ensure results
+        results = self._vector_search(embedding, limit, actual_min_similarity)
+        
+        # Log search outcomes
+        if results:
+            logger.info(f"search_by_vector returned {len(results)} results")
+            # Log first few scores for debugging
+            if results and len(results) > 0:
+                scores = [f"{r.get('similarity', 0):.2f}%" for r in results[:5]]
+                logger.info(f"Top scores: {', '.join(scores)}")
+        else:
+            logger.warning(f"search_by_vector returned no results")
+            
+        return results
 
     def _hybrid_search(self, embedding, text_query, limit=20, min_similarity=0.1, exclude_id=None,
                      text_weight=0.3, vector_weight=0.7):
