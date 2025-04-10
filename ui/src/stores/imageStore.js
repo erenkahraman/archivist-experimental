@@ -19,7 +19,7 @@ export const useImageStore = defineStore('images', () => {
   const searchTotalResults = ref(0)
   const isSearching = ref(false)
   const searchQueryReferenceImage = ref(null)
-  const API_BASE_URL = 'http://localhost:8000/api'
+  const API_BASE_URL = 'http://localhost:8080/api'
 
   // Computed properties
   const hasError = computed(() => error.value !== null)
@@ -130,6 +130,12 @@ export const useImageStore = defineStore('images', () => {
     searchQuery.value = cleanedQuery
     error.value = null
 
+    // Search logging - start
+    console.group('🔍 TEXT SEARCH REQUEST')
+    console.log(`Query: "${cleanedQuery}"`)
+    console.log(`Parameters: limit=${k}, min_similarity=${minSimilarity}`)
+    console.groupEnd()
+
     try {
       // Make sure we have images loaded
       if (images.value.filter(img => !img.isUploading).length === 0) {
@@ -170,12 +176,68 @@ export const useImageStore = defineStore('images', () => {
         images.value = [...uploadingImages, ...searchData.results]
         searchResults.value = searchData.results
         
+        // Search logging - results
+        console.group('🔍 TEXT SEARCH RESULTS')
+        console.log(`Found ${searchData.results.length} results for query "${cleanedQuery}"`)
+        console.table(searchData.results.map(result => ({
+          id: result.id || getFileName(result.path || result.thumbnail_path),
+          pattern: result.patterns?.primary_pattern || 'Unknown',
+          similarity: (parseFloat(result.similarity) * 100).toFixed(2) + '%',
+          raw_score: result.raw_score?.toFixed(4) || 'N/A',
+          theme: result.patterns?.main_theme || 'N/A',
+          styleKeywords: Array.isArray(result.patterns?.style_keywords) ? 
+            result.patterns.style_keywords.join(', ').substring(0, 50) : 'None'
+        })))
+        
+        // Log detailed pattern information for deeper analysis
+        console.group('📊 Detailed Pattern Analysis')
+        searchData.results.forEach((result, index) => {
+          const id = result.id || getFileName(result.path || result.thumbnail_path)
+          console.group(`Result #${index + 1}: ${id} (${(parseFloat(result.similarity) * 100).toFixed(1)}%)`)
+          
+          if (result.patterns) {
+            console.log('Main theme:', result.patterns.main_theme)
+            console.log('Primary pattern:', result.patterns.primary_pattern)
+            console.log('Confidence:', result.patterns.pattern_confidence)
+            
+            if (result.patterns.secondary_patterns && result.patterns.secondary_patterns.length > 0) {
+              console.group('Secondary patterns:')
+              result.patterns.secondary_patterns.forEach(pattern => {
+                console.log(`- ${pattern.name} (${(pattern.confidence * 100).toFixed(1)}%)`)
+              })
+              console.groupEnd()
+            }
+            
+            if (result.patterns.content_details && result.patterns.content_details.length > 0) {
+              console.group('Content details:')
+              result.patterns.content_details.forEach(detail => {
+                console.log(`- ${detail.name} (${(detail.confidence * 100).toFixed(1)}%)`)
+              })
+              console.groupEnd()
+            }
+          }
+          
+          if (result.colors?.dominant_colors) {
+            console.group('Colors:')
+            result.colors.dominant_colors.slice(0, 3).forEach(color => {
+              console.log(`- ${color.name} (${(color.proportion * 100).toFixed(1)}%)`)
+            })
+            console.groupEnd()
+          }
+          
+          console.groupEnd() // Result
+        })
+        console.groupEnd() // Detailed Pattern Analysis
+        console.groupEnd() // Text Search Results
+        
         return searchResults.value
       } else {
+        console.log('🔍 No results found for query:', cleanedQuery)
         return []
       }
     } catch (err) {
       error.value = err.message
+      console.error('🔍 Search error:', err)
       return []
     } finally {
       isSearching.value = false
@@ -213,8 +275,53 @@ export const useImageStore = defineStore('images', () => {
       
       // Extract options with defaults
       const k = options.limit || 20
-      const minSimilarity = options.minSimilarity || 0.1
+      const minSimilarity = 0.0001  // Always use the lowest threshold to get results
       const sortBySimilarity = options.sortBySimilarity === undefined ? true : options.sortBySimilarity
+      
+      // Find the source image if it exists in current images
+      const sourceImage = images.value.find(img => 
+        img.id === imageId || 
+        getFileName(img.thumbnail_path || '') === imageId || 
+        getFileName(img.original_path || '') === imageId
+      )
+      
+      // Search logging - start
+      console.group('🔍 SIMILARITY SEARCH REQUEST')
+      console.log(`Reference image ID: ${imageId}`)
+      console.log(`Parameters: limit=${k}, min_similarity=${minSimilarity}, sortBySimilarity=${sortBySimilarity}`)
+      
+      if (sourceImage) {
+        console.group('Reference Image Details:')
+        console.log('ID:', sourceImage.id || getFileName(sourceImage.path || sourceImage.thumbnail_path))
+        if (sourceImage.patterns) {
+          console.log('Pattern:', sourceImage.patterns.primary_pattern || 'Unknown')
+          console.log('Main theme:', sourceImage.patterns.main_theme || 'N/A')
+          console.log('Keywords:', Array.isArray(sourceImage.patterns.style_keywords) ? 
+            sourceImage.patterns.style_keywords.join(', ').substring(0, 100) : 'None')
+          
+          if (sourceImage.patterns.secondary_patterns && sourceImage.patterns.secondary_patterns.length > 0) {
+            console.group('Secondary patterns:')
+            sourceImage.patterns.secondary_patterns.forEach(pattern => {
+              console.log(`- ${pattern.name} (${(pattern.confidence * 100).toFixed(1)}%)`)
+            })
+            console.groupEnd()
+          }
+        }
+        
+        if (sourceImage.colors?.dominant_colors) {
+          console.group('Colors:')
+          sourceImage.colors.dominant_colors.slice(0, 3).forEach(color => {
+            console.log(`- ${color.name} (${(color.proportion * 100).toFixed(1)}%)`)
+          })
+          console.groupEnd()
+        }
+        
+        console.groupEnd() // Reference Image Details
+      } else if (imageData) {
+        console.log('Using dragged image reference with path:', imageData.thumbnailPath)
+      }
+      
+      console.groupEnd() // Similarity Search Request
       
       // Log the search attempt
       if (isDev) {
@@ -310,13 +417,6 @@ export const useImageStore = defineStore('images', () => {
       // Keep uploading images
       const uploadingImages = images.value.filter(img => img.isUploading)
       
-      // Find the source image if it exists in current images
-      const sourceImage = images.value.find(img => 
-        img.id === imageId || 
-        getFileName(img.thumbnail_path || '') === imageId || 
-        getFileName(img.original_path || '') === imageId
-      )
-      
       // Set the query reference image for display
       if (sourceImage) {
         // Use the actual image object if we found it
@@ -334,6 +434,72 @@ export const useImageStore = defineStore('images', () => {
       
       // Set images to search results plus uploading images
       images.value = [...uploadingImages, ...results]
+      
+      // Search logging - results
+      console.group('🔍 SIMILARITY SEARCH RESULTS')
+      console.log(`Found ${results.length} similar images to ${imageId}`)
+      
+      console.table(results.map(result => ({
+        id: result.id || getFileName(result.path || result.thumbnail_path),
+        pattern: result.patterns?.primary_pattern || 'Unknown',
+        similarity: (parseFloat(result.similarity) * 100).toFixed(2) + '%',
+        text_score: result.text_score ? (parseFloat(result.text_score) * 100).toFixed(2) + '%' : 'N/A',
+        vector_score: result.vector_score ? (parseFloat(result.vector_score) * 100).toFixed(2) + '%' : 'N/A',
+        raw_score: result.raw_score?.toFixed(4) || 'N/A',
+        theme: result.patterns?.main_theme || 'N/A',
+        styleKeywords: Array.isArray(result.patterns?.style_keywords) ? 
+          result.patterns.style_keywords.join(', ').substring(0, 50) : 'None'
+      })))
+      
+      // Log detailed similarity comparison
+      console.group('🔍 Detailed Similarity Analysis')
+      
+      if (sourceImage) {
+        console.log('Reference pattern:', sourceImage.patterns?.primary_pattern || 'Unknown')
+        console.log('Reference main theme:', sourceImage.patterns?.main_theme || 'N/A')
+        
+        // Extract reference features for comparison
+        const refKeywords = sourceImage.patterns?.style_keywords || [];
+        const refSecondaryPatterns = sourceImage.patterns?.secondary_patterns?.map(p => p.name) || [];
+        const refColors = sourceImage.colors?.dominant_colors?.map(c => c.name) || [];
+        
+        // Log matches for each result
+        results.forEach((result, index) => {
+          const id = result.id || getFileName(result.path || result.thumbnail_path)
+          
+          // Include text & vector scores if available (for hybrid search)
+          let scoreDetails = `${(parseFloat(result.similarity) * 100).toFixed(2)}%`;
+          if (result.text_score !== undefined && result.vector_score !== undefined) {
+            scoreDetails += ` (text: ${(parseFloat(result.text_score) * 100).toFixed(2)}%, vector: ${(parseFloat(result.vector_score) * 100).toFixed(2)}%)`;
+          }
+          
+          console.group(`Result #${index + 1}: ${id} (${scoreDetails})`)
+          
+          // Calculate keyword matches
+          const resultKeywords = result.patterns?.style_keywords || [];
+          const keywordMatches = refKeywords.filter(kw => resultKeywords.includes(kw));
+          
+          // Calculate pattern matches
+          const resultSecondaryPatterns = result.patterns?.secondary_patterns?.map(p => p.name) || [];
+          const patternMatches = refSecondaryPatterns.filter(p => resultSecondaryPatterns.includes(p));
+          
+          // Calculate color matches
+          const resultColors = result.colors?.dominant_colors?.map(c => c.name) || [];
+          const colorMatches = refColors.filter(c => resultColors.includes(c));
+          
+          console.log('Match components:')
+          console.log(`- Primary pattern: ${result.patterns?.primary_pattern === sourceImage.patterns?.primary_pattern ? '✅' : '❌'} (${result.patterns?.primary_pattern || 'Unknown'})`)
+          console.log(`- Main theme: ${result.patterns?.main_theme === sourceImage.patterns?.main_theme ? '✅' : '❌'} (${result.patterns?.main_theme || 'Unknown'})`)
+          console.log(`- Matching keywords: ${keywordMatches.length}/${refKeywords.length} (${keywordMatches.join(', ')})`)
+          console.log(`- Matching secondary patterns: ${patternMatches.length}/${refSecondaryPatterns.length} (${patternMatches.join(', ')})`)
+          console.log(`- Matching colors: ${colorMatches.length}/${Math.min(3, refColors.length)} (${colorMatches.join(', ')})`)
+          
+          console.groupEnd() // Result
+        });
+      }
+      
+      console.groupEnd() // Detailed Similarity Analysis
+      console.groupEnd() // Similarity Search Results
       
       if (isDev && results.length === 0) {
         console.warn('Similar search returned 0 results for image ID:', imageId);
@@ -375,12 +541,50 @@ export const useImageStore = defineStore('images', () => {
 
   // Clean current gallery of invalid images
   const cleanGallery = () => {
+    // Track if the active search results need cleaning
+    const wasSearchActive = searchResults.value.length > 0;
+    
+    // Function to check if an image is valid by checking if it can be retrieved
+    const checkValidImageFile = async (img) => {
+      if (!img || !img.thumbnail_path) return false;
+      
+      try {
+        // Try to fetch the thumbnail to see if it exists on the server
+        const filename = getFileName(img.thumbnail_path);
+        const response = await fetch(`${API_BASE_URL}/thumbnails/${filename}`, { method: 'HEAD' });
+        return response.ok;
+      } catch (e) {
+        return false;
+      }
+    };
+    
     // Filter out any images without valid paths
-    const validImages = images.value.filter(isValidImage)
+    const validImages = images.value.filter(isValidImage);
     
     // If we removed any, update the state
     if (validImages.length !== images.value.length) {
-      images.value = validImages
+      // Store the list of invalid image IDs/paths so we can also filter them from search results
+      const invalidIds = images.value
+        .filter(img => !isValidImage(img))
+        .map(img => img.id || img.path || img.thumbnail_path);
+      
+      images.value = validImages;
+      
+      // Also clean up search results if any
+      if (wasSearchActive && searchResults.value.length > 0) {
+        searchResults.value = searchResults.value.filter(result => {
+          const resultId = result.id || result.path || result.thumbnail_path;
+          return !invalidIds.includes(resultId);
+        });
+      }
+      
+      // If search reference image is invalid, clear search
+      if (searchQueryReferenceImage.value && 
+          invalidIds.includes(searchQueryReferenceImage.value.id || 
+                              searchQueryReferenceImage.value.path || 
+                              searchQueryReferenceImage.value.thumbnail_path)) {
+        clearSearch();
+      }
     }
   }
 
@@ -399,6 +603,7 @@ export const useImageStore = defineStore('images', () => {
       searchResults.value = []
       searchQuery.value = ''
       searchTotalResults.value = 0
+      searchQueryReferenceImage.value = null
       error.value = null
       
       // Call backend to purge everything
@@ -413,7 +618,33 @@ export const useImageStore = defineStore('images', () => {
         throw new Error('Failed to purge images')
       }
       
+      // Get the response and wait for it
       await response.json()
+      
+      // Additional call to ensure Elasticsearch is also cleared
+      const esCleanupResponse = await fetch(`${API_BASE_URL}/cleanup-elasticsearch`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      })
+      
+      if (!esCleanupResponse.ok) {
+        console.warn('Failed to cleanup Elasticsearch, but images were purged')
+      }
+      
+      // Clear browser cache for /thumbnails/ requests to prevent stale references
+      if ('caches' in window) {
+        try {
+          const cacheNames = await window.caches.keys()
+          for (const cacheName of cacheNames) {
+            await window.caches.delete(cacheName)
+          }
+        } catch (err) {
+          console.warn('Failed to clear browser cache:', err)
+        }
+      }
+      
       return true
     } catch (err) {
       error.value = err.message

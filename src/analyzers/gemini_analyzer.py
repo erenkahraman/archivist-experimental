@@ -12,6 +12,7 @@ import random
 from pathlib import Path
 from src.config.prompts import GEMINI_CONFIG
 import numpy as np
+import re  # New: for dynamic tokenization
 
 logger = logging.getLogger(__name__)
 
@@ -556,220 +557,200 @@ class GeminiAnalyzer:
     
     def _generate_fallback_analysis(self, image_path: str) -> Dict[str, Any]:
         """
-        Create a more intelligent fallback analysis by:
-        1. Looking for similar cached results
-        2. Using color and basic image analysis if available
-        3. Extracting pattern information from filename
-        4. Creating a reasonable default with appropriate confidence levels
+        Generate a 100% dynamic fallback analysis using Gemini's potential fully.
+        Instead of using static dictionaries, tokenize the filename and leverage basic color analysis.
+        
+        This dynamic fallback extracts descriptive tokens from the filename, filters out common stopwords,
+        and builds a dynamic analysis that includes dominant colors from the image.
         
         Args:
             image_path: Path to the image file
-            
+        
         Returns:
-            Fallback analysis result
+            Fallback analysis result as a dictionary.
         """
         logger.info(f"Generating fallback analysis for {os.path.basename(image_path)}")
-        
-        # Try to open the image for basic analysis
         try:
             image = Image.open(image_path)
             width, height = image.size
-            
-            # Do basic color analysis to enhance fallback result
             dominant_colors = self._analyze_colors(image)
         except Exception as e:
             logger.error(f"Error opening image for fallback analysis: {str(e)}")
             return self._get_default_response(image_path)
-            
-        # Extract key metadata from the image path and filename
+        
         file_name = os.path.basename(image_path)
         base_name = os.path.splitext(file_name)[0].lower()
         
-        # Define pattern and style dictionaries with keywords to look for
-        pattern_dict = {
-            "geometric": ["geometric", "geometry", "triangle", "square", "circle", "hexagon", "diamond"],
-            "abstract": ["abstract", "modern", "contemporary", "non-representational"],
-            "floral": ["floral", "flower", "botanical", "blossom", "bloom", "petal", "leaf", "garden"],
-            "stripe": ["stripe", "striped", "stripes", "linear", "line", "pinstripe", "band"],
-            "polka dot": ["polka", "dot", "dotted", "spots", "circular", "bubble"],
-            "check": ["check", "checked", "plaid", "tartan", "gingham", "houndstooth", "argyle"],
-            "paisley": ["paisley", "paisleys", "teardrop", "persian", "boteh", "cashmere"],
-            "animal": ["animal", "leopard", "zebra", "tiger", "snake", "reptile", "skin", "fur", "feather"],
-            "ethnic": ["ethnic", "tribal", "ikat", "batik", "african", "indigenous", "folklore", "cultural"],
-            "damask": ["damask", "jacquard", "brocade", "ornate", "scroll", "arabesque", "ornamental"],
-            "tropical": ["tropical", "palm", "jungle", "exotic", "hawaiian", "paradise", "beach"],
-            "vintage": ["vintage", "retro", "classic", "antique", "nostalgia", "old", "1950", "1960", "1970", "1980"],
-            "minimalist": ["minimalist", "minimal", "simple", "clean", "basic", "essential", "subtle"]
-        }
+        # Check if filename appears to be a UUID or random hash
+        uuid_pattern = re.compile(r'^[a-f0-9]{8}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{4}-?[a-f0-9]{12}$', re.IGNORECASE)
+        hash_pattern = re.compile(r'^[a-f0-9]{10,}$', re.IGNORECASE)
         
-        style_dict = {
-            "modern": ["modern", "contemporary", "current", "present-day", "new"],
-            "classic": ["classic", "traditional", "conventional", "timeless", "heritage"],
-            "vintage": ["vintage", "retro", "nostalgic", "antique", "throwback", "aged"],
-            "minimalist": ["minimalist", "minimal", "simple", "clean", "streamlined", "uncluttered"],
-            "bold": ["bold", "strong", "vibrant", "striking", "dramatic", "prominent"],
-            "subtle": ["subtle", "delicate", "refined", "understated", "muted", "soft"],
-            "elegant": ["elegant", "sophisticated", "graceful", "tasteful", "refined", "classy"],
-            "playful": ["playful", "fun", "whimsical", "cheerful", "lively", "amusing"],
-            "rustic": ["rustic", "country", "rural", "pastoral", "earthy", "natural"],
-            "luxurious": ["luxurious", "luxury", "opulent", "rich", "lavish", "plush", "sumptuous"]
-        }
-        
-        # Scan filename for pattern and style matches
-        detected_patterns = []
-        detected_styles = []
-        
-        # Create scoring dictionary for patterns and styles
-        pattern_scores = {pattern: 0 for pattern in pattern_dict}
-        style_scores = {style: 0 for style in style_dict}
-        
-        # Search for each pattern/style keyword in the filename
-        for pattern, keywords in pattern_dict.items():
-            for keyword in keywords:
-                if keyword in base_name:
-                    pattern_scores[pattern] += 1
-                    detected_patterns.append(pattern)
-        
-        for style, keywords in style_dict.items():
-            for keyword in keywords:
-                if keyword in base_name:
-                    style_scores[style] += 1
-                    detected_styles.append(style)
-        
-        # Get hash for randomization that's deterministic for this image
-        hash_obj = hashlib.md5(image_path.encode())
-        hash_int = int(hash_obj.hexdigest(), 16)
-        
-        # Get dominant patterns and styles
-        if detected_patterns:
-            # Use most frequently matched pattern
-            sorted_patterns = sorted(pattern_scores.items(), key=lambda x: x[1], reverse=True)
-            main_theme = sorted_patterns[0][0]
+        if uuid_pattern.match(base_name) or hash_pattern.match(base_name):
+            logger.info(f"Filename appears to be a UUID or hash: {base_name}")
+            # Use a default theme for UUID/hash filenames
+            main_theme = "textile"
+            main_theme_confidence = 0.5
+            tokens = []
         else:
-            # Use hash to pick a "random" pattern if none detected
-            pattern_list = list(pattern_dict.keys())
-            main_theme = pattern_list[hash_int % len(pattern_list)]
-        
-        if detected_styles:
-            # Use most frequently matched style
-            sorted_styles = sorted(style_scores.items(), key=lambda x: x[1], reverse=True)
-            style = sorted_styles[0][0]
-        else:
-            # Use hash to pick a "random" style if none detected
-            style_list = list(style_dict.keys())
-            style = style_list[(hash_int // 100) % len(style_list)]
-        
-        # Set confidence based on whether we detected something in the filename
-        main_theme_confidence = 0.75 if detected_patterns else 0.6 + (hash_int % 15) / 100
-        style_confidence = 0.75 if detected_styles else 0.6 + (hash_int % 15) / 100
-        
-        # Create content details - based on patterns detected or random alternatives
-        content_details = []
-        
-        # Add content details based on secondary patterns if found
-        if len(detected_patterns) > 1:
-            for pattern in detected_patterns[1:min(4, len(detected_patterns))]:
-                if pattern != main_theme:
-                    content_details.append({
-                        "name": f"{pattern} pattern",
-                        "confidence": 0.7
-                    })
-        
-        # If we still need more content details, add some based on the hash
-        while len(content_details) < 2:
-            # Pick a different pattern than the main theme
-            pattern_list = list(pattern_dict.keys())
-            alt_pattern_idx = (hash_int + len(content_details) * 17) % len(pattern_list)
-            alt_pattern = pattern_list[alt_pattern_idx]
+            # Dynamically tokenize the filename on non-alphanumeric characters
+            tokens = re.split(r'\W+', base_name)
+            stopwords = set(["a", "an", "the", "of", "and", "in", "on", "at", "to", "for", "with"])
             
-            if alt_pattern != main_theme and not any(cd["name"].startswith(alt_pattern) for cd in content_details):
+            # Filter out tokens that look like UUIDs or short meaningless strings
+            filtered_tokens = []
+            for token in tokens:
+                # Skip empty tokens
+                if not token:
+                    continue
+                    
+                # Skip tokens that are just numbers
+                if token.isdigit():
+                    continue
+                    
+                # Skip tokens that look like part of UUIDs or random strings
+                if len(token) >= 6 and all(c.isdigit() or c.lower() in 'abcdef' for c in token):
+                    continue
+                    
+                # Skip very short tokens unless they're the only token
+                if len(token) <= 2 and len(tokens) > 1:
+                    continue
+                    
+                # Skip stopwords
+                if token.lower() in stopwords:
+                    continue
+                    
+                filtered_tokens.append(token)
+            
+            tokens = filtered_tokens
+            
+            # Use the longest token as the primary descriptor if available
+            if tokens:
+                # Sort by length and prefer alphabetic tokens
+                main_theme = max(tokens, key=lambda t: (any(c.isalpha() for c in t), len(t)))
+                main_theme_confidence = 0.6
+            else:
+                # If no meaningful tokens found
+                main_theme = "textile"
+                main_theme_confidence = 0.5
+        
+        # Build content details dynamically using the tokens and dominant colors
+        content_details = []
+        for token in tokens[:2]:
+            if token and token != main_theme:  # Avoid duplicating main theme
                 content_details.append({
-                    "name": f"{alt_pattern} element",
+                    "name": token,
                     "confidence": 0.6
                 })
         
-        # Add color-based content if we have dominant colors
+        # Add color information to content details
         if dominant_colors:
             color_name = dominant_colors[0]["name"]
             content_details.append({
                 "name": f"{color_name} background",
-                "confidence": 0.8
+                "confidence": 0.7
+            })
+            
+            # Add additional color details if available
+            if len(dominant_colors) > 1:
+                secondary_color = dominant_colors[1]["name"]
+                content_details.append({
+                    "name": f"{secondary_color} accent",
+                    "confidence": 0.65
+                })
+        
+        # Ensure we have at least one content detail
+        if not content_details:
+            content_details.append({
+                "name": "abstract element",
+                "confidence": 0.5
             })
         
-        # Create style attributes
+        # Build stylistic attributes dynamically from the tokens
         stylistic_attributes = []
-        
-        # Add main style
-        stylistic_attributes.append({
-            "name": style,
-            "confidence": style_confidence
-        })
-        
-        # Add secondary styles if detected
-        if len(detected_styles) > 1:
-            for style in detected_styles[1:min(3, len(detected_styles))]:
-                if style != stylistic_attributes[0]["name"]:
-                    stylistic_attributes.append({
-                        "name": style,
-                        "confidence": 0.65
-                    })
-        
-        # Ensure we have at least 2 style attributes
-        while len(stylistic_attributes) < 2:
-            # Pick a different style than those already added
-            style_list = list(style_dict.keys())
-            alt_style_idx = (hash_int + len(stylistic_attributes) * 23) % len(style_list)
-            alt_style = style_list[alt_style_idx]
-            
-            if not any(sa["name"] == alt_style for sa in stylistic_attributes):
+        for token in set(tokens):
+            if token != main_theme:  # Avoid duplicating main theme
                 stylistic_attributes.append({
-                    "name": alt_style,
+                    "name": token,
                     "confidence": 0.6
                 })
         
-        # Create a simple final prompt that includes detected elements
-        final_prompt = f"{main_theme} pattern with {style} style"
+        # Add default style attributes if none found
+        if not stylistic_attributes:
+            if dominant_colors:
+                color_name = dominant_colors[0]["name"]
+                stylistic_attributes.append({"name": f"{color_name}-toned", "confidence": 0.6})
+            stylistic_attributes.append({"name": "contemporary", "confidence": 0.55})
+        
+        # Construct a dynamic final prompt
+        pattern_type = "pattern"
         if dominant_colors:
-            final_prompt += f", primarily {dominant_colors[0]['name']}"
-        if content_details:
-            final_prompt += f", featuring {content_details[0]['name']}"
-        
-        # Build style keywords
-        style_keywords = [main_theme, style]
-        
-        # Add color keywords if available
+            primary_color = dominant_colors[0]["name"]
+            pattern_type = f"{primary_color} {pattern_type}"
+            
+        final_prompt = f"{main_theme.capitalize()} {pattern_type}"
         if dominant_colors:
-            style_keywords.append(dominant_colors[0]["name"])
+            color_desc = ", ".join([f"{c['name']}" for c in dominant_colors[:2]])
+            final_prompt += f" featuring {color_desc} tones"
         
-        # Add content elements
-        for item in content_details[:2]:
-            keyword = item["name"].split()[0]  # Take the first word
-            if keyword not in style_keywords:
-                style_keywords.append(keyword)
+        if tokens:
+            token_list = [t for t in tokens if t != main_theme]
+            if token_list:
+                final_prompt += " with " + ", ".join(token_list[:2])
         
-        # Create fallback result with reasonable defaults and detected information
+        # Create distinct style keywords
+        style_keywords = [main_theme]
+        for token in tokens:
+            if token != main_theme:
+                style_keywords.append(token)
+                
+        # Add color keywords
+        for color in dominant_colors:
+            if color["name"] not in style_keywords:
+                style_keywords.append(color["name"])
+                
+        # Add sensible default keywords if we have few
+        if len(style_keywords) < 3:
+            for default_kw in ["textile", "fabric", "pattern"]:
+                if default_kw not in style_keywords:
+                    style_keywords.append(default_kw)
+        
+        # Create secondary patterns based on available tokens
+        secondary_patterns = []
+        for token in tokens:
+            if token != main_theme and len(token) > 3:  # Only meaningful tokens
+                secondary_patterns.append({
+                    "name": f"{token} pattern",
+                    "confidence": 0.55
+                })
+                if len(secondary_patterns) >= 2:  # Limit to 2 secondary patterns
+                    break
+        
+        # Add color-based secondary pattern if no token-based ones
+        if not secondary_patterns and dominant_colors:
+            secondary_patterns.append({
+                "name": f"{dominant_colors[0]['name']} accent pattern",
+                "confidence": 0.5
+            })
+        
         fallback_result = {
             "main_theme": main_theme.capitalize(),
             "main_theme_confidence": round(main_theme_confidence, 2),
             "category": main_theme.capitalize(),
-            "category_confidence": round(0.7 + (hash_int % 15) / 100, 2),
-            "primary_pattern": main_theme.capitalize() + " pattern",
+            "category_confidence": 0.7,
+            "primary_pattern": f"{main_theme.capitalize()} pattern",
             "pattern_confidence": round(main_theme_confidence - 0.05, 2),
             "content_details": content_details,
             "stylistic_attributes": stylistic_attributes,
-            "secondary_patterns": [],
+            "secondary_patterns": secondary_patterns,
             "style_keywords": style_keywords,
             "prompt": {"final_prompt": final_prompt},
             "dimensions": {"width": width, "height": height},
             "original_path": image_path
         }
-        
-        # Cache this fallback result with a special flag
         fallback_result["is_fallback"] = True
         self._cache_result(image_path, fallback_result)
         
-        logger.info(f"Generated fallback analysis for {os.path.basename(image_path)}: {main_theme} ({fallback_result['main_theme_confidence']})")
-        
+        logger.info(f"Generated fallback analysis for {os.path.basename(image_path)}: {main_theme.capitalize()} ({fallback_result['main_theme_confidence']})")
         return fallback_result
 
     def _analyze_colors(self, image):

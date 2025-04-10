@@ -230,15 +230,21 @@ const showResetConfirm = ref(false)
 const isResetting = ref(false)
 
 const images = computed(() => {
-  // Get valid images from the store
-  const validImages = imageStore.getValidImages() || []
-  
-  // Sort images by timestamp in descending order (newest first)
-  return [...validImages].sort((a, b) => {
-    const timeA = a.timestamp || 0
-    const timeB = b.timestamp || 0
-    return timeB - timeA
-  })
+  // Get valid images currently in the store
+  const currentImages = imageStore.getValidImages() || [];
+
+  // Check if a search (text or similarity) is active
+  const searchIsActive = imageStore.searchQuery !== '' || imageStore.searchQueryReferenceImage !== null;
+
+  if (searchIsActive) {
+    // If search is active, use the order provided by the store.
+    // The store's `images` ref should already contain relevance-sorted results.
+    return currentImages;
+  } else {
+    // Default view: sort by timestamp (newest first)
+    // Create a new sorted array to avoid mutating the store's array directly
+    return [...currentImages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  }
 })
 const loading = computed(() => imageStore.loading)
 const searchActive = computed(() => imageStore.searchQuery !== '')
@@ -332,8 +338,33 @@ const handleImageError = (image) => {
     console.warn('Thumbnail failed to load:', image.thumbnail_path);
   }
   
+  // Find the image in the gallery by ID or path
+  const imageId = image.id || image.path || image.thumbnail_path;
+  
   // Remove invalid images from the gallery
-  imageStore.cleanGallery();
+  if (searchActive.value) {
+    // For search results, remove just from current results
+    imageStore.images.value = imageStore.images.value.filter(img => {
+      const imgId = img.id || img.path || img.thumbnail_path;
+      return imgId !== imageId;
+    });
+    
+    // Also remove from search results
+    imageStore.searchResults.value = imageStore.searchResults.value.filter(img => {
+      const imgId = img.id || img.path || img.thumbnail_path;
+      return imgId !== imageId;
+    });
+  } else {
+    // For normal gallery view, call cleanup
+    imageStore.cleanGallery();
+  }
+  
+  // If this was the reference image for search, clear search
+  if (imageStore.searchQueryReferenceImage && 
+      (imageStore.searchQueryReferenceImage.id === image.id || 
+       imageStore.searchQueryReferenceImage.thumbnail_path === image.thumbnail_path)) {
+    imageStore.clearSearch();
+  }
 }
 
 const getImageName = (image) => {
@@ -435,13 +466,34 @@ const handleReset = async () => {
   try {
     isResetting.value = true
     
+    // Clear search state first
+    imageStore.clearSearch()
+    
+    // Clear any selected image
+    selectedImage.value = null
+    
     // Call the nuclear option
-    await imageStore.nukeEverything()
+    const success = await imageStore.nukeEverything()
     
-    showResetConfirm.value = false
-    
-    // Fetch fresh empty state
-    await imageStore.fetchImages()
+    if (success) {
+      showResetConfirm.value = false
+      
+      // Force reload if there were issues with cached items
+      // This is more drastic but ensures a clean state
+      if (window.location.search.includes('search=') || window.location.search.includes('similar=')) {
+        // If there's a search in progress, reload without it
+        window.location.href = window.location.pathname
+        return
+      }
+      
+      // Fetch fresh empty state
+      await imageStore.fetchImages()
+      
+      // Ensure any in-memory refs to invalid images are cleaned up
+      imageStore.cleanGallery()
+    } else {
+      console.error("Failed to reset images")
+    }
   } catch (error) {
     if (isDev) {
       console.error("Failed to reset images:", error)

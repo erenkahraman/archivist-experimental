@@ -221,6 +221,7 @@ class ElasticsearchClient:
             # Define mappings
             mappings = {
                 "properties": {
+                    # Basic metadata fields
                     "id": {"type": "keyword"},
                     "filename": {"type": "keyword"},
                     "path": {"type": "keyword"},
@@ -230,6 +231,17 @@ class ElasticsearchClient:
                     "file_size": {"type": "long"},
                     "width": {"type": "integer"},
                     "height": {"type": "integer"},
+                    "timestamp": {"type": "date"},
+                    "has_fallback_analysis": {"type": "boolean"},
+                    
+                    # CLIP embedding vector field - removed deprecated parameters
+                    "embedding": {
+                        "type": "dense_vector",
+                        "dims": 512,  # CLIP-ViT-B/32 has 512 dimensions
+                        "index": True  # Enable indexing for future ANN/kNN search
+                    },
+                    
+                    # Pattern information
                     "patterns": {
                         "properties": {
                             "main_theme": {
@@ -400,6 +412,7 @@ class ElasticsearchClient:
         if not self.index_exists():
             logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
             if not self.create_index():
+                logger.error(f"Failed to create index '{self.index_name}'")
                 return False
         
         # Extract the document ID
@@ -407,10 +420,75 @@ class ElasticsearchClient:
         if not doc_id:
             logger.error("Document must have an 'id', 'path', or 'filename' field")
             return False
-            
-        self.client.index(index=self.index_name, id=doc_id, document=document)
-        logger.info(f"Indexed document with ID: {doc_id}")
-        return True
+        
+        # Create a copy of the document to avoid modifying the original
+        document_copy = document.copy()
+        
+        # Validate the embedding if present
+        embedding_status = "missing"
+        if "embedding" in document_copy:
+            embedding = document_copy["embedding"]
+            if embedding is not None:
+                embedding_status = "present"
+                
+                # Check if it's a list and has the right dimensions
+                if isinstance(embedding, list):
+                    embedding_length = len(embedding)
+                    
+                    if embedding_length != 512:
+                        logger.warning(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512)")
+                        
+                        # Ensure proper encoding for ES - normalize length
+                        if embedding_length > 512:
+                            document_copy["embedding"] = embedding[:512]
+                            logger.info(f"Truncated embedding from {embedding_length} to 512 dimensions for document {doc_id}")
+                            embedding_status = "truncated"
+                        elif embedding_length < 512:
+                            logger.warning(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512). Removing embedding before indexing.")
+                            document_copy.pop("embedding")
+                            embedding_status = "removed_invalid_dims"
+                    else:
+                        logger.info(f"Document {doc_id} has valid embedding with {embedding_length} dimensions")
+                        
+                # If it's an ndarray, convert to list
+                elif hasattr(embedding, 'tolist'):
+                    try:
+                        document_copy["embedding"] = embedding.tolist()
+                        embedding_length = len(document_copy["embedding"])
+                        logger.info(f"Converted ndarray embedding to list ({embedding_length} dimensions) for document {doc_id}")
+                        embedding_status = "converted"
+                    except Exception as e:
+                        logger.error(f"Failed to convert ndarray embedding to list for document {doc_id}: {str(e)}")
+                        document_copy.pop("embedding")
+                        embedding_status = "removed_invalid"
+                else:
+                    # Remove invalid embeddings to avoid indexing issues
+                    logger.warning(f"Document {doc_id} has invalid embedding type: {type(embedding)}, removing it before indexing")
+                    document_copy.pop("embedding")
+                    embedding_status = "removed_invalid"
+            else:
+                # Remove null embeddings to avoid indexing issues
+                logger.warning(f"Document {doc_id} has null embedding, removing it before indexing")
+                document_copy.pop("embedding")
+                embedding_status = "removed_null"
+        
+        # Index the document
+        try:
+            self.client.index(index=self.index_name, id=doc_id, document=document_copy)
+            logger.info(f"Indexed document with ID: {doc_id} (embedding: {embedding_status})")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to index document {doc_id}: {str(e)}")
+            # Add more detailed error information
+            if "Content-Type header" in str(e):
+                logger.error("Content-Type header issue - check Elasticsearch client version compatibility")
+            elif "ConnectionTimeout" in str(e):
+                logger.error("Connection timeout - check Elasticsearch server availability and network")
+            elif "RequestError" in str(e) and "mapper_parsing_exception" in str(e):
+                logger.error("Mapping error - document structure may not match index mapping")
+            elif "document_already_exists_exception" in str(e):
+                logger.warning(f"Document {doc_id} already exists - consider using update operation instead")
+            return False
     
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def bulk_index(self, documents: List[Dict[str, Any]], chunk_size: int = 500) -> bool:
@@ -436,21 +514,81 @@ class ElasticsearchClient:
         if not self.index_exists():
             logger.info(f"Index '{self.index_name}' doesn't exist, creating it")
             if not self.create_index():
+                logger.error(f"Failed to create index '{self.index_name}'")
                 return False
             
         # Process documents in chunks
         actions = []
+        embedding_stats = {
+            "present": 0,
+            "missing": 0,
+            "truncated": 0,
+            "removed_invalid_dims": 0,
+            "converted": 0,
+            "removed_null": 0,
+            "removed_invalid": 0
+        }
+        
         for doc in documents:
             # Extract ID
             doc_id = doc.get("id") or doc.get("path") or doc.get("filename")
             if not doc_id:
                 logger.warning("Skipping document without ID field")
                 continue
+            
+            # Create a copy to avoid modifying the original
+            processed_doc = doc.copy()
+            
+            # Validate the embedding if present
+            embedding_status = "missing"
+            if "embedding" in processed_doc:
+                embedding = processed_doc["embedding"]
+                if embedding is not None:
+                    embedding_status = "present"
+                    
+                    # Check if it's a list and has the right dimensions
+                    if isinstance(embedding, list):
+                        embedding_length = len(embedding)
+                        
+                        if embedding_length != 512:
+                            logger.debug(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512)")
+                            
+                            # Ensure proper encoding for ES - normalize length
+                            if embedding_length > 512:
+                                processed_doc["embedding"] = embedding[:512]
+                                logger.debug(f"Truncated embedding to 512 dimensions for document {doc_id}")
+                                embedding_status = "truncated"
+                            elif embedding_length < 512:
+                                logger.warning(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512). Removing embedding before indexing.")
+                                processed_doc.pop("embedding")
+                                embedding_status = "removed_invalid_dims"
+                        
+                    # If it's an ndarray, convert to list
+                    elif hasattr(embedding, 'tolist'):
+                        try:
+                            processed_doc["embedding"] = embedding.tolist()
+                            embedding_status = "converted"
+                        except Exception as e:
+                            logger.error(f"Failed to convert ndarray embedding to list for document {doc_id}: {str(e)}")
+                            processed_doc.pop("embedding")
+                            embedding_status = "removed_invalid"
+                    else:
+                        # Remove invalid embeddings to avoid indexing issues
+                        logger.warning(f"Document {doc_id} has invalid embedding type: {type(embedding)}, removing it before indexing")
+                        processed_doc.pop("embedding")
+                        embedding_status = "removed_invalid"
+                else:
+                    # Remove null embeddings to avoid indexing issues
+                    processed_doc.pop("embedding")
+                    embedding_status = "removed_null"
+                    
+            # Update embedding stats
+            embedding_stats[embedding_status] += 1
                 
             action = {
                 "_index": self.index_name,
                 "_id": doc_id,
-                "_source": doc
+                "_source": processed_doc
             }
             actions.append(action)
             
@@ -459,15 +597,35 @@ class ElasticsearchClient:
             return False
             
         # Execute bulk indexing
-        success, failed = helpers.bulk(
-            self.client, 
-            actions, 
-            chunk_size=chunk_size,
-            raise_on_error=False
-        )
-        
-        logger.info(f"Bulk indexed {success} documents, {len(failed) if failed else 0} failed")
-        return success > 0
+        try:
+            success, failed = helpers.bulk(
+                self.client, 
+                actions, 
+                chunk_size=chunk_size,
+                raise_on_error=False
+            )
+            
+            # Log embedding statistics
+            logger.info(f"Embedding statistics for bulk indexing: {embedding_stats}")
+            
+            if failed:
+                logger.warning(f"Bulk indexed {success} documents, {len(failed)} failed:")
+                for failure in failed[:5]:  # Log first 5 failures
+                    logger.warning(f"  - {failure}")
+            else:
+                logger.info(f"Bulk indexed {success} documents successfully")
+                
+            return success > 0
+        except Exception as e:
+            logger.error(f"Bulk indexing failed: {str(e)}")
+            # Add more detailed error information
+            if "Content-Type header" in str(e):
+                logger.error("Content-Type header issue - check Elasticsearch client version compatibility")
+            elif "ConnectionTimeout" in str(e):
+                logger.error("Connection timeout - check Elasticsearch server availability and network")
+            elif "RequestError" in str(e) and "mapper_parsing_exception" in str(e):
+                logger.error("Mapping error - document structure may not match index mapping")
+            return False
         
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def delete_document(self, doc_id: str) -> bool:
@@ -500,591 +658,419 @@ class ElasticsearchClient:
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-        Enhanced search function using composite query structure
-        
-        Args:
-            query: The search query string
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity score threshold
-            
-        Returns:
-            List of matching documents
+        Basic text search that matches text across various metadata fields.
+        Uses a simple query string approach that works with all field types.
         """
         if not self.is_connected():
             logger.error("Cannot search: not connected to Elasticsearch")
             return []
-            
-        # For empty or wildcard queries
-        if query == "*" or not query.strip():
-            query_body = {"match_all": {}}
-            return self._execute_search(query_body, limit, min_similarity)
-        
-        # Log search parameters for debugging
-        logger.info(f"Performing enhanced search for: '{query}' with limit {limit}")
-        
-        # Split query into terms for more flexibility
-        query_terms = [term.strip() for term in query.split() if term.strip()]
-        min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
-        
-        # Build the main compound query
-        should_clauses = []
-        
-        # 1. Exact matches on main_theme with highest boost
-        should_clauses.append({
-            "match": {
-                "patterns.main_theme.raw": {
-                    "query": query,
-                    "boost": 6.0
+
+        # Clean the query
+        clean_query = query.strip()
+        if not clean_query:
+            logger.warning("Received empty search query.")
+            return []
+
+        logger.info(f"Performing basic text search for: '{clean_query}', limit={limit}")
+
+        # Use a simple query_string query which works with both text and keyword fields
+        query_body = {
+            "size": limit,
+            "query": {
+                "query_string": {
+                    "query": clean_query,
+                    "default_operator": "AND",
+                    "fields": [
+                        "patterns.primary_pattern^3",
+                        "patterns.main_theme^2.5",
+                        "patterns.style_keywords^2", 
+                        "patterns.secondary_patterns.name^1.5",
+                        "patterns.content_details.name^1.5",
+                        "colors.dominant_colors.name^1",
+                        "patterns.prompt.final_prompt^1",
+                        "filename^0.5"
+                    ]
                 }
-            }
-        })
-        
-        # 2. Exact matches on primary_pattern with high boost
-        should_clauses.append({
-            "match": {
-                "patterns.primary_pattern.raw": {
-                    "query": query,
-                    "boost": 5.0
-                }
-            }
-        })
-        
-        # 3. Nested query for content details with enhanced boosting
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.content_details",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.content_details.name.raw": {
-                                        "query": query,
-                                        "boost": 4.5
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.content_details.name": {
-                                        "query": query,
-                                        "boost": 4.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.content_details.name.partial": {
-                                        "query": query,
-                                        "boost": 3.5
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 4.0
-            }
-        })
-        
-        # 4. Multi-match across all relevant text fields
-        should_clauses.append({
-            "multi_match": {
-                "query": query,
-                "fields": [
-                    "patterns.main_theme^4.0",
-                    "patterns.main_theme.partial^3.5",
-                    "patterns.primary_pattern^3.0",
-                    "patterns.primary_pattern.partial^2.5",
-                    "patterns.prompt.final_prompt^2.0",
-                    "patterns.prompt.final_prompt.partial^1.5",
-                    "patterns.style_keywords^1.5"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "boost": 3.0
-            }
-        })
-        
-        # 5. Nested query for stylistic attributes
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.stylistic_attributes",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name.raw": {
-                                        "query": query,
-                                        "boost": 2.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name": {
-                                        "query": query,
-                                        "boost": 1.8
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name.partial": {
-                                        "query": query,
-                                        "boost": 1.5
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 2.0
-            }
-        })
-        
-        # 6. Nested query for secondary patterns
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.secondary_patterns",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.secondary_patterns.name.raw": {
-                                        "query": query,
-                                        "boost": 2.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.secondary_patterns.name": {
-                                        "query": query,
-                                        "boost": 1.8
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 1.5
-            }
-        })
-        
-        # 7. Nested query for colors
-        should_clauses.append({
-            "nested": {
-                "path": "colors.dominant_colors",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "colors.dominant_colors.name.raw": {
-                                        "query": query,
-                                        "boost": 1.5
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "colors.dominant_colors.name": {
-                                        "query": query,
-                                        "boost": 1.2
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "avg",
-                "boost": 1.0
-            }
-        })
-        
-        # Build the main bool query
-        bool_query = {
-            "bool": {
-                "should": should_clauses,
-                "minimum_should_match": 1
-            }
+            },
+            "sort": [
+                "_score",
+                {"timestamp": {"order": "desc"}}
+            ]
         }
-        
-        # Wrap in a function_score query to factor in confidence values
-        function_score_query = {
-            "function_score": {
-                "query": bool_query,
-                "functions": [
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.main_theme_confidence",
-                            "factor": 2.0,
-                            "missing": 0.8,
-                            "modifier": "log1p"
-                        }
-                    },
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.pattern_confidence",
-                            "factor": 1.5,
-                            "missing": 0.7,
-                            "modifier": "log1p"
-                        }
-                    },
-                    # Reduce score for fallback analysis results
-                    {
-                        "script_score": {
-                            "script": {
-                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
-                            }
-                        }
-                    },
-                    # Add recency boost
-                    {
-                        "gauss": {
-                            "timestamp": {
-                                "scale": "30d",
-                                "decay": 0.5
-                            }
-                        },
-                        "weight": 0.5
-                    }
-                ],
-                "score_mode": "multiply",
-                "boost_mode": "multiply"
-            }
-        }
-        
-        # Execute search with the function_score query
-        return self._execute_search(function_score_query, limit, min_similarity)
-    
-    def _execute_search(self, query_body, limit, min_similarity):
-        """
-        Helper method to execute a search with the given query body
-        """
-        start_time = time.time()
-        try:
-            response = self.client.search(
-                index=self.index_name,
-                body={
-                    "size": limit,
-                    "query": query_body,
-                    "_source": True
-                }
-            )
-            
-            search_time = time.time() - start_time
-            logger.info(f"Search completed in {search_time:.2f}s")
-            
-            # Get max score for normalization
-            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
-            
-            # Process and normalize results
-            results = []
-            for hit in response["hits"]["hits"]:
-                doc = hit["_source"]
-                raw_score = hit["_score"]
-                
-                # Normalize score to 0-1 range
-                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
-                
-                # Add scores to the document
-                doc["similarity"] = max(min_similarity, similarity)
-                doc["raw_score"] = raw_score
-                
-                # Only include results above threshold
-                if doc["similarity"] >= min_similarity:
-                    results.append(doc)
-            
-            # Sort by similarity
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            
-            logger.info(f"Search returned {len(results)} results")
-            return results
-            
-        except Exception as e:
-            search_time = time.time() - start_time
-            logger.error(f"Search failed after {search_time:.2f}s: {str(e)}")
-            return [] 
+
+        # Execute the search and process results
+        return self._execute_search(query_body, limit, min_similarity)
 
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def find_similar(self, embedding=None, limit=20, min_similarity=0.1, exclude_id=None, 
-                   text_query=None):
+                   text_query=None, image_weight=0.7, text_weight=0.3):
         """
-        Find similar documents based on text query or vector similarity
+        Find similar images using vector embedding, text search, or both.
+        Simplified approach that prioritizes getting results over perfect scoring.
         
         Args:
-            embedding: Vector embedding for similarity search
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity score threshold
-            exclude_id: ID of image to exclude from results
-            text_query: Text query for searching
+            embedding: Vector embedding to use for similarity search
+            limit: Maximum results to return
+            min_similarity: Minimum similarity threshold (mostly ignored in basic search)
+            exclude_id: Optional ID to exclude from results
+            text_query: Optional text query to combine with vector search
+            image_weight: Weight for vector similarity in hybrid search (0-1)
+            text_weight: Weight for text similarity in hybrid search (0-1)
             
         Returns:
-            List of documents sorted by similarity
+            List of similar documents
         """
-        if not self.is_connected():
-            logger.error("Cannot perform similarity search: not connected to Elasticsearch")
+        # Check for valid inputs
+        has_embedding = embedding is not None
+        has_text = text_query is not None and text_query.strip() != ""
+        
+        if not has_embedding and not has_text:
+            logger.error("find_similar requires either embedding or text_query")
             return []
             
-        # Build the main query
-        if text_query:
-            logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
-            
-            # Split query into terms for better matching control
-            query_terms = [term.strip() for term in text_query.split() if term.strip()]
-            min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
-            
-            # Build enhanced similar query with multiple fields and clauses
-            should_clauses = []
-            
-            # Match on all important fields with appropriate boosts
-            should_clauses.append({
-                "match": {
-                    "patterns.main_theme.raw": {
-                        "query": text_query,
-                        "boost": 5.0
-                    }
-                }
-            })
-            
-            should_clauses.append({
-                "match": {
-                    "patterns.primary_pattern.raw": {
-                        "query": text_query,
-                        "boost": 4.5
-                    }
-                }
-            })
-            
-            # Multi match across standard fields
-            should_clauses.append({
-                "multi_match": {
-                    "query": text_query,
-                    "fields": [
-                        "patterns.main_theme^3",
-                        "patterns.main_theme.partial^2.5",
-                        "patterns.primary_pattern^2.5",
-                        "patterns.primary_pattern.partial^2",
-                        "patterns.prompt.final_prompt^1.2",
-                        "patterns.prompt.final_prompt.partial^1"
-                    ],
-                    "type": "best_fields",
-                    "fuzziness": "AUTO",
-                    "prefix_length": 2,
-                    "boost": 3.0
-                }
-            })
-            
-            # Nested queries for content details and stylistic attributes
-            should_clauses.append({
-                "nested": {
-                    "path": "patterns.content_details",
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"match": {"patterns.content_details.name": {"query": text_query, "boost": 2.0}}},
-                                {"match": {"patterns.content_details.name.partial": {"query": text_query, "boost": 1.5}}}
-                            ]
-                        }
-                    },
-                    "score_mode": "max",
-                    "boost": 2.0
-                }
-            })
-            
-            should_clauses.append({
-                "nested": {
-                    "path": "patterns.stylistic_attributes",
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"match": {"patterns.stylistic_attributes.name": {"query": text_query, "boost": 1.5}}},
-                                {"match": {"patterns.stylistic_attributes.name.partial": {"query": text_query, "boost": 1.0}}}
-                            ]
-                        }
-                    },
-                    "score_mode": "max",
-                    "boost": 1.5
-                }
-            })
-            
-            # Add dominant color search
-            should_clauses.append({
-                "nested": {
-                    "path": "colors.dominant_colors",
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"match": {"colors.dominant_colors.name.raw": {"query": text_query, "boost": 2.0}}},
-                                {"match": {"colors.dominant_colors.name": {"query": text_query, "boost": 1.5}}},
-                                {"match": {"colors.dominant_colors.name.partial": {"query": text_query, "boost": 1.0}}}
-                            ]
-                        }
-                    },
-                    "score_mode": "avg",
-                    "boost": 1.5
-                }
-            })
-            
-            # Build bool query
-            bool_query = {
-                "bool": {
-                    "should": should_clauses,
-                    "minimum_should_match": 1
-                }
-            }
-            
-            # Wrap in function_score query to factor in confidence scores
-            query_body = {
-                "function_score": {
-                    "query": bool_query,
-                    "functions": [
-                        {
-                            "field_value_factor": {
-                                "field": "patterns.main_theme_confidence",
-                                "factor": 1.5,
-                                "missing": 0.8,
-                                "modifier": "log1p"
-                            }
-                        },
-                        {
-                            "field_value_factor": {
-                                "field": "patterns.pattern_confidence",
-                                "factor": 1.2,
-                                "missing": 0.7,
-                                "modifier": "log1p"
-                            }
-                        },
-                        # Add recency boost
-                        {
-                            "gauss": {
-                                "timestamp": {
-                                    "scale": "30d",
-                                    "decay": 0.5
-                                }
-                            },
-                            "weight": 0.5
-                        }
-                    ],
-                    "score_mode": "multiply",
-                    "boost_mode": "multiply"
-                }
-            }
-        elif embedding is not None:
-            # Vector similarity search
-            logger.info("Performing vector-based similarity search")
-            query_body = {
-                "script_score": {
-                    "query": {"match_all": {}},
-                    "script": {
-                        "source": "cosineSimilarity(params.query_vector, 'embedding') + 1.0",
-                        "params": {"query_vector": embedding}
-                    }
-                }
-            }
-        else:
-            # Fallback to general search
-            logger.info("Performing general similarity search")
-            query_body = {"match_all": {}}
-            
-        # Add exclusion if provided
-        if exclude_id:
-            # Create a must_not clause to exclude the reference document
-            if "function_score" in query_body:
-                if "bool" not in query_body["function_score"]["query"]:
-                    query_body["function_score"]["query"] = {
-                        "bool": {
-                            "must": [query_body["function_score"]["query"]],
-                            "must_not": []
-                        }
-                    }
-                
-                # Add exclusion by ID and filename
-                query_body["function_score"]["query"]["bool"]["must_not"] = [
-                    {"term": {"id": exclude_id}},
-                    {"term": {"filename": exclude_id}},
-                    {"term": {"path": exclude_id}}
-                ]
-            elif "script_score" in query_body:
-                # For vector search
-                if "bool" not in query_body["script_score"]["query"]:
-                    query_body["script_score"]["query"] = {
-                        "bool": {
-                            "must": [query_body["script_score"]["query"]],
-                            "must_not": []
-                        }
-                    }
-                
-                # Add exclusion
-                query_body["script_score"]["query"]["bool"]["must_not"] = [
-                    {"term": {"id": exclude_id}},
-                    {"term": {"filename": exclude_id}},
-                    {"term": {"path": exclude_id}}
-                ]
-            else:
-                # For simple queries
-                query_body = {
-                    "bool": {
-                        "must": [query_body],
-                        "must_not": [
-                            {"term": {"id": exclude_id}},
-                            {"term": {"filename": exclude_id}},
-                            {"term": {"path": exclude_id}}
-                        ]
-                    }
-                }
-                
-            logger.info(f"Excluding ID: {exclude_id}")
+        if not self.is_connected():
+            logger.error("Cannot find similar: not connected to Elasticsearch")
+            return []
         
-        # Execute the search and process results
-        start_time = time.time()
+        # If we have both, do a hybrid search
+        if has_embedding and has_text:
+            # Prepare embedding if needed
+            if hasattr(embedding, 'tolist'):
+                embedding = embedding.tolist()
+                
+            logger.info(f"Hybrid search: text='{text_query}', embedding dimensions={len(embedding) if isinstance(embedding, list) else 'unknown'}")
+            
+            # Get text search results
+            text_results = self.search(text_query, limit=limit*2, min_similarity=0)
+            
+            # Get vector search results
+            vector_results = self._vector_search(embedding, limit=limit*2, min_similarity=0, exclude_id=exclude_id)
+            
+            # Simple approach - merge both result sets with preference for higher scores
+            all_results = {}
+            
+            # Process text results
+            for result in text_results:
+                doc_id = result.get('id')
+                if doc_id:
+                    all_results[doc_id] = result
+            
+            # Process vector results - augment existing or add new
+            for result in vector_results:
+                doc_id = result.get('id')
+                if not doc_id or (exclude_id and doc_id == exclude_id):
+                    continue
+                
+                if doc_id in all_results:
+                    # If already exists from text search, take the higher score
+                    existing = all_results[doc_id]
+                    if result.get('raw_score', 0) > existing.get('raw_score', 0):
+                        all_results[doc_id] = result
+                else:
+                    all_results[doc_id] = result
+            
+            # Convert to list and sort by score
+            combined_results = list(all_results.values())
+            combined_results.sort(key=lambda x: x.get('raw_score', 0), reverse=True)
+            
+            # Limit to requested number
+            combined_results = combined_results[:limit]
+            
+            logger.info(f"Hybrid search returned {len(combined_results)} results")
+            return combined_results
+            
+        elif has_embedding:
+            # Vector similarity search only
+            return self._vector_search(embedding, limit, min_similarity, exclude_id)
+        elif has_text:
+            # Text similarity search only
+            return self.search(text_query, limit, min_similarity)
+        else:
+            # This shouldn't happen due to the checks above
+            return []
+
+    def _execute_search(self, query, limit, min_similarity):
+        """
+        Execute a search query and process results.
+        Uses lenient scoring to ensure we get results.
+        
+        Args:
+            query: Elasticsearch query object
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (mostly ignored for basic search)
+            
+        Returns:
+            List of documents with normalized similarity scores
+        """
         try:
+            # Execute the search
+            start_time = time.time()
             response = self.client.search(
                 index=self.index_name,
-                body={
-                    "size": limit,
-                    "query": query_body,
-                    "_source": True
-                }
+                body=query
             )
+            elapsed = time.time() - start_time
+            logger.info(f"Search completed in {elapsed:.2f}s")
             
-            search_time = time.time() - start_time
-            logger.info(f"Similarity search completed in {search_time:.2f}s")
+            # Extract hits
+            hits = response.get('hits', {}).get('hits', [])
             
-            # Process results
+            # Basic processing - log info about results
+            logger.info(f"Search returned {len(hits)} raw hits from Elasticsearch")
+            
+            # For basic search, we'll be more lenient with scoring
+            # to ensure we get results even with partial matches
             results = []
-            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
             
-            for hit in response["hits"]["hits"]:
-                doc = hit["_source"]
-                raw_score = hit["_score"]
+            if hits:
+                # Get score range for reference only
+                scores = [hit.get('_score', 0) for hit in hits]
+                min_score = min(scores) if scores else 0
+                max_score = max(scores) if scores else 0
+                logger.info(f"Score range: min={min_score:.4f}, max={max_score:.4f}")
                 
-                # Normalize score to 0-1 range
-                similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
-                
-                # Add similarity score
-                doc["raw_score"] = raw_score
-                doc["similarity"] = max(min_similarity, similarity)
-                
-                # Only include results above threshold
-                if doc["similarity"] >= min_similarity:
+                # Process all hits - we'll be lenient and include everything 
+                for hit in hits:
+                    doc = hit.get('_source', {})
+                    raw_score = hit.get('_score', 0)
+                    
+                    # Scale score to percentage - even low scores get included
+                    # This is basic search, we just want to show anything that matches
+                    similarity = 100.0
+                    if max_score > 0:
+                        similarity = (raw_score / max_score) * 100.0
+                    
+                    # Add scores to document
+                    doc["similarity"] = round(similarity, 4)
+                    doc["raw_score"] = raw_score
                     results.append(doc)
+                
+                # Sort by score (highest first)
+                results.sort(key=lambda x: x.get("raw_score", 0), reverse=True)
             
-            # Sort by similarity (descending)
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            
-            logger.info(f"Similarity search returned {len(results)} results (of {len(response['hits']['hits'])} total)")
+            logger.info(f"Returning {len(results)} results after processing")
             return results
             
         except Exception as e:
-            search_time = time.time() - start_time
-            logger.error(f"Similarity search failed after {search_time:.2f}s: {str(e)}")
-            return [] 
+            logger.error(f"Search execution error: {str(e)}")
+            return []
+
+    def _vector_search(self, embedding, limit, min_similarity, exclude_id=None):
+        """
+        Perform basic vector similarity search using CLIP embedding
+        """
+        # Debug the embedding
+        embedding_size = len(embedding) if isinstance(embedding, list) else (embedding.size if hasattr(embedding, 'size') else 'unknown')
+        logger.info(f"Performing vector search with embedding of size {embedding_size}")
+        
+        # Create a simple script score query for vector similarity
+        script_score_query = {
+            "size": limit,
+            "query": {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": """
+                            if (!doc.containsKey('embedding') || doc['embedding'].size() == 0) { return 0.0; }
+                            try {
+                                // Simple dot product for cosine similarity
+                                return (dotProduct(params.query_vector, 'embedding') + 1.0) / 2.0;
+                            } catch (Exception e) {
+                                return 0.0;
+                            }
+                        """,
+                        "params": {
+                            "query_vector": embedding
+                        }
+                    }
+                }
+            },
+            "sort": ["_score"]
+        }
+        
+        # Add exclusion if provided
+        if exclude_id:
+            script_score_query["query"] = {
+                "bool": {
+                    "must": [script_score_query["query"]],
+                    "must_not": [
+                        {"term": {"id": exclude_id}},
+                        {"term": {"filename": exclude_id}},
+                        {"term": {"path": exclude_id}}
+                    ]
+                }
+            }
+            
+        # Execute the search using our simplified method
+        results = self._execute_search(script_score_query, limit, min_similarity)
+        
+        if results:
+            logger.info(f"Vector search returned {len(results)} results")
+        else:
+            logger.warning("Vector search returned no results")
+            
+        return results
+        
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a document from the index by ID
+        
+        Args:
+            doc_id: Document ID to retrieve
+            
+        Returns:
+            Document data as dict, or None if not found
+        """
+        if not self.is_connected():
+            logger.error("Cannot get document: not connected to Elasticsearch")
+            return None
+            
+        try:
+            # Try to get document by ID
+            response = self.client.get(index=self.index_name, id=doc_id)
+            if response and response.get('found', False):
+                # Return the document source
+                return response.get('_source', {})
+            else:
+                logger.warning(f"Document with ID '{doc_id}' not found")
+                return None
+        except NotFoundError:
+            logger.warning(f"Document with ID '{doc_id}' not found")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting document with ID '{doc_id}': {str(e)}")
+            return None 
+
+    def search_by_vector(self, embedding, limit=20, min_similarity=0.1, text_weight=0.3, vector_weight=0.7):
+        """
+        Search by CLIP embedding vector - simplified version
+        
+        Args:
+            embedding: The vector embedding to search by
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (not strictly enforced in basic search)
+            text_weight: Not used in this implementation
+            vector_weight: Not used in this implementation
+            
+        Returns:
+            List of similar documents sorted by similarity
+        """
+        if embedding is None:
+            logger.error("Cannot search by vector: embedding is None")
+            return []
+            
+        if not self.is_connected():
+            logger.error("Cannot search by vector: not connected to Elasticsearch")
+            return []
+            
+        # Direct call to _vector_search with the specified parameters
+        logger.info(f"Vector search with {limit} limit")
+        return self._vector_search(embedding, limit, min_similarity)
+
+    def _hybrid_search(self, embedding, text_query, limit=20, min_similarity=0.1, exclude_id=None,
+                     text_weight=0.3, vector_weight=0.7):
+        """
+        Hybrid search combining vector similarity with text search
+        
+        This performs both vector search and text search separately, then combines results
+        with weighted scoring based on the text_weight and vector_weight parameters.
+        
+        Args:
+            embedding: Vector embedding for visual similarity
+            text_query: Text query for semantic search
+            limit: Maximum number of results
+            min_similarity: Minimum similarity threshold
+            exclude_id: Optional ID to exclude from results
+            text_weight: Weight of text results in final score (0-1)
+            vector_weight: Weight of vector results in final score (0-1)
+            
+        Returns:
+            Combined and re-scored results
+        """
+        # Normalize weights to sum to 1.0
+        total_weight = text_weight + vector_weight
+        if total_weight <= 0:
+            logger.warning("Invalid weights, defaulting to 50/50 split")
+            text_weight = 0.5
+            vector_weight = 0.5
+        else:
+            text_weight = text_weight / total_weight
+            vector_weight = vector_weight / total_weight
+            
+        logger.info(f"Hybrid search with weights: text={text_weight:.2f}, vector={vector_weight:.2f}")
+        
+        # Track timing for performance analysis
+        start_time = time.time()
+        
+        # Step 1: Perform text search with higher limit to ensure enough candidates
+        text_limit = min(limit * 3, 100)  # Get more candidates for rescoring
+        text_results = self.search(text_query, limit=text_limit, min_similarity=0)
+        
+        # Step 2: Perform vector search with higher limit
+        vector_limit = min(limit * 3, 100)
+        vector_results = self.search_by_vector(embedding, limit=vector_limit, min_similarity=0)
+        
+        # Log individual search results
+        logger.info(f"Text search returned {len(text_results)} results")
+        logger.info(f"Vector search returned {len(vector_results)} results")
+        
+        # Early exit if both searches returned nothing
+        if not text_results and not vector_results:
+            logger.warning("No results from either text or vector search")
+            return []
+            
+        # Step 3: Create ID-indexed maps for fast lookup
+        text_map = {item.get('id', ''): item for item in text_results if item.get('id')}
+        vector_map = {item.get('id', ''): item for item in vector_results if item.get('id')}
+        
+        # Step 4: Get the union of all IDs from both result sets
+        all_ids = set(text_map.keys()) | set(vector_map.keys())
+        if exclude_id and exclude_id in all_ids:
+            all_ids.remove(exclude_id)
+            
+        # Step 5: Combine and re-score results
+        combined_results = []
+        
+        for doc_id in all_ids:
+            # Get individual results and scores
+            text_item = text_map.get(doc_id)
+            vector_item = vector_map.get(doc_id)
+            
+            # Get scores (default to 0 if the item wasn't in that result set)
+            text_score = text_item.get('similarity', 0) if text_item else 0
+            vector_score = vector_item.get('similarity', 0) if vector_item else 0
+            
+            # Calculate combined score with weights
+            combined_score = (text_score * text_weight) + (vector_score * vector_weight)
+            
+            # Use document from either source (prefer vector for completeness)
+            base_doc = vector_item if vector_item else text_item
+            
+            # Create combined result with all scores
+            result = {
+                **base_doc,
+                'similarity': combined_score,
+                'text_similarity': text_score,
+                'vector_similarity': vector_score,
+                'search_info': {
+                    'text_weight': text_weight,
+                    'vector_weight': vector_weight
+                }
+            }
+            
+            # Only keep results above threshold
+            if combined_score >= min_similarity * 100:
+                combined_results.append(result)
+                
+        # Sort by combined score
+        combined_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
+        
+        # Limit to requested number
+        combined_results = combined_results[:limit]
+        
+        # Report timing
+        elapsed = time.time() - start_time
+        logger.info(f"Hybrid search completed in {elapsed:.2f}s, returned {len(combined_results)} results")
+        
+        return combined_results 

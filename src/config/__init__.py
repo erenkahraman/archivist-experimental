@@ -14,7 +14,11 @@ from .elasticsearch_config import (
     CACHE_TTL
 )
 
+# Import config as a module for backward compatibility
+from . import config
+
 __all__ = [
+    'config',  # Add config module to exports
     'GEMINI_CONFIG',
     'ELASTICSEARCH_HOSTS',
     'ELASTICSEARCH_CLOUD_ID',

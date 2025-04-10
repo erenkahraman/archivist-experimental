@@ -233,6 +233,32 @@ def purge_all_images():
         logger.error(f"Error purging images: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@api.route('/cleanup-elasticsearch', methods=['POST', 'OPTIONS'])
+def cleanup_elasticsearch():
+    """Clean up Elasticsearch index after purging all images"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        logger.info("CLEANING UP ELASTICSEARCH INDEX")
+        
+        # Check if search engine has Elasticsearch enabled
+        if hasattr(search_engine, 'use_elasticsearch') and search_engine.use_elasticsearch:
+            # Recreate the index to ensure it's completely empty
+            if search_engine.es_client.create_index(force_recreate=True):
+                logger.info("Elasticsearch index recreated successfully")
+                return jsonify({'status': 'success', 'message': 'Elasticsearch index recreated'}), 200
+            else:
+                logger.error("Failed to recreate Elasticsearch index")
+                return jsonify({'error': 'Failed to recreate Elasticsearch index'}), 500
+        else:
+            logger.info("Elasticsearch not enabled, skipping cleanup")
+            return jsonify({'status': 'success', 'message': 'Elasticsearch not enabled, no cleanup needed'}), 200
+    except Exception as e:
+        logger.error(f"Error cleaning up Elasticsearch: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @api.route('/repair-thumbnails', methods=['POST', 'OPTIONS'])
 def repair_thumbnails():
     """Repair missing thumbnails and synchronize metadata with actual files"""
@@ -293,4 +319,47 @@ def repair_thumbnails():
         }), 200
     except Exception as e:
         logger.error(f"Error repairing thumbnails: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@api.route('/reindex-embeddings', methods=['POST', 'OPTIONS'])
+def reindex_embeddings():
+    """Reindex all images with proper embeddings for improved search"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        # Check if force parameter is provided
+        force = request.args.get('force', 'false').lower() in ('true', '1', 't', 'yes')
+        
+        if not search_engine:
+            logger.error("SearchEngine is not initialized")
+            return jsonify({'error': 'SearchEngine is not initialized'}), 500
+            
+        if not search_engine.use_elasticsearch:
+            logger.error("Elasticsearch is not available, cannot reindex")
+            return jsonify({'error': 'Elasticsearch is not available'}), 500
+        
+        # Log the start of reindexing
+        logger.info(f"Starting reindexing process with force={force}")
+        
+        # Call the reindexing method
+        stats = search_engine.reindex_all_with_embeddings(force=force)
+        
+        if stats.get("success_overall", False):
+            logger.info(f"Reindexing completed successfully: {stats}")
+            return jsonify({
+                'status': 'success',
+                'message': 'Successfully reindexed images with embeddings',
+                'stats': stats
+            }), 200
+        else:
+            logger.warning(f"Reindexing completed with issues: {stats}")
+            return jsonify({
+                'status': 'partial',
+                'message': 'Reindexing completed with some issues',
+                'stats': stats
+            }), 207  # Multi-Status
+    except Exception as e:
+        logger.error(f"Error during reindexing: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500 

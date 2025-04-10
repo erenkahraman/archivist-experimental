@@ -92,6 +92,10 @@ def home():
 # Import routes after api is created to avoid circular imports
 from .routes import image_routes, search_routes, settings_routes
 
+# Register route blueprints with the main api blueprint
+from .routes.search_routes import search_blueprint
+api.register_blueprint(search_blueprint)
+
 def create_app():
     """
     Create and configure the Flask application
