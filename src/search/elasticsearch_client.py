@@ -237,7 +237,8 @@ class ElasticsearchClient:
                     # CLIP embedding vector field - removed deprecated parameters
                     "embedding": {
                         "type": "dense_vector",
-                        "dims": 512  # CLIP-ViT-B/32 has 512 dimensions
+                        "dims": 512,  # CLIP-ViT-B/32 has 512 dimensions
+                        "index": True  # Enable indexing for future ANN/kNN search
                     },
                     
                     # Pattern information
@@ -443,11 +444,9 @@ class ElasticsearchClient:
                             logger.info(f"Truncated embedding from {embedding_length} to 512 dimensions for document {doc_id}")
                             embedding_status = "truncated"
                         elif embedding_length < 512:
-                            # Pad with zeros if too short (not ideal but better than failing)
-                            padding = [0.0] * (512 - embedding_length)
-                            document_copy["embedding"] = embedding + padding
-                            logger.warning(f"Padded embedding from {embedding_length} to 512 dimensions for document {doc_id} - this may affect search quality")
-                            embedding_status = "padded"
+                            logger.warning(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512). Removing embedding before indexing.")
+                            document_copy.pop("embedding")
+                            embedding_status = "removed_invalid_dims"
                     else:
                         logger.info(f"Document {doc_id} has valid embedding with {embedding_length} dimensions")
                         
@@ -524,7 +523,7 @@ class ElasticsearchClient:
             "present": 0,
             "missing": 0,
             "truncated": 0,
-            "padded": 0,
+            "removed_invalid_dims": 0,
             "converted": 0,
             "removed_null": 0,
             "removed_invalid": 0
@@ -560,11 +559,9 @@ class ElasticsearchClient:
                                 logger.debug(f"Truncated embedding to 512 dimensions for document {doc_id}")
                                 embedding_status = "truncated"
                             elif embedding_length < 512:
-                                # Pad with zeros if too short (not ideal but better than failing)
-                                padding = [0.0] * (512 - embedding_length)
-                                processed_doc["embedding"] = embedding + padding
-                                logger.debug(f"Padded embedding to 512 dimensions for document {doc_id}")
-                                embedding_status = "padded"
+                                logger.warning(f"Document {doc_id} has embedding with incorrect dimensions: {embedding_length} (expected 512). Removing embedding before indexing.")
+                                processed_doc.pop("embedding")
+                                embedding_status = "removed_invalid_dims"
                         
                     # If it's an ndarray, convert to list
                     elif hasattr(embedding, 'tolist'):
@@ -661,526 +658,241 @@ class ElasticsearchClient:
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
         """
-        Enhanced search function using composite query structure
-        
-        Args:
-            query: The search query string
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity score threshold
-            
-        Returns:
-            List of matching documents
+        Basic text search that matches text across various metadata fields.
+        Uses a simple query string approach that works with all field types.
         """
         if not self.is_connected():
             logger.error("Cannot search: not connected to Elasticsearch")
             return []
-            
-        # For empty or wildcard queries
-        if query == "*" or not query.strip():
-            query_body = {"match_all": {}}
-            return self._execute_search(query_body, limit, min_similarity)
-        
-        # Log search parameters for debugging
-        logger.info(f"Performing enhanced search for: '{query}' with limit {limit}")
-        
-        # Split query into terms for more flexibility
-        query_terms = [term.strip() for term in query.split() if term.strip()]
-        min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
-        
-        # Build the main compound query
-        should_clauses = []
-        
-        # 1. Exact matches on main_theme with highest boost
-        should_clauses.append({
-            "match": {
-                "patterns.main_theme.raw": {
-                    "query": query,
-                    "boost": 6.0
-                }
-            }
-        })
-        
-        # 2. Exact matches on primary_pattern with high boost
-        should_clauses.append({
-            "match": {
-                "patterns.primary_pattern.raw": {
-                    "query": query,
-                    "boost": 5.0
-                }
-            }
-        })
-        
-        # 3. Nested query for content details with enhanced boosting
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.content_details",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.content_details.name.raw": {
-                                        "query": query,
-                                        "boost": 4.5
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.content_details.name": {
-                                        "query": query,
-                                        "boost": 4.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.content_details.name.partial": {
-                                        "query": query,
-                                        "boost": 3.5
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 4.0
-            }
-        })
-        
-        # 4. Multi-match across all relevant text fields
-        should_clauses.append({
-            "multi_match": {
-                "query": query,
-                "fields": [
-                    "patterns.main_theme^4.0",
-                    "patterns.main_theme.partial^3.5",
-                    "patterns.primary_pattern^3.0",
-                    "patterns.primary_pattern.partial^2.5",
-                    "patterns.prompt.final_prompt^2.0",
-                    "patterns.prompt.final_prompt.partial^1.5",
-                    "patterns.style_keywords^1.5"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "boost": 3.0
-            }
-        })
-        
-        # 5. Nested query for stylistic attributes
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.stylistic_attributes",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name.raw": {
-                                        "query": query,
-                                        "boost": 2.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name": {
-                                        "query": query,
-                                        "boost": 1.8
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.stylistic_attributes.name.partial": {
-                                        "query": query,
-                                        "boost": 1.5
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 2.0
-            }
-        })
-        
-        # 6. Nested query for secondary patterns
-        should_clauses.append({
-            "nested": {
-                "path": "patterns.secondary_patterns",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "patterns.secondary_patterns.name.raw": {
-                                        "query": query,
-                                        "boost": 2.0
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "patterns.secondary_patterns.name": {
-                                        "query": query,
-                                        "boost": 1.8
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 1.5
-            }
-        })
-        
-        # 7. Nested query for colors
-        should_clauses.append({
-            "nested": {
-                "path": "colors.dominant_colors",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {
-                                "match": {
-                                    "colors.dominant_colors.name.raw": {
-                                        "query": query,
-                                        "boost": 1.5
-                                    }
-                                }
-                            },
-                            {
-                                "match": {
-                                    "colors.dominant_colors.name": {
-                                        "query": query,
-                                        "boost": 1.2
-                                    }
-                                }
-                            }
-                        ]
-                    }
-                },
-                "score_mode": "avg",
-                "boost": 1.0
-            }
-        })
-        
-        # Build the main bool query
-        bool_query = {
-            "bool": {
-                "should": should_clauses,
-                "minimum_should_match": 1
-            }
-        }
-        
-        # Wrap in a function_score query to factor in confidence values
-        function_score_query = {
-            "function_score": {
-                "query": bool_query,
-                "functions": [
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.main_theme_confidence",
-                            "factor": 2.0,
-                            "missing": 0.8,
-                            "modifier": "log1p"
-                        }
-                    },
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.pattern_confidence",
-                            "factor": 1.5,
-                            "missing": 0.7,
-                            "modifier": "log1p"
-                        }
-                    },
-                    # Reduce score for fallback analysis results
-                    {
-                        "script_score": {
-                            "script": {
-                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
-                            }
-                        }
-                    },
-                    # Add recency boost
-                    {
-                        "gauss": {
-                            "timestamp": {
-                                "scale": "30d",
-                                "decay": 0.5
-                            }
-                        },
-                        "weight": 0.5
-                    }
-                ],
-                "score_mode": "multiply",
-                "boost_mode": "multiply"
-            }
-        }
-        
-        # Execute search with the function_score query
-        return self._execute_search(function_score_query, limit, min_similarity)
-    
-    def _execute_search(self, query_body, limit, min_similarity):
-        """
-        Helper method to execute a search with the given query body and process results
-        
-        Args:
-            query_body: The Elasticsearch query to execute
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity threshold
-            
-        Returns:
-            List of documents sorted by similarity
-        """
-        start_time = time.time()
-        try:
-            # Log full query for debugging
-            query_debug = str(query_body)
-            if len(query_debug) > 1000:
-                query_debug = query_debug[:500] + "..." + query_debug[-500:]
-            logger.debug(f"Executing search with query: {query_debug}")
-            
-            # Execute the search
-            response = self.client.search(
-                index=self.index_name,
-                body={
-                    "size": limit,
-                    "query": query_body,
-                    "_source": True,
-                    "track_scores": True
-                }
-            )
-            
-            search_time = time.time() - start_time
-            logger.info(f"Search completed in {search_time:.2f}s")
-            
-            # Log hit count
-            hit_count = len(response["hits"]["hits"])
-            logger.info(f"Search returned {hit_count} raw hits from Elasticsearch")
-            
-            # If no results, return empty list
-            if hit_count == 0:
-                logger.info("No search results found")
-                return []
-            
-            # Get max score for normalization
-            max_score = response["hits"]["max_score"] if response["hits"]["hits"] else 1.0
-            min_score = min([hit["_score"] for hit in response["hits"]["hits"]]) if response["hits"]["hits"] else 0.0
-            score_range = max(max_score - min_score, 0.001)  # Avoid division by zero
-            
-            logger.info(f"Search score range: min={min_score:.4f}, max={max_score:.4f}, range={score_range:.4f}")
-            
-            # Process and normalize results
-            results = []
-            for hit in response["hits"]["hits"]:
-                doc = hit["_source"]
-                raw_score = hit["_score"]
-                
-                # Determine if this is a vector search (script_score with embedding)
-                is_vector_search = "script_score" in str(query_body) and "embedding" in str(query_body)
-                
-                # Different normalization strategies based on search type
-                if is_vector_search:
-                    # For vector similarity (CLIP embeddings)
-                    # The script already returns a score in [0,2] range where:
-                    # - 0 means completely different
-                    # - 1 means neutral/random similarity
-                    # - 2 means identical
-                    
-                    # Normalize to [0,1] range where:
-                    # - 0 means random similarity or worse
-                    # - 1 means identical
-                    vector_similarity = max(0, (raw_score - 1.0)) if raw_score > 1.0 else 0.0
-                    
-                    # Apply exponential scaling to emphasize high similarities
-                    # This makes scores more useful visually (fewer items with near-identical scores)
-                    similarity = min(1.0, vector_similarity ** 0.75 * 1.2)  
-                    
-                elif "function_score" in str(query_body) and "script_score" in str(query_body):
-                    # For hybrid similarity (text + vector)
-                    # The scores will typically be higher, so normalize differently
-                    
-                    # If score range is significant, use dynamic scaling
-                    if score_range > 0.1:  
-                        # Enhanced normalization with curve
-                        normalized_score = (raw_score - min_score) / score_range
-                        # Apply curve to increase contrast between results
-                        similarity = min(1.0, normalized_score ** 0.8)
-                    else:
-                        # Simple min-max normalization if range is small
-                        similarity = (raw_score - min_score) / score_range if score_range > 0 else 0.0
-                        # Add exponential curve to spread out values
-                        similarity = min(1.0, similarity ** 0.85)
-                else:
-                    # For text-based or general searches
-                    if score_range > 0.01:  # If there's a meaningful difference between scores
-                        # Enhanced score normalization with dynamic scaling
-                        normalized_score = (raw_score - min_score) / score_range
-                        # Apply curve to increase separation between results
-                        similarity = min(1.0, normalized_score ** 0.75)  
-                    else:
-                        # Simple normalization if scores are very close
-                        similarity = min(1.0, raw_score / max_score) if max_score > 0 else 0.0
-                
-                # Add scores to the document
-                doc["similarity"] = round(max(min_similarity, similarity), 4)  # Round to 4 decimal places
-                doc["raw_score"] = raw_score
-                
-                # Only include results above threshold
-                if doc["similarity"] >= min_similarity:
-                    results.append(doc)
-            
-            # Log results count
-            logger.info(f"After filtering and scoring, {len(results)} results remain")
-            
-            # Sort by similarity
-            results.sort(key=lambda x: x["similarity"], reverse=True)
-            
-            # Improve differentiation in final results by spreading scores if needed
-            if results and all(abs(r["similarity"] - results[0]["similarity"]) < 0.001 for r in results):
-                logger.info("All results have nearly identical similarity scores, applying spread transformation")
-                
-                # Apply progressive spread from top score to create a more useful distribution
-                count = len(results)
-                if count > 1:
-                    top_score = max(results[0]["similarity"], min_similarity + 0.3)  # Set a reasonable top score
-                    bottom_score = max(min_similarity, min_similarity + 0.01)  # Ensure some differentiation
-                    
-                    for i, result in enumerate(results):
-                        # Calculate a progressive score that decays faster at the top
-                        # This creates a more natural curve for visual presentation
-                        position_ratio = i / (count - 1)  # 0.0 to 1.0
-                        # Use curve that emphasizes differences between top results
-                        curve_factor = position_ratio ** 1.5  # Steeper at the top
-                        spread_score = top_score - (top_score - bottom_score) * curve_factor
-                        result["similarity"] = round(spread_score, 4)
-                        
-                        # Add a flag to indicate scores were artificially spread
-                        result["_adjusted_score"] = True
-            
-            return results
-            
-        except Exception as e:
-            search_time = time.time() - start_time
-            logger.error(f"Search failed after {search_time:.2f}s: {str(e)}", exc_info=True)
+
+        # Clean the query
+        clean_query = query.strip()
+        if not clean_query:
+            logger.warning("Received empty search query.")
             return []
+
+        logger.info(f"Performing basic text search for: '{clean_query}', limit={limit}")
+
+        # Use a simple query_string query which works with both text and keyword fields
+        query_body = {
+            "size": limit,
+            "query": {
+                "query_string": {
+                    "query": clean_query,
+                    "default_operator": "AND",
+                    "fields": [
+                        "patterns.primary_pattern^3",
+                        "patterns.main_theme^2.5",
+                        "patterns.style_keywords^2", 
+                        "patterns.secondary_patterns.name^1.5",
+                        "patterns.content_details.name^1.5",
+                        "colors.dominant_colors.name^1",
+                        "patterns.prompt.final_prompt^1",
+                        "filename^0.5"
+                    ]
+                }
+            },
+            "sort": [
+                "_score",
+                {"timestamp": {"order": "desc"}}
+            ]
+        }
+
+        # Execute the search and process results
+        return self._execute_search(query_body, limit, min_similarity)
 
     @retry_on_exception(max_retries=3, retry_interval=1.0)
     def find_similar(self, embedding=None, limit=20, min_similarity=0.1, exclude_id=None, 
                    text_query=None, image_weight=0.7, text_weight=0.3):
         """
-        Enhanced function to find similar documents based on text query or vector similarity or both
+        Find similar images using vector embedding, text search, or both.
+        Simplified approach that prioritizes getting results over perfect scoring.
         
         Args:
-            embedding: Vector embedding for similarity search (from CLIP)
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity score threshold
-            exclude_id: ID of image to exclude from results
-            text_query: Text query for searching
-            image_weight: Weight for image vector similarity component (when both text and embedding are provided)
-            text_weight: Weight for text similarity component (when both text and embedding are provided)
+            embedding: Vector embedding to use for similarity search
+            limit: Maximum results to return
+            min_similarity: Minimum similarity threshold (mostly ignored in basic search)
+            exclude_id: Optional ID to exclude from results
+            text_query: Optional text query to combine with vector search
+            image_weight: Weight for vector similarity in hybrid search (0-1)
+            text_weight: Weight for text similarity in hybrid search (0-1)
             
         Returns:
-            List of documents sorted by similarity
+            List of similar documents
         """
-        if not self.is_connected():
-            logger.error("Cannot perform similarity search: not connected to Elasticsearch")
+        # Check for valid inputs
+        has_embedding = embedding is not None
+        has_text = text_query is not None and text_query.strip() != ""
+        
+        if not has_embedding and not has_text:
+            logger.error("find_similar requires either embedding or text_query")
             return []
             
-        # Determine search mode based on inputs
-        has_text = text_query and text_query.strip()
-        has_embedding = embedding is not None
+        if not self.is_connected():
+            logger.error("Cannot find similar: not connected to Elasticsearch")
+            return []
         
-        # Log search approach
-        if has_text and has_embedding:
-            logger.info(f"Performing hybrid similarity search with text: '{text_query}' and embedding (weights: image={image_weight}, text={text_weight})")
-        elif has_embedding:
-            logger.info("Performing vector-based similarity search with CLIP embedding")
-        elif has_text:
-            logger.info(f"Performing enhanced text-based similarity search for: '{text_query}'")
-        else:
-            logger.info("Performing general similarity search (no specific criteria)")
+        # If we have both, do a hybrid search
+        if has_embedding and has_text:
+            # Prepare embedding if needed
+            if hasattr(embedding, 'tolist'):
+                embedding = embedding.tolist()
+                
+            logger.info(f"Hybrid search: text='{text_query}', embedding dimensions={len(embedding) if isinstance(embedding, list) else 'unknown'}")
             
-        # Handle the different search modes
-        if has_text and has_embedding:
-            # Hybrid search (both text and vector)
-            return self._hybrid_search(text_query, embedding, limit, min_similarity, exclude_id, 
-                                       image_weight, text_weight)
+            # Get text search results
+            text_results = self.search(text_query, limit=limit*2, min_similarity=0)
+            
+            # Get vector search results
+            vector_results = self._vector_search(embedding, limit=limit*2, min_similarity=0, exclude_id=exclude_id)
+            
+            # Simple approach - merge both result sets with preference for higher scores
+            all_results = {}
+            
+            # Process text results
+            for result in text_results:
+                doc_id = result.get('id')
+                if doc_id:
+                    all_results[doc_id] = result
+            
+            # Process vector results - augment existing or add new
+            for result in vector_results:
+                doc_id = result.get('id')
+                if not doc_id or (exclude_id and doc_id == exclude_id):
+                    continue
+                
+                if doc_id in all_results:
+                    # If already exists from text search, take the higher score
+                    existing = all_results[doc_id]
+                    if result.get('raw_score', 0) > existing.get('raw_score', 0):
+                        all_results[doc_id] = result
+                else:
+                    all_results[doc_id] = result
+            
+            # Convert to list and sort by score
+            combined_results = list(all_results.values())
+            combined_results.sort(key=lambda x: x.get('raw_score', 0), reverse=True)
+            
+            # Limit to requested number
+            combined_results = combined_results[:limit]
+            
+            logger.info(f"Hybrid search returned {len(combined_results)} results")
+            return combined_results
+            
         elif has_embedding:
             # Vector similarity search only
             return self._vector_search(embedding, limit, min_similarity, exclude_id)
         elif has_text:
             # Text similarity search only
-            return self._text_search(text_query, limit, min_similarity, exclude_id)
+            return self.search(text_query, limit, min_similarity)
         else:
-            # Fallback to general search
-            query_body = {"match_all": {}}
+            # This shouldn't happen due to the checks above
+            return []
+
+    def _execute_search(self, query, limit, min_similarity):
+        """
+        Execute a search query and process results.
+        Uses lenient scoring to ensure we get results.
+        
+        Args:
+            query: Elasticsearch query object
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (mostly ignored for basic search)
             
-            # Add exclusion if provided
-            if exclude_id:
-                query_body = {
-                    "bool": {
-                        "must": [query_body],
-                        "must_not": [
-                            {"term": {"id": exclude_id}},
-                            {"term": {"filename": exclude_id}},
-                            {"term": {"path": exclude_id}}
-                        ]
-                    }
-                }
-                
+        Returns:
+            List of documents with normalized similarity scores
+        """
+        try:
             # Execute the search
-            return self._execute_search(query_body, limit, min_similarity)
+            start_time = time.time()
+            response = self.client.search(
+                index=self.index_name,
+                body=query
+            )
+            elapsed = time.time() - start_time
+            logger.info(f"Search completed in {elapsed:.2f}s")
             
+            # Extract hits
+            hits = response.get('hits', {}).get('hits', [])
+            
+            # Basic processing - log info about results
+            logger.info(f"Search returned {len(hits)} raw hits from Elasticsearch")
+            
+            # For basic search, we'll be more lenient with scoring
+            # to ensure we get results even with partial matches
+            results = []
+            
+            if hits:
+                # Get score range for reference only
+                scores = [hit.get('_score', 0) for hit in hits]
+                min_score = min(scores) if scores else 0
+                max_score = max(scores) if scores else 0
+                logger.info(f"Score range: min={min_score:.4f}, max={max_score:.4f}")
+                
+                # Process all hits - we'll be lenient and include everything 
+                for hit in hits:
+                    doc = hit.get('_source', {})
+                    raw_score = hit.get('_score', 0)
+                    
+                    # Scale score to percentage - even low scores get included
+                    # This is basic search, we just want to show anything that matches
+                    similarity = 100.0
+                    if max_score > 0:
+                        similarity = (raw_score / max_score) * 100.0
+                    
+                    # Add scores to document
+                    doc["similarity"] = round(similarity, 4)
+                    doc["raw_score"] = raw_score
+                    results.append(doc)
+                
+                # Sort by score (highest first)
+                results.sort(key=lambda x: x.get("raw_score", 0), reverse=True)
+            
+            logger.info(f"Returning {len(results)} results after processing")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Search execution error: {str(e)}")
+            return []
+
     def _vector_search(self, embedding, limit, min_similarity, exclude_id=None):
         """
-        Perform vector similarity search using CLIP embedding
+        Perform basic vector similarity search using CLIP embedding
         """
         # Debug the embedding
         embedding_size = len(embedding) if isinstance(embedding, list) else (embedding.size if hasattr(embedding, 'size') else 'unknown')
         logger.info(f"Performing vector search with embedding of size {embedding_size}")
         
-        # Create script score query for vector similarity
+        # Create a simple script score query for vector similarity
         script_score_query = {
-            "script_score": {
-                "query": {"match_all": {}},
-                "script": {
-                    # Handle missing embeddings and apply proper scaling
-                    "source": """
-                        // Check if document has embedding field
-                        if (!doc.containsKey('embedding')) {
-                            // No embedding, assign a very low score
-                            return 0.01;
+            "size": limit,
+            "query": {
+                "script_score": {
+                    "query": {"match_all": {}},
+                    "script": {
+                        "source": """
+                            if (!doc.containsKey('embedding') || doc['embedding'].size() == 0) { return 0.0; }
+                            try {
+                                // Simple dot product for cosine similarity
+                                return (dotProduct(params.query_vector, 'embedding') + 1.0) / 2.0;
+                            } catch (Exception e) {
+                                return 0.0;
+                            }
+                        """,
+                        "params": {
+                            "query_vector": embedding
                         }
-                        
-                        // Get embedding vector and compute similarity
-                        try {
-                            double cosine = cosineSimilarity(params.query_vector, 'embedding');
-                            // Convert from [-1,1] to [0,1] range
-                            double normalized = (cosine + 1.0) / 2.0;
-                            // Apply exponential scaling to emphasize high similarity
-                            return Math.pow(normalized, 0.5) * 2.0;
-                        } catch (Exception e) {
-                            // Error computing similarity, assign a very low score
-                            return 0.01;
-                        }
-                    """,
-                    "params": {"query_vector": embedding}
+                    }
                 }
-            }
+            },
+            "sort": ["_score"]
         }
         
         # Add exclusion if provided
         if exclude_id:
-            script_score_query["script_score"]["query"] = {
+            script_score_query["query"] = {
                 "bool": {
-                    "must": [{"match_all": {}}],
+                    "must": [script_score_query["query"]],
                     "must_not": [
                         {"term": {"id": exclude_id}},
                         {"term": {"filename": exclude_id}},
@@ -1189,398 +901,176 @@ class ElasticsearchClient:
                 }
             }
             
-        # Add function score to consider confidence factors
-        function_score_query = {
-            "function_score": {
-                "query": script_score_query,
-                "functions": [
-                    # Down-weight results with fallback analysis
-                    {
-                        "script_score": {
-                            "script": {
-                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
-                            }
-                        }
-                    },
-                    # Add recency boost
-                    {
-                        "gauss": {
-                            "timestamp": {
-                                "scale": "30d",
-                                "decay": 0.5
-                            }
-                        },
-                        "weight": 0.2
-                    }
-                ],
-                "score_mode": "multiply",
-                "boost_mode": "multiply"
-            }
-        }
+        # Execute the search using our simplified method
+        results = self._execute_search(script_score_query, limit, min_similarity)
         
-        return self._execute_search(function_score_query, limit, min_similarity)
+        if results:
+            logger.info(f"Vector search returned {len(results)} results")
+        else:
+            logger.warning("Vector search returned no results")
+            
+        return results
         
-    def _text_search(self, text_query, limit, min_similarity, exclude_id=None):
+    @retry_on_exception(max_retries=3, retry_interval=1.0)
+    def get_document(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """
-        Perform enhanced text-based similarity search
-        """
-        # Split query into terms for better matching control
-        query_terms = [term.strip() for term in text_query.split() if term.strip()]
-        min_should_match = min(len(query_terms), 2) if len(query_terms) > 1 else 1
-        
-        # Build enhanced similar query with multiple fields and clauses
-        should_clauses = []
-        
-        # Match on all important fields with appropriate boosts
-        should_clauses.append({
-            "match": {
-                "patterns.main_theme.raw": {
-                    "query": text_query,
-                    "boost": 5.0
-                }
-            }
-        })
-        
-        should_clauses.append({
-            "match": {
-                "patterns.primary_pattern.raw": {
-                    "query": text_query,
-                    "boost": 4.5
-                }
-            }
-        })
-        
-        # Multi match across standard fields
-        should_clauses.append({
-            "multi_match": {
-                "query": text_query,
-                "fields": [
-                    "patterns.main_theme^3.5",
-                    "patterns.main_theme.partial^3.0",
-                    "patterns.primary_pattern^3.0",
-                    "patterns.primary_pattern.partial^2.5",
-                    "patterns.prompt.final_prompt^2.0",
-                    "patterns.prompt.final_prompt.partial^1.5",
-                    "patterns.style_keywords^2.0"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "boost": 3.0
-            }
-        })
-        
-        # Nested queries for arrays of data
-        for nested_path, boost in [
-            ("patterns.content_details", 3.0),
-            ("patterns.stylistic_attributes", 2.5),
-            ("patterns.secondary_patterns", 2.0)
-        ]:
-            should_clauses.append({
-                "nested": {
-                    "path": nested_path,
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"match": {f"{nested_path}.name.raw": {"query": text_query, "boost": boost}}},
-                                {"match": {f"{nested_path}.name": {"query": text_query, "boost": boost * 0.8}}},
-                                {"match": {f"{nested_path}.name.partial": {"query": text_query, "boost": boost * 0.6}}}
-                            ]
-                        }
-                    },
-                    "score_mode": "max",
-                    "boost": boost
-                }
-            })
-        
-        # Add color search
-        should_clauses.append({
-            "nested": {
-                "path": "colors.dominant_colors",
-                "query": {
-                    "bool": {
-                        "should": [
-                            {"match": {"colors.dominant_colors.name.raw": {"query": text_query, "boost": 2.5}}},
-                            {"match": {"colors.dominant_colors.name": {"query": text_query, "boost": 2.0}}},
-                            {"match": {"colors.dominant_colors.name.partial": {"query": text_query, "boost": 1.5}}},
-                            {"match": {"colors.dominant_colors.name.synonym": {"query": text_query, "boost": 2.0}}}
-                        ]
-                    }
-                },
-                "score_mode": "max",
-                "boost": 2.0
-            }
-        })
-        
-        # Build bool query
-        bool_query = {
-            "bool": {
-                "should": should_clauses,
-                "minimum_should_match": 1
-            }
-        }
-        
-        # Add exclusion if provided
-        if exclude_id:
-            bool_query["bool"]["must_not"] = [
-                {"term": {"id": exclude_id}},
-                {"term": {"filename": exclude_id}},
-                {"term": {"path": exclude_id}}
-            ]
-        
-        # Wrap in function_score query to factor in confidence scores
-        function_score_query = {
-            "function_score": {
-                "query": bool_query,
-                "functions": [
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.main_theme_confidence",
-                            "factor": 1.5,
-                            "missing": 0.8,
-                            "modifier": "log1p"
-                        }
-                    },
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.pattern_confidence",
-                            "factor": 1.2,
-                            "missing": 0.7,
-                            "modifier": "log1p"
-                        }
-                    },
-                    # Reduce score for fallback analysis results
-                    {
-                        "script_score": {
-                            "script": {
-                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
-                            }
-                        }
-                    },
-                    # Add recency boost
-                    {
-                        "gauss": {
-                            "timestamp": {
-                                "scale": "30d",
-                                "decay": 0.5
-                            }
-                        },
-                        "weight": 0.3
-                    }
-                ],
-                "score_mode": "multiply",
-                "boost_mode": "multiply"
-            }
-        }
-        
-        return self._execute_search(function_score_query, limit, min_similarity)
-        
-    def _hybrid_search(self, text_query, embedding, limit, min_similarity, exclude_id=None,
-                     image_weight=0.7, text_weight=0.3):
-        """
-        Perform hybrid search combining both text and vector similarity
+        Get a document from the index by ID
         
         Args:
-            text_query: Text query for text-based search
-            embedding: CLIP embedding vector for image-based search
-            limit: Maximum number of results to return
-            min_similarity: Minimum similarity threshold
-            exclude_id: ID of image to exclude from results
-            image_weight: Weight for image vector similarity (0.0-1.0)
-            text_weight: Weight for text similarity (0.0-1.0)
+            doc_id: Document ID to retrieve
             
         Returns:
-            List of documents sorted by similarity
+            Document data as dict, or None if not found
         """
-        # Validate and normalize weights
-        sum_weights = image_weight + text_weight
-        if sum_weights <= 0:
-            image_weight, text_weight = 0.5, 0.5  # Default to equal weights
+        if not self.is_connected():
+            logger.error("Cannot get document: not connected to Elasticsearch")
+            return None
+            
+        try:
+            # Try to get document by ID
+            response = self.client.get(index=self.index_name, id=doc_id)
+            if response and response.get('found', False):
+                # Return the document source
+                return response.get('_source', {})
+            else:
+                logger.warning(f"Document with ID '{doc_id}' not found")
+                return None
+        except NotFoundError:
+            logger.warning(f"Document with ID '{doc_id}' not found")
+            return None
+        except Exception as e:
+            logger.error(f"Error getting document with ID '{doc_id}': {str(e)}")
+            return None 
+
+    def search_by_vector(self, embedding, limit=20, min_similarity=0.1, text_weight=0.3, vector_weight=0.7):
+        """
+        Search by CLIP embedding vector - simplified version
+        
+        Args:
+            embedding: The vector embedding to search by
+            limit: Maximum number of results to return
+            min_similarity: Minimum similarity threshold (not strictly enforced in basic search)
+            text_weight: Not used in this implementation
+            vector_weight: Not used in this implementation
+            
+        Returns:
+            List of similar documents sorted by similarity
+        """
+        if embedding is None:
+            logger.error("Cannot search by vector: embedding is None")
+            return []
+            
+        if not self.is_connected():
+            logger.error("Cannot search by vector: not connected to Elasticsearch")
+            return []
+            
+        # Direct call to _vector_search with the specified parameters
+        logger.info(f"Vector search with {limit} limit")
+        return self._vector_search(embedding, limit, min_similarity)
+
+    def _hybrid_search(self, embedding, text_query, limit=20, min_similarity=0.1, exclude_id=None,
+                     text_weight=0.3, vector_weight=0.7):
+        """
+        Hybrid search combining vector similarity with text search
+        
+        This performs both vector search and text search separately, then combines results
+        with weighted scoring based on the text_weight and vector_weight parameters.
+        
+        Args:
+            embedding: Vector embedding for visual similarity
+            text_query: Text query for semantic search
+            limit: Maximum number of results
+            min_similarity: Minimum similarity threshold
+            exclude_id: Optional ID to exclude from results
+            text_weight: Weight of text results in final score (0-1)
+            vector_weight: Weight of vector results in final score (0-1)
+            
+        Returns:
+            Combined and re-scored results
+        """
+        # Normalize weights to sum to 1.0
+        total_weight = text_weight + vector_weight
+        if total_weight <= 0:
+            logger.warning("Invalid weights, defaulting to 50/50 split")
+            text_weight = 0.5
+            vector_weight = 0.5
         else:
-            # Normalize weights to sum to 1.0
-            image_weight = image_weight / sum_weights
-            text_weight = text_weight / sum_weights
+            text_weight = text_weight / total_weight
+            vector_weight = vector_weight / total_weight
+            
+        logger.info(f"Hybrid search with weights: text={text_weight:.2f}, vector={vector_weight:.2f}")
         
-        # Debug the embedding
-        embedding_size = len(embedding) if isinstance(embedding, list) else (embedding.size if hasattr(embedding, 'size') else 'unknown')
-        logger.info(f"Performing hybrid search with embedding of size {embedding_size} and text query '{text_query}'")
-        logger.info(f"Using weights: image={image_weight:.2f}, text={text_weight:.2f}")
+        # Track timing for performance analysis
+        start_time = time.time()
         
-        # Create separate queries for text and vector components
+        # Step 1: Perform text search with higher limit to ensure enough candidates
+        text_limit = min(limit * 3, 100)  # Get more candidates for rescoring
+        text_results = self.search(text_query, limit=text_limit, min_similarity=0)
         
-        # Text component
-        text_should_clauses = []
+        # Step 2: Perform vector search with higher limit
+        vector_limit = min(limit * 3, 100)
+        vector_results = self.search_by_vector(embedding, limit=vector_limit, min_similarity=0)
         
-        # Key field matches with high boost
-        text_should_clauses.append({
-            "match": {
-                "patterns.main_theme.raw": {
-                    "query": text_query,
-                    "boost": 5.0
+        # Log individual search results
+        logger.info(f"Text search returned {len(text_results)} results")
+        logger.info(f"Vector search returned {len(vector_results)} results")
+        
+        # Early exit if both searches returned nothing
+        if not text_results and not vector_results:
+            logger.warning("No results from either text or vector search")
+            return []
+            
+        # Step 3: Create ID-indexed maps for fast lookup
+        text_map = {item.get('id', ''): item for item in text_results if item.get('id')}
+        vector_map = {item.get('id', ''): item for item in vector_results if item.get('id')}
+        
+        # Step 4: Get the union of all IDs from both result sets
+        all_ids = set(text_map.keys()) | set(vector_map.keys())
+        if exclude_id and exclude_id in all_ids:
+            all_ids.remove(exclude_id)
+            
+        # Step 5: Combine and re-score results
+        combined_results = []
+        
+        for doc_id in all_ids:
+            # Get individual results and scores
+            text_item = text_map.get(doc_id)
+            vector_item = vector_map.get(doc_id)
+            
+            # Get scores (default to 0 if the item wasn't in that result set)
+            text_score = text_item.get('similarity', 0) if text_item else 0
+            vector_score = vector_item.get('similarity', 0) if vector_item else 0
+            
+            # Calculate combined score with weights
+            combined_score = (text_score * text_weight) + (vector_score * vector_weight)
+            
+            # Use document from either source (prefer vector for completeness)
+            base_doc = vector_item if vector_item else text_item
+            
+            # Create combined result with all scores
+            result = {
+                **base_doc,
+                'similarity': combined_score,
+                'text_similarity': text_score,
+                'vector_similarity': vector_score,
+                'search_info': {
+                    'text_weight': text_weight,
+                    'vector_weight': vector_weight
                 }
             }
-        })
-        
-        text_should_clauses.append({
-            "match": {
-                "patterns.primary_pattern.raw": {
-                    "query": text_query,
-                    "boost": 4.5
-                }
-            }
-        })
-        
-        # Multi-match query across all relevant fields with appropriate boosting
-        text_should_clauses.append({
-            "multi_match": {
-                "query": text_query,
-                "fields": [
-                    "patterns.main_theme^3.0",
-                    "patterns.main_theme.partial^2.5",
-                    "patterns.primary_pattern^2.5",
-                    "patterns.primary_pattern.partial^2.0",
-                    "patterns.prompt.final_prompt^1.5",
-                    "patterns.style_keywords^2.0"
-                ],
-                "type": "best_fields",
-                "fuzziness": "AUTO",
-                "prefix_length": 2,
-                "boost": 3.0
-            }
-        })
-        
-        # Nested field searches for arrays
-        for nested_path, boost in [
-            ("patterns.content_details", 2.5),
-            ("patterns.stylistic_attributes", 2.0),
-            ("patterns.secondary_patterns", 1.5),
-            ("colors.dominant_colors", 2.0)
-        ]:
-            text_should_clauses.append({
-                "nested": {
-                    "path": nested_path,
-                    "query": {
-                        "bool": {
-                            "should": [
-                                {"match": {f"{nested_path}.name.raw": {"query": text_query, "boost": boost}}},
-                                {"match": {f"{nested_path}.name": {"query": text_query, "boost": boost * 0.8}}}
-                            ]
-                        }
-                    },
-                    "score_mode": "max",
-                    "boost": boost
-                }
-            })
             
-        # Text component bool query with minimum_should_match for better precision
-        text_bool_query = {
-            "bool": {
-                "should": text_should_clauses,
-                "minimum_should_match": 1
-            }
-        }
+            # Only keep results above threshold
+            if combined_score >= min_similarity * 100:
+                combined_results.append(result)
+                
+        # Sort by combined score
+        combined_results.sort(key=lambda x: x.get('similarity', 0), reverse=True)
         
-        # Enhanced script for blending text and vector similarity
-        blend_script = f"""
-            // Get original query score (text similarity)
-            double textScore = _score;
-            
-            // Get vector similarity contribution
-            double vectorScore = 0.0;  // Default low score
-            
-            // Check if document has embedding field
-            if (doc.containsKey('embedding')) {{
-                try {{
-                    // Calculate cosine similarity between query vector and document vector
-                    double cosine = cosineSimilarity(params.query_vector, 'embedding');
-                    
-                    // Convert from [-1,1] to [0,1] range
-                    double normalized = (cosine + 1.0) / 2.0;
-                    
-                    // Emphasize high similarities with exponential scaling
-                    // This makes very similar images stand out more
-                    vectorScore = Math.pow(normalized, 0.8) * 2.0;
-                }} catch (Exception e) {{
-                    // Keep default low score on error
-                    vectorScore = 0.01;
-                }}
-            }}
-            
-            // Normalize text score
-            double normalizedTextScore = Math.min(1.0, textScore / 10.0);
-            
-            // Blend scores using configurable weights
-            double finalScore = (normalizedTextScore * {text_weight}) + (vectorScore * {image_weight});
-            
-            // Ensure score is at least 0.01 to prevent potential normalization issues
-            return Math.max(finalScore, 0.01);
-        """
+        # Limit to requested number
+        combined_results = combined_results[:limit]
         
-        # Build the hybrid query with the improved blending script
-        combined_query = {
-            "function_score": {
-                "query": text_bool_query,
-                "script_score": {
-                    "script": {
-                        "source": blend_script,
-                        "params": {"query_vector": embedding}
-                    }
-                },
-                "boost_mode": "replace"  # Replace the original score with our hybrid score
-            }
-        }
+        # Report timing
+        elapsed = time.time() - start_time
+        logger.info(f"Hybrid search completed in {elapsed:.2f}s, returned {len(combined_results)} results")
         
-        # Add exclusion if provided
-        if exclude_id:
-            combined_query["function_score"]["query"]["bool"]["must_not"] = [
-                {"term": {"id": exclude_id}},
-                {"term": {"filename": exclude_id}},
-                {"term": {"path": exclude_id}}
-            ]
-            
-        # Add final function score with confidence boosting and recency
-        function_score_query = {
-            "function_score": {
-                "query": combined_query,
-                "functions": [
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.main_theme_confidence",
-                            "factor": 1.2,
-                            "missing": 0.8,
-                            "modifier": "log1p"
-                        }
-                    },
-                    {
-                        "field_value_factor": {
-                            "field": "patterns.pattern_confidence",
-                            "factor": 1.1,
-                            "missing": 0.7,
-                            "modifier": "log1p"
-                        }
-                    },
-                    # Down-weight fallback results
-                    {
-                        "script_score": {
-                            "script": {
-                                "source": "doc.containsKey('has_fallback_analysis') && doc['has_fallback_analysis'].value ? 0.75 : 1.0"
-                            }
-                        }
-                    },
-                    # Add recency boost (prefer newer items slightly)
-                    {
-                        "gauss": {
-                            "timestamp": {
-                                "scale": "30d",
-                                "decay": 0.5
-                            }
-                        },
-                        "weight": 0.2
-                    }
-                ],
-                "score_mode": "multiply",
-                "boost_mode": "multiply"
-            }
-        }
-        
-        return self._execute_search(function_score_query, limit, min_similarity) 
+        return combined_results 

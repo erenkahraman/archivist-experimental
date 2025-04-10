@@ -88,8 +88,18 @@ class SearchEngine:
             if self.es_client.is_connected():
                 logger.info("Successfully connected to Elasticsearch")
                 
-                # Create index if it doesn't exist, force recreation
-                self.es_client.create_index(force_recreate=True)
+                # Create index ONLY if it doesn't exist
+                if not self.es_client.index_exists():
+                    logger.info(f"Index '{self.es_client.index_name}' does not exist. Creating...")
+                    # Pass force_recreate=False to prevent deleting existing index
+                    if not self.es_client.create_index(force_recreate=False):
+                        logger.error("Failed to create initial index. Elasticsearch functionality may be limited.")
+                        # Optional: Set self.use_elasticsearch = False here if index creation is critical
+                        return False
+                    else:
+                        logger.info(f"Successfully created index '{self.es_client.index_name}'.")
+                else:
+                    logger.info(f"Index '{self.es_client.index_name}' already exists.")
                 return True
             else:
                 logger.warning("Failed to connect to Elasticsearch, using in-memory search instead")
@@ -1386,3 +1396,117 @@ class SearchEngine:
         # Return statistics
         stats["success_overall"] = stats["success"] > 0 and stats.get("bulk_index_success", False)
         return stats 
+
+    def metadata_search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
+        """
+        Search images directly from the metadata without using Elasticsearch.
+        This is a fallback method when Elasticsearch is not available.
+        
+        Args:
+            query: Search query string
+            limit: Maximum number of results to return
+            min_similarity: Not used in this implementation
+            
+        Returns:
+            List of matching documents
+        """
+        logger.info(f"Performing metadata search for: '{query}'")
+        
+        # Clean and lowercase the query for case-insensitive matching
+        query = query.strip().lower()
+        if not query:
+            return []
+        
+        # If the metadata is not loaded, try to load it
+        if not self.metadata:
+            logger.info("Metadata not loaded, attempting to load from file...")
+            self.metadata = self.load_metadata()
+            
+        if not self.metadata:
+            logger.warning("No metadata available for search")
+            return []
+        
+        # List of fields to search in, with their priority weights
+        search_fields = [
+            # Higher priority fields
+            ("patterns.primary_pattern", 5),
+            ("patterns.main_theme", 4),
+            ("patterns.style_keywords", 3),
+            
+            # Medium priority fields
+            ("patterns.secondary_patterns", 2),
+            ("patterns.content_details", 2),
+            ("colors.dominant_colors", 2),
+            
+            # Lower priority fields
+            ("patterns.prompt.final_prompt", 1),
+            ("filename", 1)
+        ]
+        
+        # Results with their scores
+        results = []
+        
+        # Search through each image metadata
+        for image_id, metadata in self.metadata.items():
+            score = 0
+            matches = []
+            
+            # Check each field
+            for field_path, weight in search_fields:
+                # Handle nested fields using dot notation
+                value = metadata
+                for part in field_path.split('.'):
+                    if isinstance(value, dict) and part in value:
+                        value = value[part]
+                    else:
+                        value = None
+                        break
+                
+                # Skip if field doesn't exist
+                if value is None:
+                    continue
+                
+                # Check for matches based on field type
+                if isinstance(value, str):
+                    # Simple text field (case insensitive)
+                    if query in value.lower():
+                        score += weight * 10
+                        matches.append(f"Found '{query}' in {field_path}")
+                
+                elif isinstance(value, list):
+                    # List of strings or objects
+                    if all(isinstance(item, str) for item in value):
+                        # List of strings (e.g., keywords)
+                        for item in value:
+                            if query in item.lower():
+                                score += weight * 5
+                                matches.append(f"Found '{query}' in {field_path} item: {item}")
+                    
+                    elif all(isinstance(item, dict) for item in value):
+                        # List of objects (e.g., dominant_colors, secondary_patterns)
+                        for item in value:
+                            # Check 'name' field in each object
+                            if 'name' in item and isinstance(item['name'], str) and query in item['name'].lower():
+                                score += weight * 5
+                                matches.append(f"Found '{query}' in {field_path}.name: {item['name']}")
+            
+            # If we found a match, add to results
+            if score > 0:
+                # Make a copy of the metadata to avoid modifying the original
+                result = metadata.copy()
+                
+                # Add search-specific fields
+                result['similarity'] = min(100, score)  # Cap at 100
+                result['raw_score'] = score
+                result['search_matches'] = matches
+                
+                results.append(result)
+        
+        # Sort by score (highest first)
+        results.sort(key=lambda x: x.get('raw_score', 0), reverse=True)
+        
+        # Limit the number of results
+        results = results[:limit]
+        
+        logger.info(f"Metadata search found {len(results)} results for query: '{query}'")
+        return results 

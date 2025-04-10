@@ -2,10 +2,16 @@ import logging
 from flask import Flask
 from flask_cors import CORS
 import os
-import config
-from src.utils.logging_config import configure_logging
-import dotenv
+import sys
 from pathlib import Path
+
+# Add the project root to the path for imports to work
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+import dotenv
+from src.config.config import UPLOAD_DIR, THUMBNAIL_DIR, METADATA_DIR
+
+from src.utils.logging_config import configure_logging
 
 # Load environment variables from .env file if it exists
 dotenv.load_dotenv()
@@ -25,13 +31,13 @@ def create_app():
     """Create and configure the Flask application."""
     app = Flask(__name__)
     
-    # Enable CORS for all routes - more permissive for development
+    # Enable CORS for all routes with comprehensive permissions
     CORS(app, resources={
         r"/*": {
             "origins": "*",  # Allow all origins in development
-            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With"],
-            "expose_headers": ["Content-Type", "Authorization"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+            "allow_headers": ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+            "expose_headers": ["Content-Type", "Authorization", "X-Total-Count"],
             "supports_credentials": True,
             "max_age": 86400
         }
@@ -62,9 +68,9 @@ def create_app():
 def ensure_directories():
     """Ensure all required directories exist."""
     directories = [
-        config.UPLOAD_DIR,
-        config.THUMBNAIL_DIR,
-        config.METADATA_DIR
+        UPLOAD_DIR,
+        THUMBNAIL_DIR,
+        METADATA_DIR
     ]
     
     for directory in directories:
@@ -75,12 +81,12 @@ def start_app():
     """Start the Flask application."""
     app = create_app()
     # Ensure required directories exist
-    ensure_dir(os.path.join(config.UPLOAD_DIR))
-    ensure_dir(os.path.join(config.THUMBNAIL_DIR))
-    ensure_dir(os.path.join(config.METADATA_DIR))
+    ensure_dir(os.path.join(UPLOAD_DIR))
+    ensure_dir(os.path.join(THUMBNAIL_DIR))
+    ensure_dir(os.path.join(METADATA_DIR))
     
     # Run the Flask app
-    app.run(debug=True, host='0.0.0.0', port=8000)
+    app.run(debug=True, host='0.0.0.0', port=8080)
 
 if __name__ == '__main__':
     start_app() 

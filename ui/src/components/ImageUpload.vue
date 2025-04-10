@@ -55,7 +55,7 @@ const currentFileIndex = ref(0)
 const totalFiles = ref(0)
 const uploadStatus = ref('')
 
-const uploadUrl = 'http://localhost:8000/api/upload'
+const uploadUrl = 'http://localhost:8080/api/upload'
 
 const handleDrop = async (e) => {
   isDragging.value = false

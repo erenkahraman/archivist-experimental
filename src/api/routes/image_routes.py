@@ -233,6 +233,32 @@ def purge_all_images():
         logger.error(f"Error purging images: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
+@api.route('/cleanup-elasticsearch', methods=['POST', 'OPTIONS'])
+def cleanup_elasticsearch():
+    """Clean up Elasticsearch index after purging all images"""
+    # Handle OPTIONS request for CORS preflight
+    if request.method == 'OPTIONS':
+        return '', 200
+        
+    try:
+        logger.info("CLEANING UP ELASTICSEARCH INDEX")
+        
+        # Check if search engine has Elasticsearch enabled
+        if hasattr(search_engine, 'use_elasticsearch') and search_engine.use_elasticsearch:
+            # Recreate the index to ensure it's completely empty
+            if search_engine.es_client.create_index(force_recreate=True):
+                logger.info("Elasticsearch index recreated successfully")
+                return jsonify({'status': 'success', 'message': 'Elasticsearch index recreated'}), 200
+            else:
+                logger.error("Failed to recreate Elasticsearch index")
+                return jsonify({'error': 'Failed to recreate Elasticsearch index'}), 500
+        else:
+            logger.info("Elasticsearch not enabled, skipping cleanup")
+            return jsonify({'status': 'success', 'message': 'Elasticsearch not enabled, no cleanup needed'}), 200
+    except Exception as e:
+        logger.error(f"Error cleaning up Elasticsearch: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
 @api.route('/repair-thumbnails', methods=['POST', 'OPTIONS'])
 def repair_thumbnails():
     """Repair missing thumbnails and synchronize metadata with actual files"""
