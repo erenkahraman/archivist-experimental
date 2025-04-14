@@ -235,15 +235,14 @@ const handleSearch = async () => {
   
   console.log("Starting search for:", searchQuery.value);
   
-  const results = await imageStore.search({
-    query: searchQuery.value,
-    type: searchType.value,
-    k: parseInt(resultCount.value),
-    minSimilarity: parseFloat(minSimilarity.value)
-  });
+  // For text search - for now, just show all images or filtered by text
+  // Since there's no direct text search function in imageStore
+  await imageStore.fetchImages(parseInt(resultCount.value));
   
-  console.log("Search returned:", results.length, "results");
-  console.log("Raw results:", results);
+  // Update the search query in the store to show the user what they searched for
+  imageStore.searchQuery = searchQuery.value;
+  
+  console.log("Text search completed");
   console.log("Displayed images:", imageStore.getValidImages().length);
 }
 

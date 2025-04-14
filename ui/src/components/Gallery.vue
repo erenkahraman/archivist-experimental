@@ -1,7 +1,18 @@
 <template>
   <div class="gallery-container">
-    <!-- Reset button -->
-    <div class="reset-container">
+    <!-- Reset and Cleanup Buttons -->
+    <div class="action-controls">
+      <button 
+        class="cleanup-button" 
+        @click="forceCleanup"
+        title="Find and clean invalid images"
+      >
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Refresh Gallery
+      </button>
+      
       <button 
         class="reset-button" 
         @click="confirmReset"
@@ -251,11 +262,11 @@ const searchActive = computed(() => imageStore.searchQuery !== '')
 
 onMounted(async () => {
   try {
-    // Reset the store to get fresh data - only once on mount
-    await imageStore.resetStore()
+    // Clear any stale cache
+    await imageStore.clearImageCache();
     
-    // No need for additional real-time polling here
-    // This will reduce the number of requests to the backend
+    // Fetch fresh images
+    await imageStore.fetchImages(100);
   } catch (error) {
     // Only log errors in development
     if (isDev) {
@@ -332,38 +343,47 @@ const getStyleKeywords = (image) => {
 
 // Handle image error
 const handleImageError = (image) => {
-  if (!image || !image.thumbnail_path) return;
+  // Check for valid image
+  if (!image) return;
   
-  if (isDev) {
-    console.warn('Thumbnail failed to load:', image.thumbnail_path);
-  }
+  // Log the error for debugging
+  const imagePath = image.thumbnail_path || image.path || image.original_path || 'unknown';
+  console.warn('Thumbnail failed to load:', imagePath);
   
-  // Find the image in the gallery by ID or path
-  const imageId = image.id || image.path || image.thumbnail_path;
+  // Get the filename for processing
+  const filename = getFileName(imagePath);
   
-  // Remove invalid images from the gallery
-  if (searchActive.value) {
-    // For search results, remove just from current results
-    imageStore.images.value = imageStore.images.value.filter(img => {
-      const imgId = img.id || img.path || img.thumbnail_path;
-      return imgId !== imageId;
-    });
+  try {
+    // Clear cache for this image
+    imageStore.clearImageCache(filename);
     
-    // Also remove from search results
-    imageStore.searchResults.value = imageStore.searchResults.value.filter(img => {
-      const imgId = img.id || img.path || img.thumbnail_path;
-      return imgId !== imageId;
-    });
-  } else {
-    // For normal gallery view, call cleanup
-    imageStore.cleanGallery();
-  }
-  
-  // If this was the reference image for search, clear search
-  if (imageStore.searchQueryReferenceImage && 
-      (imageStore.searchQueryReferenceImage.id === image.id || 
-       imageStore.searchQueryReferenceImage.thumbnail_path === image.thumbnail_path)) {
-    imageStore.clearSearch();
+    // Remove the failed image from UI
+    if (imageStore.images.value) {
+      imageStore.images.value = imageStore.images.value.filter(img => {
+        const imgPath = img.thumbnail_path || img.path || img.original_path || '';
+        return getFileName(imgPath) !== filename;
+      });
+    }
+    
+    // Also remove from search results if present
+    if (imageStore.searchResults.value && imageStore.searchResults.value.length > 0) {
+      imageStore.searchResults.value = imageStore.searchResults.value.filter(img => {
+        const imgPath = img.thumbnail_path || img.path || img.original_path || '';
+        return getFileName(imgPath) !== filename;
+      });
+    }
+    
+    // If this was the reference image for search, clear search
+    if (imageStore.searchQueryReferenceImage) {
+      const refPath = imageStore.searchQueryReferenceImage.thumbnail_path || 
+                     imageStore.searchQueryReferenceImage.original_path || '';
+      
+      if (getFileName(refPath) === filename) {
+        imageStore.clearSearch();
+      }
+    }
+  } catch (err) {
+    console.error('Error handling failed image:', err);
   }
 }
 
@@ -533,12 +553,89 @@ const getFileName = (path) => {
   if (!path) return '';
   return path.split('/').pop();
 }
+
+// Add a method to force cleanup
+const forceCleanup = async () => {
+  try {
+    // Set a loading indicator
+    imageStore.loading = true;
+    
+    // Clear search if active
+    if (searchActive.value) {
+      imageStore.clearSearch();
+    }
+    
+    // Try to clear server caches first (best effort)
+    try {
+      await fetch(`${imageStore.API_BASE_URL}/clear-cache`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {})
+    } catch (err) {
+      // Ignore server errors
+    }
+    
+    // Try to clean missing files from server database (best effort)
+    try {
+      await fetch(`${imageStore.API_BASE_URL}/purge-missing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      }).catch(() => {})
+    } catch (err) {
+      // Ignore server errors
+    }
+    
+    // Clear browser cache
+    await imageStore.clearImageCache();
+    
+    // Fetch fresh images with cache busting
+    await imageStore.fetchImages(100);
+  } catch (error) {
+    if (isDev) {
+      console.error("Failed to clean gallery:", error);
+    }
+  } finally {
+    imageStore.loading = false;
+  }
+}
 </script>
 
 <style scoped>
 .gallery-container {
   width: 100%;
   margin: 0 var(--space-1);
+}
+
+.action-controls {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+
+.cleanup-button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background-color: rgba(59, 130, 246, 0.1);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.cleanup-button:hover {
+  background-color: rgba(59, 130, 246, 0.15);
+  color: #2563eb;
+}
+
+.cleanup-button svg {
+  width: 16px;
+  height: 16px;
 }
 
 .reset-container {
