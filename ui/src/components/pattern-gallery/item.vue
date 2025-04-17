@@ -37,10 +37,10 @@
       <div class="image-metadata">
         <div class="pattern-type">
           <span class="type-label">Pattern:</span>
-          <span class="type-value">{{ image.patterns?.primary_pattern || 'Unknown' }}</span>
+          <span class="type-value">{{ image.patterns?.main_theme || image.metadata?.patterns?.main_theme || 'Unknown' }}</span>
         </div>
         <div class="pattern-prompt">
-          {{ truncatePrompt(image.patterns?.prompt) }}
+          {{ truncatePrompt(image.patterns?.prompt || image.metadata?.patterns?.prompt) }}
         </div>
         
         <div v-if="searchActive && image.searchScore !== undefined" class="search-score">

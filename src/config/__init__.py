@@ -1,35 +1,23 @@
-from .prompts import GEMINI_CONFIG
-from .elasticsearch_config import (
-    ELASTICSEARCH_HOSTS,
-    ELASTICSEARCH_CLOUD_ID,
-    ELASTICSEARCH_API_KEY,
-    ELASTICSEARCH_USERNAME,
-    ELASTICSEARCH_PASSWORD,
-    INDEX_NAME,
-    INDEX_SHARDS,
-    INDEX_REPLICAS,
+"""
+Configuration package for the Pattern Analysis System.
+"""
+
+from .config import (
+    BASE_DIR,
+    UPLOAD_DIR,
+    THUMBNAIL_DIR,
+    METADATA_DIR,
     DEFAULT_SEARCH_LIMIT,
     DEFAULT_MIN_SIMILARITY,
-    ENABLE_CACHE,
-    CACHE_TTL
+    MAX_SEARCH_RESULTS
 )
 
-# Import config as a module for backward compatibility
-from . import config
-
 __all__ = [
-    'config',  # Add config module to exports
-    'GEMINI_CONFIG',
-    'ELASTICSEARCH_HOSTS',
-    'ELASTICSEARCH_CLOUD_ID',
-    'ELASTICSEARCH_API_KEY',
-    'ELASTICSEARCH_USERNAME',
-    'ELASTICSEARCH_PASSWORD',
-    'INDEX_NAME',
-    'INDEX_SHARDS',
-    'INDEX_REPLICAS',
+    'BASE_DIR',
+    'UPLOAD_DIR',
+    'THUMBNAIL_DIR',
+    'METADATA_DIR',
     'DEFAULT_SEARCH_LIMIT',
     'DEFAULT_MIN_SIMILARITY',
-    'ENABLE_CACHE',
-    'CACHE_TTL'
+    'MAX_SEARCH_RESULTS'
 ]

@@ -107,7 +107,7 @@
           
           <div class="image-container" @click="handleImageClick(image)">
             <img 
-              :src="getThumbnailUrl(image.thumbnail_path)" 
+              :src="getThumbnailUrl(image)" 
               :alt="getImageName(image)"
               class="gallery-image"
               loading="lazy"
@@ -280,8 +280,11 @@ const getPatternName = (image) => {
   if (image.pattern && image.pattern.primary) {
     return image.pattern.primary;
   }
-  if (image.patterns && image.patterns.primary_pattern) {
-    return image.patterns.primary_pattern;
+  if (image.patterns && image.patterns.main_theme) {
+    return image.patterns.main_theme;
+  }
+  if (image.metadata && image.metadata.patterns && image.metadata.patterns.main_theme) {
+    return image.metadata.patterns.main_theme;
   }
   return 'Unknown pattern';
 }
@@ -465,16 +468,39 @@ const getPromptText = (prompt, truncate = false) => {
 }
 
 // Replace getThumbnailUrl function
-const getThumbnailUrl = (path) => {
-  if (!path) return '';
+const getThumbnailUrl = (image) => {
+  if (!image) return '';
   
-  // Get just the filename
-  const filename = path.includes('/') ? 
-    imageStore.getFileName(path) : 
-    path; // Use path directly if it's already just a filename
+  // If the image already has a full thumbnail URL, use it
+  if (image.thumbnail_path && image.thumbnail_path.includes('http')) {
+    return image.thumbnail_path;
+  }
   
-  // Construct API URL
-  return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
+  // For images that have a complete thumbnail_path
+  if (image.thumbnail_path) {
+    // If it's not a complete URL but has the API path structure
+    if (image.thumbnail_path.includes('/api/')) {
+      return image.thumbnail_path;
+    }
+    
+    // Otherwise, just use the filename
+    const filename = imageStore.getFileName(image.thumbnail_path);
+    return `${imageStore.API_BASE_URL}/images/thumbnails/${filename}`;
+  }
+  
+  // If there's a file property (from recent uploads)
+  if (image.file) {
+    return `${imageStore.API_BASE_URL}/images/thumbnails/${image.file}`;
+  }
+  
+  // Last resort: try to get filename from original_path
+  if (image.original_path) {
+    const filename = imageStore.getFileName(image.original_path);
+    return `${imageStore.API_BASE_URL}/images/thumbnails/${filename}`;
+  }
+  
+  // If no valid path can be found
+  return '';
 }
 
 // Add these functions for the reset functionality

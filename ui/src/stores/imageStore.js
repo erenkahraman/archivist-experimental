@@ -19,7 +19,7 @@ export const useImageStore = defineStore('images', () => {
   const searchTotalResults = ref(0)
   const isSearching = ref(false)
   const searchQueryReferenceImage = ref(null)
-  const API_BASE_URL = 'http://localhost:8080/api'
+  const API_BASE_URL = 'http://localhost:8000/api'
 
   // Computed properties
   const hasError = computed(() => error.value !== null)
@@ -48,7 +48,7 @@ export const useImageStore = defineStore('images', () => {
       
       // Add cache busting parameter
       const cacheBuster = Date.now()
-      const response = await fetch(`${API_BASE_URL}/images?limit=${limit}&_=${cacheBuster}`)
+      const response = await fetch(`${API_BASE_URL}/images/?limit=${limit}&_=${cacheBuster}`)
       
       if (!response.ok) {
         throw new Error(`Failed to fetch images: ${response.statusText}`)
@@ -63,8 +63,22 @@ export const useImageStore = defineStore('images', () => {
       // Keep only uploading images from the current state
       const uploadingImages = images.value.filter(img => img.isUploading)
       
-      // Filter out any obviously invalid images
-      const validImages = data.filter(img => img && (img.thumbnail_path || img.path || img.original_path))
+      // Process and enhance image data with proper paths
+      const validImages = data
+        .filter(img => img && (img.thumbnail_path || img.path || img.original_path || img.file))
+        .map(img => {
+          // Make sure all images have paths that point to the right endpoints
+          const filename = img.file || getFileName(img.original_path || img.path || '');
+          if (filename) {
+            return {
+              ...img,
+              // Ensure paths are properly formed for thumbnails and originals
+              thumbnail_path: `${API_BASE_URL}/images/thumbnails/${filename}`,
+              original_path: `${API_BASE_URL}/images/${filename}`
+            };
+          }
+          return img;
+        });
       
       // Set images with fresh data from server
       images.value = [...uploadingImages, ...validImages]
@@ -91,7 +105,7 @@ export const useImageStore = defineStore('images', () => {
       const filename = getFileName(filepath)
       
       // Call the delete API
-      const response = await fetch(`${API_BASE_URL}/delete/${encodeURIComponent(filename)}`, {
+      const response = await fetch(`${API_BASE_URL}/images/delete/${encodeURIComponent(filename)}`, {
         method: 'DELETE'
       })
       
@@ -138,13 +152,13 @@ export const useImageStore = defineStore('images', () => {
       if (filename) {
         try {
           // Try to tell backend this file is missing (best effort, don't wait)
-          fetch(`${API_BASE_URL}/mark-missing/${encodeURIComponent(filename)}`, {
+          fetch(`${API_BASE_URL}/images/mark-missing/${encodeURIComponent(filename)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
           }).catch(() => {}) // Ignore if endpoint doesn't exist
           
           // Also try direct delete as fallback
-          fetch(`${API_BASE_URL}/delete/${encodeURIComponent(filename)}`, {
+          fetch(`${API_BASE_URL}/images/delete/${encodeURIComponent(filename)}`, {
             method: 'DELETE'
           }).catch(() => {}) // Ignore errors
         } catch (err) {
@@ -160,7 +174,7 @@ export const useImageStore = defineStore('images', () => {
         if (filename) {
           // Delete specific image URLs
           const urlsToDelete = [
-            `${API_BASE_URL}/thumbnails/${filename}`,
+            `${API_BASE_URL}/images/thumbnails/${filename}`,
             `${API_BASE_URL}/images/${filename}`
           ]
           
@@ -440,6 +454,25 @@ export const useImageStore = defineStore('images', () => {
     return images.value.filter(isValidImage)
   }
 
+  // Reset store to initial state
+  const resetStore = async () => {
+    // Clear all state
+    images.value = []
+    loading.value = false
+    error.value = null
+    searchResults.value = []
+    searchQuery.value = ''
+    searchTotalResults.value = 0
+    isSearching.value = false
+    searchQueryReferenceImage.value = null
+    
+    // Clear image cache
+    await clearImageCache()
+    
+    // Reload images
+    return await fetchImages()
+  }
+
   // Initially load images
   fetchImages()
 
@@ -466,6 +499,7 @@ export const useImageStore = defineStore('images', () => {
     isValidImage,
     getFileName,
     clearImageCache,
+    resetStore,
     
     // Computed
     hasError,

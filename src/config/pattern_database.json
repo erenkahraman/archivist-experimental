@@ -1,0 +1,218 @@
+{
+  "pattern_categories": {
+    "paisley": {
+      "description": "A teardrop-shaped decorative motif with a curved upper end",
+      "keywords": ["paisley", "boteh", "teardrop", "curved", "droplet", "decorative"],
+      "content_elements": ["curved teardrop shape", "droplet with curved tip", "ornate decorative motif"],
+      "historical_context": "Named after the town of Paisley in Scotland, though the pattern originated in Persia",
+      "origin": "Persian and Indian design, popularized in Western culture in 18th-19th centuries",
+      "applications": ["textiles", "fashion", "scarves", "ties", "decorative arts"]
+    },
+    "chain": {
+      "description": "Pattern featuring connected links resembling chains or interlocking elements",
+      "keywords": ["chain", "interlocking", "links", "connected", "metallic", "hardware", "linked", "repeating"],
+      "content_elements": ["interlocking links", "chain links", "connected loops", "hardware motifs"],
+      "historical_context": "Used in fashion since ancient times, popularized in luxury fashion in the 20th century",
+      "origin": "Inspired by functional chain hardware and jewelry designs",
+      "applications": ["fashion", "luxury goods", "scarves", "belts", "accessories"]
+    },
+    "polka dot": {
+      "description": "Pattern consisting of an array of filled circles of the same size",
+      "keywords": ["polka dot", "dots", "spots", "circular", "evenly spaced"],
+      "content_elements": ["evenly spaced dots", "filled circles", "repeating round spots"],
+      "historical_context": "Gained popularity in the late 19th century, with resurgences in 1950s and 1960s",
+      "origin": "Possibly named after the popularity of the polka dance in the mid-19th century",
+      "applications": ["fashion", "textiles", "children's clothing", "design"]
+    },
+    "houndstooth": {
+      "description": "Broken check pattern characterized by abstract four-pointed shapes",
+      "keywords": ["houndstooth", "dogtooth", "checked", "dogstooth", "woven", "tessellated"],
+      "content_elements": ["broken check pattern", "jagged edges", "black and white check", "four-pointed shapes"],
+      "historical_context": "Traditional Scottish pattern dating back to the 1800s",
+      "origin": "Scottish Lowlands, traditionally used in wool cloth outerwear",
+      "applications": ["fashion", "textiles", "suits", "coats", "interior design"]
+    },
+    "chevron": {
+      "description": "Pattern forming a series of V-shapes or inverted Vs",
+      "keywords": ["chevron", "zigzag", "angular", "v-shaped", "inverted v"],
+      "content_elements": ["v-shaped lines", "zigzag pattern", "inverted v shapes", "angular pattern"],
+      "historical_context": "One of the oldest patterns in history, found in ancient pottery and art",
+      "origin": "Various ancient cultures, including Greece and Egypt",
+      "applications": ["interior design", "fashion", "heraldry", "architecture"]
+    },
+    "herringbone": {
+      "description": "Pattern resembling a fish skeleton, with columns of slanted parallel lines",
+      "keywords": ["herringbone", "twill", "fishbone", "v-shaped", "woven", "columns"],
+      "content_elements": ["columns of parallel lines", "alternating diagonal pattern", "fishbone arrangement", "broken zigzag"],
+      "historical_context": "Named after its resemblance to the skeleton of a herring fish",
+      "origin": "Ancient Roman Empire, where it was used in road paving patterns",
+      "applications": ["textiles", "tailoring", "flooring", "brick patterns", "masonry"]
+    },
+    "damask": {
+      "description": "Elaborate pattern featuring reversible figured design",
+      "keywords": ["damask", "ornate", "reversible", "jacquard", "symmetrical", "luxurious"],
+      "content_elements": ["ornate scrolling patterns", "symmetrical design", "floral motifs", "reversible pattern"],
+      "historical_context": "Named after Damascus, Syria, where it originated in the Middle Ages",
+      "origin": "Middle East, became popular in Europe during the Renaissance",
+      "applications": ["upholstery", "curtains", "wallpaper", "formal textiles"]
+    },
+    "floral": {
+      "description": "Pattern featuring flowers, leaves, and botanical elements",
+      "keywords": ["floral", "botanical", "flowers", "leaves", "organic", "natural"],
+      "content_elements": ["flower blooms", "leaf motifs", "botanical elements", "natural forms", "petals", "vines"],
+      "historical_context": "Floral patterns have adorned textiles, pottery and architecture for centuries",
+      "origin": "Various cultures, became particularly popular in Europe during 17th-19th centuries",
+      "applications": ["textiles", "wallpaper", "fashion", "decorative arts"]
+    },
+    "geometric": {
+      "description": "Pattern based on regular geometric shapes and mathematical principles",
+      "keywords": ["geometric", "abstract", "symmetric", "mathematical", "shapes", "regular"],
+      "content_elements": ["repeating shapes", "circles", "squares", "triangles", "hexagons", "regular forms"],
+      "historical_context": "Geometric patterns have been used since ancient times across many cultures",
+      "origin": "Found in many cultures, particularly Islamic art, Greek and Roman decoration",
+      "applications": ["textiles", "architecture", "decorative arts", "modern design"]
+    },
+    "stripes": {
+      "description": "Pattern of parallel lines of color",
+      "keywords": ["stripes", "striped", "lines", "bands", "linear", "parallel"],
+      "content_elements": ["parallel lines", "evenly spaced bands", "colorful strips", "linear pattern"],
+      "historical_context": "One of the oldest and simplest patterns in textile history",
+      "origin": "Found in nearly all textile traditions worldwide",
+      "applications": ["fashion", "textiles", "flags", "awnings", "maritime", "sports uniforms"]
+    },
+    "plaid": {
+      "description": "Pattern of crossed horizontal and vertical bands in multiple colors",
+      "keywords": ["plaid", "tartan", "check", "checkered", "crisscross", "intersecting"],
+      "content_elements": ["crossed bands", "intersecting lines", "colored squares", "crisscrossing pattern"],
+      "historical_context": "Scottish tartans are among the most recognized plaid patterns",
+      "origin": "Various cultures, particularly associated with Scottish clan tartans",
+      "applications": ["clothing", "kilts", "flannels", "home textiles"]
+    },
+    "argyle": {
+      "description": "Pattern of diamonds in solid colors overlaid with diagonal lines",
+      "keywords": ["argyle", "diamond", "diagonal", "overlaid", "interlocking", "scottish"],
+      "content_elements": ["diamond shapes", "diagonal lines", "overlapping colors", "interlocking pattern"],
+      "historical_context": "Derived from the tartan of Clan Campbell of Argyll in western Scotland",
+      "origin": "Scotland, popularized worldwide in the 1920s",
+      "applications": ["knitwear", "socks", "sweaters", "vests", "golf attire"]
+    },
+    "toile": {
+      "description": "Pattern depicting complex scenes, usually monochromatic on white/off-white background",
+      "keywords": ["toile", "scenic", "pictorial", "narrative", "monochromatic", "pastoral"],
+      "content_elements": ["pastoral scenes", "narrative illustrations", "detailed vignettes", "countryside imagery"],
+      "historical_context": "Originated in Ireland, popularized in 18th century France",
+      "origin": "Irish linen industry, refined in Jouy-en-Josas, France",
+      "applications": ["home furnishings", "upholstery", "drapery", "wallpaper"]
+    },
+    "ikat": {
+      "description": "Pattern created by resist-dyeing threads before weaving, creating feathered edges",
+      "keywords": ["ikat", "resist-dyed", "feathered", "blurred", "ethnic", "traditional"],
+      "content_elements": ["feathered edges", "blurred designs", "resist-dyed look", "slightly fuzzy pattern"],
+      "historical_context": "Ancient technique found across Asia, South America, and Middle East",
+      "origin": "Independently developed in several cultures worldwide",
+      "applications": ["textiles", "tribal patterns", "bohemian fashion", "global decor"]
+    },
+    "medallion": {
+      "description": "Pattern featuring a central circular or oval design surrounded by complementary motifs",
+      "keywords": ["medallion", "central", "circular", "ornamental", "symmetrical", "focal"],
+      "content_elements": ["central circular motif", "radiating design", "ornamental border", "symmetrical pattern"],
+      "historical_context": "Common in Persian carpets and European decorative arts",
+      "origin": "Middle Eastern carpet traditions, adapted globally",
+      "applications": ["carpets", "textiles", "architectural ornament", "decorative arts"]
+    },
+    "batik": {
+      "description": "Pattern created using wax-resist dyeing technique with characteristic cracking lines",
+      "keywords": ["batik", "wax-resist", "cracked", "hand-dyed", "artisanal", "indonesian"],
+      "content_elements": ["crackle effect", "veined appearance", "resist-dyed look", "organic patterns"],
+      "historical_context": "Ancient technique particularly associated with Indonesia",
+      "origin": "Various Asian countries, particularly Java, Indonesia",
+      "applications": ["textiles", "traditional clothing", "wall hangings", "craft"]
+    },
+    "trellis": {
+      "description": "Pattern resembling a lattice framework with diagonal or crossed supports",
+      "keywords": ["trellis", "lattice", "garden", "diamond", "crisscross", "framework"],
+      "content_elements": ["lattice structure", "open grid pattern", "diamond shapes", "crisscrossing lines"],
+      "historical_context": "Inspired by garden trellis structures used to support climbing plants",
+      "origin": "Architectural elements translated to decorative patterns",
+      "applications": ["textiles", "wallpaper", "garden design", "architecture"]
+    },
+    "chintz": {
+      "description": "Pattern featuring large-scale, colorful floral designs with a glazed finish",
+      "keywords": ["chintz", "glossy", "floral", "colorful", "indian", "glazed"],
+      "content_elements": ["glossy floral prints", "vibrant flowers", "exotic botanical motifs", "bright colors"],
+      "historical_context": "Originally hand-painted calico textiles from India",
+      "origin": "India, later produced in England and Europe",
+      "applications": ["upholstery", "curtains", "fashion", "decorative fabrics"]
+    },
+    "ogee": {
+      "description": "Pattern with an onion or lantern shape formed by intersecting S-curves",
+      "keywords": ["ogee", "s-curve", "onion", "lantern", "moorish", "arabesque"],
+      "content_elements": ["s-curves forming points", "onion shapes", "curving intersections", "repeated arches"],
+      "historical_context": "Appeared in Islamic and Gothic architecture before moving to textiles",
+      "origin": "Middle Eastern and European architectural elements",
+      "applications": ["textiles", "tile work", "architectural details", "interior design"]
+    },
+    "border": {
+      "description": "Decorative pattern that runs along the edge or perimeter of an item",
+      "keywords": ["border", "edge", "trim", "perimeter", "frame", "margin"],
+      "content_elements": ["edging design", "framing pattern", "decorative margin", "repeating border motifs"],
+      "historical_context": "Used throughout history to embellish edges of textiles and objects",
+      "origin": "Universal decorative technique across cultures",
+      "applications": ["textiles", "rugs", "paper goods", "architectural elements"]
+    },
+    "animal print": {
+      "description": "Pattern mimicking the natural markings found on animal skin or fur",
+      "keywords": ["animal print", "leopard", "zebra", "tiger", "giraffe", "wildlife"],
+      "content_elements": ["spotted pattern", "striped markings", "natural coloration", "fur-like texture"],
+      "historical_context": "Used for millennia, from prehistoric cave paintings to modern fashion",
+      "origin": "Inspired by natural animal markings",
+      "applications": ["fashion", "interior design", "accessories", "decorative arts"]
+    },
+    "camouflage": {
+      "description": "Pattern designed to blend with surroundings, typically with irregular spots or shapes",
+      "keywords": ["camouflage", "camo", "military", "concealment", "disruptive", "blended"],
+      "content_elements": ["irregular patches", "blotchy design", "organic shapes", "disruptive pattern"],
+      "historical_context": "Developed for military use in early 20th century",
+      "origin": "Military applications, inspired by natural concealment",
+      "applications": ["military uniforms", "hunting gear", "fashion", "vehicle livery"]
+    },
+    "abstract": {
+      "description": "Non-representational pattern not depicting recognizable objects",
+      "keywords": ["abstract", "non-representational", "artistic", "modern", "expressionist", "freeform"],
+      "content_elements": ["non-objective forms", "free-flowing design", "artistic expression", "non-literal elements"],
+      "historical_context": "Prominent in 20th century modernist movements",
+      "origin": "Modern art movements including Expressionism and Abstract Expressionism",
+      "applications": ["modern textiles", "contemporary art", "fashion", "interior design"]
+    }
+  },
+  "preferred_model": "gemini-1.5-flash",
+  "colors": {
+    "red": ["crimson", "scarlet", "cherry", "ruby", "garnet"],
+    "blue": ["navy", "azure", "cobalt", "cerulean", "indigo"],
+    "green": ["emerald", "mint", "sage", "olive", "lime"]
+  },
+  "density_types": {
+    "sparse": {
+      "description": "Elements are widely spaced with significant background showing",
+      "confidence": 0.85
+    },
+    "medium": {
+      "description": "Balanced distribution of elements and background",
+      "confidence": 0.85
+    },
+    "dense": {
+      "description": "Elements are closely packed with minimal background showing",
+      "confidence": 0.85
+    }
+  },
+  "layout_types": {
+    "balanced": {
+      "description": "Elements are evenly distributed across the design",
+      "confidence": 0.85
+    },
+    "asymmetrical": {
+      "description": "Intentional imbalance in element distribution",
+      "confidence": 0.8
+    }
+  }
+} 

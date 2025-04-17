@@ -55,7 +55,7 @@ const currentFileIndex = ref(0)
 const totalFiles = ref(0)
 const uploadStatus = ref('')
 
-const uploadUrl = 'http://localhost:8080/api/upload'
+const uploadUrl = 'http://localhost:8000/api/upload/'
 
 const handleDrop = async (e) => {
   isDragging.value = false
@@ -152,11 +152,6 @@ const uploadSingleFile = async (file) => {
             const metadata = JSON.parse(xhr.responseText)
             console.log('Received metadata from server:', metadata)
             
-            // Ensure the metadata has a valid path
-            if (!metadata.original_path && metadata.path) {
-              metadata.original_path = metadata.path
-            }
-            
             // Replace temp image with actual metadata
             const index = imageStore.images.findIndex(img => 
               img.original_path === file.name && img.isUploading
@@ -165,14 +160,21 @@ const uploadSingleFile = async (file) => {
             if (index !== -1) {
               // Log the path information for debugging
               console.log('Image path before update:', imageStore.images[index].original_path)
-              console.log('New image path:', metadata.original_path || metadata.path || 'undefined')
+              
+              // Ensure we have the right path from the response
+              let imagePath = metadata.file || '';
+              if (metadata.metadata && metadata.metadata.original_path) {
+                imagePath = metadata.metadata.original_path;
+              }
+              
+              console.log('New image path:', imagePath)
               
               // Update the image with the new metadata
               imageStore.images[index] = { 
                 ...metadata, 
                 isUploading: false,
-                // Ensure we have a valid path
-                original_path: metadata.original_path || metadata.path || `uploads/${file.name}`
+                // Ensure we have a valid path that points to the correct endpoint
+                original_path: imagePath ? `${imageStore.API_BASE_URL}/images/${imagePath}` : `uploads/${file.name}`
               }
               
               console.log('Updated image in store:', imageStore.images[index])

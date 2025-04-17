@@ -11,16 +11,17 @@ src/
 ├── api/                  # API routes and controllers
 │   ├── __init__.py
 │   └── routes.py         # API endpoints
-├── core/                 # Core functionality
-│   ├── __init__.py
-│   └── search_engine.py  # Search engine implementation
 ├── analyzers/            # Analysis modules
 │   ├── __init__.py
-│   ├── color_analyzer.py # Color analysis
-│   └── gemini_analyzer.py# Gemini AI integration
+│   ├── gemini_analyzer.py# Optimized Gemini AI integration
+│   └── json_parser.py    # JSON response parser
 ├── config/               # Configuration
 │   ├── __init__.py
-│   └── prompts.py        # Prompt templates
+│   ├── config.py         # Configuration settings
+│   ├── pattern_database.json # Pattern references
+│   └── prompts.py        # Token-optimized prompts
+├── storage/              # Storage management
+│   └── image_storage.py  # Image and metadata storage
 └── utils/                # Utility functions
     ├── __init__.py
     └── logging_config.py # Logging configuration
@@ -36,26 +37,25 @@ The main application entry point. Creates and configures the Flask application.
 
 Contains all API routes and controllers for the application.
 
-- `routes.py`: Defines all API endpoints, including image upload, search, and metadata retrieval.
-
-### `core/`
-
-Contains core functionality of the application.
-
-- `search_engine.py`: Implements the search engine that processes and analyzes images.
-
 ### `analyzers/`
 
 Contains modules for analyzing images.
 
-- `color_analyzer.py`: Analyzes colors in images.
-- `gemini_analyzer.py`: Integrates with Google's Gemini AI for image analysis.
+- `gemini_analyzer.py`: Token-optimized integration with Google's Gemini AI for pattern analysis.
+- `json_parser.py`: Efficient JSON parsing utility for AI responses.
 
 ### `config/`
 
 Contains configuration files.
 
-- `prompts.py`: Defines prompt templates for AI models.
+- `prompts.py`: Token-efficient prompt templates for the Gemini API.
+- `pattern_database.json`: Reference database for enhancing pattern recognition.
+
+### `storage/`
+
+Contains file storage management.
+
+- `image_storage.py`: Handles image and metadata storage.
 
 ### `utils/`
 

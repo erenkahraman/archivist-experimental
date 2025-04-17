@@ -5,7 +5,11 @@ Archivist - Flask application for image processing and search.
 This file serves as an entry point for the Flask development server.
 For production deployment, use a WSGI server like Gunicorn instead.
 """
-from src.app import create_app, DEBUG
+from src.app import create_app
+import os
+
+# Set debug mode
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 't', 'yes')
 
 # Create the application instance
 app = create_app()

@@ -1,40 +1,86 @@
-from flask import request, jsonify, send_from_directory
+from flask import request, jsonify, send_from_directory, Blueprint
 import os
+import sys
 from pathlib import Path
 import uuid
 import time
 import logging
 from werkzeug.utils import secure_filename
-import config
-from .. import api, search_engine, DEBUG
 
+# Add the project root to the path for local imports
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from src.config.config import UPLOAD_DIR, THUMBNAIL_DIR
+from src.core.pattern_analyzer import PatternAnalyzer
+from src.search import search_engine
+
+# Get API key from environment
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+
+# Initialize pattern analyzer
+pattern_analyzer = PatternAnalyzer(api_key=GEMINI_API_KEY)
+
+# Set up logging
 logger = logging.getLogger(__name__)
+DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 't')
 
-# Configure upload folder
-UPLOAD_FOLDER = Path(__file__).parent.parent.parent.parent / "uploads"
-UPLOAD_FOLDER.mkdir(exist_ok=True)
-ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
+# Create blueprint
+image_blueprint = Blueprint('image', __name__)
+
+def _build_cors_preflight_response():
+    """Helper function for CORS preflight responses"""
+    response = jsonify({})
+    response.headers.add("Access-Control-Allow-Origin", "*")
+    response.headers.add("Access-Control-Allow-Headers", "Content-Type,Authorization")
+    response.headers.add("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS")
+    return response
 
 def allowed_file(filename):
+    """Check if file has an allowed extension"""
+    ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp'}
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
-@api.route('/thumbnails/<path:filename>')
+@image_blueprint.route('/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
     """Serve thumbnail images"""
-    return send_from_directory(config.THUMBNAIL_DIR, filename)
+    try:
+        # Check if the file exists in the thumbnail directory
+        thumbnail_path = Path(THUMBNAIL_DIR) / filename
+        if not thumbnail_path.exists():
+            # Try to create the thumbnail if original exists
+            original_path = Path(UPLOAD_DIR) / filename
+            if original_path.exists():
+                logger.info(f"Creating missing thumbnail for {filename}")
+                thumbnail = pattern_analyzer.create_thumbnail(original_path)
+                if thumbnail:
+                    return send_from_directory(THUMBNAIL_DIR, filename)
+            
+            # Return a 404 if we can't find or create the thumbnail
+            logger.warning(f"Thumbnail not found: {filename}")
+            return jsonify({"error": "Thumbnail not found"}), 404
+            
+        return send_from_directory(THUMBNAIL_DIR, filename)
+    except Exception as e:
+        logger.error(f"Error serving thumbnail {filename}: {str(e)}")
+        return jsonify({"error": str(e)}), 500
 
-@api.route('/images/<path:filename>')
+@image_blueprint.route('/<path:filename>')
 def serve_image(filename):
     """Serve full-size images"""
-    return send_from_directory(config.UPLOAD_DIR, filename)
+    return send_from_directory(UPLOAD_DIR, filename)
 
-@api.route('/images', methods=['GET'])
+@image_blueprint.route('/', methods=['GET'])
 def get_images():
     try:
         # Get limit parameter (default to 20)
         limit = request.args.get('limit', default=20, type=int)
         # Get offset parameter (default to 0)
         offset = request.args.get('offset', default=0, type=int)
+        
+        # Check if metadata is available
+        if not search_engine.metadata:
+            logger.warning("No metadata available")
+            return jsonify({'message': 'No images available', 'images': []}), 200
         
         # Only return valid metadata
         valid_metadata = {
@@ -54,9 +100,9 @@ def get_images():
         return jsonify(paginated_images)
     except Exception as e:
         logger.error(f"Error getting images: {str(e)}")
-        return jsonify({'error': str(e)}), 500
+        return jsonify({'error': str(e), 'images': []}), 500
 
-@api.route('/upload', methods=['POST'])
+@image_blueprint.route('/upload', methods=['POST'])
 def upload_file():
     """
     Handle file upload with proper validation and error handling.
@@ -89,7 +135,7 @@ def upload_file():
             unique_filename = f"{uuid.uuid4()}_{int(time.time())}{ext}"
             
             # Save the file
-            file_path = config.UPLOAD_DIR / unique_filename
+            file_path = Path(UPLOAD_DIR) / unique_filename
             file.save(file_path)
             
             if DEBUG:
@@ -119,17 +165,17 @@ def upload_file():
         logger.error(f"Upload error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/delete/<path:filename>', methods=['DELETE', 'OPTIONS'])
+@image_blueprint.route('/delete/<path:filename>', methods=['DELETE', 'OPTIONS', 'POST'])
 def delete_image(filename):
     """Delete an image and its associated metadata"""
     # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        return '', 200
+        return _build_cors_preflight_response()
         
     try:
         # Look for the file in uploads directory
-        file_path = config.UPLOAD_DIR / filename
-        thumbnail_path = config.THUMBNAIL_DIR / filename
+        file_path = Path(UPLOAD_DIR) / filename
+        thumbnail_path = Path(THUMBNAIL_DIR) / filename
         
         deleted_original = False
         deleted_thumbnail = False
@@ -142,7 +188,7 @@ def delete_image(filename):
         else:
             # Try to find the file by basename in uploads directory
             basename = os.path.basename(filename)
-            for file in config.UPLOAD_DIR.glob(f"*{basename}*"):
+            for file in Path(UPLOAD_DIR).glob(f"*{basename}*"):
                 if file.is_file():
                     os.remove(file)
                     deleted_original = True
@@ -156,7 +202,7 @@ def delete_image(filename):
         else:
             # Try to find the thumbnail by basename
             basename = os.path.basename(filename)
-            for file in config.THUMBNAIL_DIR.glob(f"*{basename}*"):
+            for file in Path(THUMBNAIL_DIR).glob(f"*{basename}*"):
                 if file.is_file():
                     os.remove(file)
                     deleted_thumbnail = True
@@ -182,12 +228,12 @@ def delete_image(filename):
         logger.error(f"Delete error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/cleanup-metadata', methods=['POST', 'OPTIONS'])
+@image_blueprint.route('/cleanup-metadata', methods=['POST', 'OPTIONS'])
 def cleanup_metadata():
     """Clean up metadata for missing files to fix gallery display issues"""
     # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        return '', 200
+        return _build_cors_preflight_response()
         
     try:
         # Run the cleanup operation
@@ -203,27 +249,30 @@ def cleanup_metadata():
         logger.error(f"Cleanup error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/purge-all', methods=['POST', 'OPTIONS'])
+@image_blueprint.route('/purge-all', methods=['POST', 'OPTIONS'])
 def purge_all_images():
     """Delete ALL images and metadata to start fresh"""
     # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        return '', 200
+        return _build_cors_preflight_response()
         
     try:
         logger.info("PURGING ALL IMAGES AND METADATA")
         
-        # First, clear all metadata
-        search_engine.metadata.clear()
-        search_engine.save_metadata()
+        # Clear search engine metadata
+        search_engine.clear_metadata()
+        
+        # Reset pattern analyzer metadata
+        pattern_analyzer.metadata = {}
+        pattern_analyzer.save_metadata()
         
         # Delete all files in the uploads directory
-        for file in config.UPLOAD_DIR.glob("*"):
+        for file in Path(UPLOAD_DIR).glob("*"):
             if file.is_file():
                 os.remove(file)
         
         # Delete all files in the thumbnails directory
-        for file in config.THUMBNAIL_DIR.glob("*"):
+        for file in Path(THUMBNAIL_DIR).glob("*"):
             if file.is_file():
                 os.remove(file)
         
@@ -233,38 +282,28 @@ def purge_all_images():
         logger.error(f"Error purging images: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/cleanup-elasticsearch', methods=['POST', 'OPTIONS'])
+@image_blueprint.route('/cleanup-elasticsearch', methods=['POST', 'OPTIONS'])
 def cleanup_elasticsearch():
     """Clean up Elasticsearch index after purging all images"""
-    # Handle OPTIONS request for CORS preflight
-    if request.method == 'OPTIONS':
-        return '', 200
-        
     try:
-        logger.info("CLEANING UP ELASTICSEARCH INDEX")
-        
-        # Check if search engine has Elasticsearch enabled
-        if hasattr(search_engine, 'use_elasticsearch') and search_engine.use_elasticsearch:
-            # Recreate the index to ensure it's completely empty
-            if search_engine.es_client.create_index(force_recreate=True):
-                logger.info("Elasticsearch index recreated successfully")
-                return jsonify({'status': 'success', 'message': 'Elasticsearch index recreated'}), 200
-            else:
-                logger.error("Failed to recreate Elasticsearch index")
-                return jsonify({'error': 'Failed to recreate Elasticsearch index'}), 500
-        else:
-            logger.info("Elasticsearch not enabled, skipping cleanup")
-            return jsonify({'status': 'success', 'message': 'Elasticsearch not enabled, no cleanup needed'}), 200
+        # Check CORS preflight
+        if request.method == 'OPTIONS':
+            return _build_cors_preflight_response()
+
+        logger.info("CLEANUP ELASTICSEARCH ENDPOINT IS NOW DEPRECATED - Using in-memory search only")
+
+        # Return success since we're not using Elasticsearch anymore
+        return jsonify({'status': 'success', 'message': 'Using in-memory search only, no Elasticsearch cleanup needed'}), 200
     except Exception as e:
-        logger.error(f"Error cleaning up Elasticsearch: {str(e)}")
+        logger.error(f"Error in cleanup endpoint: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/repair-thumbnails', methods=['POST', 'OPTIONS'])
+@image_blueprint.route('/repair-thumbnails', methods=['POST', 'OPTIONS'])
 def repair_thumbnails():
     """Repair missing thumbnails and synchronize metadata with actual files"""
     # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        return '', 200
+        return _build_cors_preflight_response()
         
     try:
         results = {
@@ -277,12 +316,12 @@ def repair_thumbnails():
         results['entries_cleaned'] = search_engine.cleanup_missing_files()
         
         # Then recreate any missing thumbnails for existing images
-        for file_path in config.UPLOAD_DIR.glob("*"):
+        for file_path in Path(UPLOAD_DIR).glob("*"):
             if not file_path.is_file():
                 continue
                 
             filename = file_path.name
-            thumbnail_path = config.THUMBNAIL_DIR / filename
+            thumbnail_path = Path(THUMBNAIL_DIR) / filename
             
             if not thumbnail_path.exists():
                 logger.info(f"Recreating missing thumbnail for: {filename}")
@@ -294,7 +333,7 @@ def repair_thumbnails():
                     logger.error(f"Error recreating thumbnail for {filename}: {e}")
             
             # Check if this image is in metadata, if not, add it
-            rel_path = str(file_path.relative_to(config.BASE_DIR))
+            rel_path = str(file_path.relative_to(Path(UPLOAD_DIR)))
             found = False
             
             for meta_path, metadata in search_engine.metadata.items():
@@ -321,45 +360,78 @@ def repair_thumbnails():
         logger.error(f"Error repairing thumbnails: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
-@api.route('/reindex-embeddings', methods=['POST', 'OPTIONS'])
+@image_blueprint.route('/reindex-embeddings', methods=['POST', 'OPTIONS'])
 def reindex_embeddings():
-    """Reindex all images with proper embeddings for improved search"""
+    """
+    Regenerate embeddings for all images.
+    
+    Optional parameters:
+    - force: Set to 'true' to regenerate embeddings for all images, even if they already exist
+    """
+    try:
+        # Handle OPTIONS request for CORS preflight
+        if request.method == 'OPTIONS':
+            return _build_cors_preflight_response()
+            
+        # Check if force flag is set
+        force = False
+        if request.is_json and request.json:
+            force = request.json.get('force', False)
+        else:
+            force = request.form.get('force', 'false').lower() == 'true'
+            
+        logger.info(f"Reindexing all embeddings with force={force}")
+        
+        # Process reindexing in background thread
+        def reindex_task():
+            try:
+                stats = search_engine.reindex_all_with_embeddings(force=force)
+                logger.info(f"Reindexing complete: {stats}")
+            except Exception as e:
+                logger.error(f"Error in reindexing task: {str(e)}")
+                
+        # Start thread for background processing
+        import threading
+        thread = threading.Thread(target=reindex_task)
+        thread.daemon = True
+        thread.start()
+        
+        return jsonify({
+            'status': 'processing',
+            'message': 'Reindexing started in background thread'
+        }), 202
+        
+    except Exception as e:
+        logger.error(f"Error in reindex_embeddings: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+@image_blueprint.route('/mark-missing/<path:filename>', methods=['POST', 'OPTIONS', 'DELETE'])
+def mark_image_as_missing(filename):
+    """Mark an image as missing without deleting the actual file"""
     # Handle OPTIONS request for CORS preflight
     if request.method == 'OPTIONS':
-        return '', 200
+        return _build_cors_preflight_response()
         
     try:
-        # Check if force parameter is provided
-        force = request.args.get('force', 'false').lower() in ('true', '1', 't', 'yes')
-        
-        if not search_engine:
-            logger.error("SearchEngine is not initialized")
-            return jsonify({'error': 'SearchEngine is not initialized'}), 500
-            
-        if not search_engine.use_elasticsearch:
-            logger.error("Elasticsearch is not available, cannot reindex")
-            return jsonify({'error': 'Elasticsearch is not available'}), 500
-        
-        # Log the start of reindexing
-        logger.info(f"Starting reindexing process with force={force}")
-        
-        # Call the reindexing method
-        stats = search_engine.reindex_all_with_embeddings(force=force)
-        
-        if stats.get("success_overall", False):
-            logger.info(f"Reindexing completed successfully: {stats}")
-            return jsonify({
-                'status': 'success',
-                'message': 'Successfully reindexed images with embeddings',
-                'stats': stats
-            }), 200
+        # Simply update the metadata for this image
+        if search_engine and hasattr(search_engine, 'delete_image'):
+            success = search_engine.delete_image(filename)
+            if success:
+                logger.info(f"Successfully marked image as missing: {filename}")
+                return jsonify({
+                    'status': 'success',
+                    'message': f"Image {filename} marked as missing"
+                }), 200
+            else:
+                logger.warning(f"Could not find metadata for: {filename}")
+                return jsonify({
+                    'status': 'warning',
+                    'message': f"Could not find metadata for: {filename}"
+                }), 404
         else:
-            logger.warning(f"Reindexing completed with issues: {stats}")
             return jsonify({
-                'status': 'partial',
-                'message': 'Reindexing completed with some issues',
-                'stats': stats
-            }), 207  # Multi-Status
+                'error': 'Search engine unavailable'
+            }), 500
     except Exception as e:
-        logger.error(f"Error during reindexing: {str(e)}", exc_info=True)
+        logger.error(f"Error marking image as missing: {str(e)}")
         return jsonify({'error': str(e)}), 500 

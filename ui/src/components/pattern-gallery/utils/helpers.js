@@ -8,7 +8,7 @@ export const getThumbnailUrl = (path) => {
     console.log('Warning: Empty thumbnail path');
     return '';
   }
-  return `http://localhost:8080/api/thumbnails/${path.split('/').pop()}`
+  return `http://localhost:8000/api/thumbnails/${path.split('/').pop()}`
 }
 
 /**

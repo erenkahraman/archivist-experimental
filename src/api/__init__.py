@@ -44,29 +44,48 @@ else:
     masked_key = GEMINI_API_KEY[:4] + "..." + GEMINI_API_KEY[-4:] if len(GEMINI_API_KEY) >= 8 else "INVALID_KEY"
     logger.info(f"Using Gemini API key: {masked_key}")
 
-
 # Create API blueprint
 api = Blueprint('api', __name__)
 
-# Import SearchEngine to set up search functionality
+# Import necessary modules for initialization
 try:
-    # Import here to avoid circular imports
-    from ..search_engine import SearchEngine
+    # Import pattern analyzer
+    from src.core.pattern_analyzer import PatternAnalyzer
+    from src.search import search_engine
     
-    # Initialize search engine
-    search_engine = SearchEngine()
+    # Ensure directories exist
+    UPLOAD_DIR = Path(__file__).parent.parent.parent / "uploads"
+    THUMBNAIL_DIR = Path(__file__).parent.parent.parent / "thumbnails"
+    METADATA_DIR = Path(__file__).parent.parent.parent / "metadata"
     
-    if not search_engine.es_client or not search_engine.es_client.is_connected():
-        logger.warning("Elasticsearch connection failed. Some search features will be limited.")
-    else:
-        logger.info("Elasticsearch connection successful.")
+    for dir_path in [UPLOAD_DIR, THUMBNAIL_DIR, METADATA_DIR]:
+        dir_path.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Ensured directory exists: {dir_path}")
+    
+    # Initialize PatternAnalyzer
+    try:
+        pattern_analyzer = PatternAnalyzer(api_key=GEMINI_API_KEY)
+        logger.info("PatternAnalyzer initialized successfully")
+        
+        # Load any existing metadata
+        metadata = pattern_analyzer.get_all_metadata()
+        if metadata:
+            # Configure search engine with metadata
+            search_engine.set_metadata(metadata)
+            logger.info(f"Search engine configured with {len(metadata)} items")
+        else:
+            logger.info("No existing metadata found to load into search engine")
+    except Exception as e:
+        logger.error(f"Failed to initialize PatternAnalyzer: {str(e)}")
     
     # Log initialization state
     logger.info(f"API initialized with DEBUG={DEBUG}")
+except ImportError as e:
+    logger.error(f"Error importing core modules: {str(e)}")
+    logger.warning("API initialized without core functionality.")
 except Exception as e:
-    logger.error(f"Error initializing search engine: {e}", exc_info=True)
-    search_engine = None
-    logger.warning("API initialized without search engine.")
+    logger.error(f"Error initializing core components: {str(e)}", exc_info=True)
+    logger.warning("API initialized with limited functionality.")
 
 # Register basic error handlers
 from werkzeug.exceptions import BadRequest
@@ -90,11 +109,16 @@ def home():
     return 'API is running'
 
 # Import routes after api is created to avoid circular imports
-from .routes import image_routes, search_routes, settings_routes
+from .routes import search_routes, upload_routes, image_routes
 
 # Register route blueprints with the main api blueprint
 from .routes.search_routes import search_blueprint
+from .routes.upload_routes import upload_blueprint
+from .routes.image_routes import image_blueprint
+
 api.register_blueprint(search_blueprint)
+api.register_blueprint(upload_blueprint, url_prefix='/upload/')
+api.register_blueprint(image_blueprint, url_prefix='/images/')
 
 def create_app():
     """
@@ -104,7 +128,7 @@ def create_app():
     
     # Configure CORS to allow requests from frontend
     CORS(app, resources={
-        r"/api/*": {
+        r"/*": {
             "origins": [
                 "http://localhost:3000", 
                 "http://localhost:5000",
@@ -116,8 +140,12 @@ def create_app():
                 "Content-Type", 
                 "Authorization", 
                 "Accept",
-                "Cache-Control"
-            ]
+                "Cache-Control",
+                "X-Requested-With",
+                "Origin"
+            ],
+            "supports_credentials": True,
+            "max_age": 86400
         }
     })
     

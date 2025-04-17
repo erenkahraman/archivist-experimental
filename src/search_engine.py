@@ -9,11 +9,11 @@ import logging
 import time
 import os
 from datetime import datetime
+import re
 
 # Relative imports from the same package
 from .analyzers.color_analyzer import ColorAnalyzer
 from .analyzers.gemini_analyzer import GeminiAnalyzer
-from .search.elasticsearch_client import ElasticsearchClient
 from .utils.cache import SearchCache
 import config
 
@@ -42,17 +42,16 @@ class SearchEngine:
             self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
             self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
             
-            # Initialize CLIP model for embeddings
-            logger.info("Loading CLIP model for embeddings...")
-            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
-            # Move to GPU if available
-            self.device = "cuda" if torch.cuda.is_available() else "cpu"
-            self.clip_model = self.clip_model.to(self.device)
-            logger.info(f"CLIP model loaded successfully (using {self.device})")
+            # Don't load CLIP model immediately, defer until needed
+            self.clip_model = None
+            self.clip_processor = None
+            self.device = None
             
-            # Initialize Elasticsearch client
-            self.use_elasticsearch = self._init_elasticsearch()
+            # Flag to track if CLIP model is loaded
+            self._clip_model_loaded = False
+            
+            # No Elasticsearch client
+            self.use_elasticsearch = False
             
             # Initialize Redis cache
             self.cache = SearchCache()
@@ -63,69 +62,10 @@ class SearchEngine:
             # Initialize search analytics
             self.search_logs = self._load_search_logs()
             
-            # If using Elasticsearch, ensure all metadata is indexed
-            if self.use_elasticsearch and self.metadata:
-                self._index_all_metadata()
-            
             logger.info("SearchEngine initialization completed")
         except Exception as e:
             logger.error(f"Error initializing SearchEngine: {e}")
             raise
-
-    def _init_elasticsearch(self) -> bool:
-        """Initialize Elasticsearch client and check connection"""
-        try:
-            # Initialize Elasticsearch client
-            self.es_client = ElasticsearchClient(
-                hosts=config.ELASTICSEARCH_HOSTS,
-                cloud_id=config.ELASTICSEARCH_CLOUD_ID,
-                api_key=config.ELASTICSEARCH_API_KEY,
-                username=config.ELASTICSEARCH_USERNAME,
-                password=config.ELASTICSEARCH_PASSWORD
-            )
-            
-            # Check if connected
-            if self.es_client.is_connected():
-                logger.info("Successfully connected to Elasticsearch")
-                
-                # Create index ONLY if it doesn't exist
-                if not self.es_client.index_exists():
-                    logger.info(f"Index '{self.es_client.index_name}' does not exist. Creating...")
-                    # Pass force_recreate=False to prevent deleting existing index
-                    if not self.es_client.create_index(force_recreate=False):
-                        logger.error("Failed to create initial index. Elasticsearch functionality may be limited.")
-                        # Optional: Set self.use_elasticsearch = False here if index creation is critical
-                        return False
-                    else:
-                        logger.info(f"Successfully created index '{self.es_client.index_name}'.")
-                else:
-                    logger.info(f"Index '{self.es_client.index_name}' already exists.")
-                return True
-            else:
-                logger.warning("Failed to connect to Elasticsearch, using in-memory search instead")
-                return False
-        except Exception as e:
-            logger.error(f"Error initializing Elasticsearch: {e}")
-            return False
-
-    def _index_all_metadata(self):
-        """Index all metadata into Elasticsearch"""
-        try:
-            if not self.metadata:
-                logger.info("No metadata to index")
-                return
-                
-            # Collect all metadata as documents
-            documents = list(self.metadata.values())
-            
-            # Bulk index documents
-            result = self.es_client.bulk_index(documents)
-            if result:
-                logger.info(f"Successfully indexed {len(documents)} documents in Elasticsearch")
-            else:
-                logger.error("Failed to index documents in Elasticsearch")
-        except Exception as e:
-            logger.error(f"Error indexing metadata: {e}")
 
     def _mask_api_key(self, key):
         if not key or len(key) < 8:
@@ -133,17 +73,133 @@ class SearchEngine:
         # Show only first 4 and last 4 characters
         return f"{key[:4]}...{key[-4:]}"
 
-    def load_metadata(self) -> Dict:
-        """Load metadata from file."""
-        try:
-            metadata_path = config.BASE_DIR / "metadata.json"
-            if metadata_path.exists():
-                with open(metadata_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+    def load_metadata(self):
+        """Load metadata from JSON file or initialize empty dict."""
+        metadata_path = Path(config.BASE_DIR) / "metadata.json"
+        if metadata_path.exists():
+            try:
+                logger.info("Loading metadata from %s", metadata_path)
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+                logger.info("Loaded metadata for %d images", len(metadata))
+                
+                # Build the search index for faster lookups
+                self._build_search_index(metadata)
+                
+                return metadata
+            except Exception as e:
+                logger.error("Error loading metadata: %s", e, exc_info=True)
+                return {}
+        else:
+            logger.info("No metadata file found, initializing empty metadata")
             return {}
-        except (OSError, json.JSONDecodeError) as e:
-            logger.error("Error loading metadata: %s", e)
-            return {}
+    
+    def _build_search_index(self, metadata):
+        """
+        Build an inverted index for faster text search.
+        
+        This creates a dictionary mapping words to lists of image IDs
+        containing those words in various fields.
+        """
+        logger.info("Building search index for metadata")
+        self.search_index = {}
+        
+        # Weights for different fields to prioritize matches
+        # Higher number = higher priority in results
+        field_weights = {
+            "patterns.primary_pattern": 5.0,
+            "patterns.main_theme": 4.0,
+            "patterns.keywords": 3.0,
+            "colors.dominant_colors.name": 2.0,
+            "filename": 1.5
+        }
+        
+        # Index each metadata entry
+        for image_path, entry in metadata.items():
+            # Get the image ID (using path as fallback)
+            image_id = entry.get('id', image_path)
+            
+            # Index each field with its weight
+            for field_path, weight in field_weights.items():
+                # Get the value using nested field path
+                value = self._get_nested_field(entry, field_path)
+                
+                # Skip if no value found
+                if not value:
+                    continue
+                    
+                # Handle different value types
+                if isinstance(value, list):
+                    # For lists (like keywords), index each item
+                    for item in value:
+                        if isinstance(item, str):
+                            self._index_text(item, image_id, weight)
+                elif isinstance(value, str):
+                    # For strings, index the full text
+                    self._index_text(value, image_id, weight)
+        
+        # Get stats about the index
+        total_keys = len(self.search_index)
+        total_entries = sum(len(entries) for entries in self.search_index.values())
+        logger.info(f"Search index built with {total_keys} unique terms and {total_entries} total entries")
+    
+    def _get_nested_field(self, data, field_path):
+        """Get a value from a nested dictionary using dot notation path."""
+        if not data or not field_path:
+            return None
+            
+        parts = field_path.split('.')
+        value = data
+        
+        for part in parts:
+            if isinstance(value, dict) and part in value:
+                value = value[part]
+            else:
+                return None
+                
+        return value
+    
+    def _index_text(self, text, image_id, weight=1.0):
+        """
+        Index a text string by tokenizing it and mapping tokens to image IDs.
+        Also indexes bigrams (2-word phrases) for phrase matching.
+        """
+        if not text or not isinstance(text, str):
+            return
+            
+        # Normalize text: lowercase and remove special chars
+        text = text.lower()
+        text = re.sub(r'[^\w\s]', ' ', text)
+        
+        # Tokenize
+        words = text.split()
+        
+        # Index individual words
+        for word in words:
+            if len(word) > 2:  # Skip very short words
+                if word not in self.search_index:
+                    self.search_index[word] = {}
+                
+                # Store the image ID with its weight for this term
+                # If already indexed, use the higher weight
+                self.search_index[word][image_id] = max(
+                    weight, 
+                    self.search_index[word].get(image_id, 0)
+                )
+        
+        # Index bigrams for phrase matching
+        for i in range(len(words) - 1):
+            if len(words[i]) > 2 and len(words[i+1]) > 2:
+                bigram = f"{words[i]} {words[i+1]}"
+                if bigram not in self.search_index:
+                    self.search_index[bigram] = {}
+                
+                # Give bigrams a slightly higher weight than individual terms
+                bigram_weight = weight * 1.2
+                self.search_index[bigram][image_id] = max(
+                    bigram_weight, 
+                    self.search_index[bigram].get(image_id, 0)
+                )
 
     def save_metadata(self):
         """Save metadata to file."""
@@ -168,6 +224,76 @@ class SearchEngine:
         else:
             logger.warning("Attempted to set empty API key")
 
+    def _load_clip_model(self):
+        """Lazy load CLIP model when needed."""
+        if self._clip_model_loaded:
+            return True
+            
+        try:
+            logger.info("Loading CLIP model for embeddings...")
+            from transformers import CLIPProcessor, CLIPModel
+            
+            self.clip_processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
+            self.clip_model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
+            
+            # Move to GPU if available
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+            self.clip_model = self.clip_model.to(self.device)
+            
+            self._clip_model_loaded = True
+            logger.info(f"CLIP model loaded successfully (using {self.device})")
+            return True
+        except Exception as e:
+            logger.error(f"Error loading CLIP model: {e}")
+            self._clip_model_loaded = False
+            return False
+
+    def cleanup_resources(self):
+        """Clean up resources to free memory."""
+        try:
+            # Clean up CLIP model to free GPU memory
+            if self._clip_model_loaded and self.clip_model is not None:
+                logger.info("Cleaning up CLIP model resources")
+                self.clip_model = None
+                self.clip_processor = None
+                
+                # Explicitly run garbage collector
+                import gc
+                gc.collect()
+                
+                # Clear CUDA cache if using GPU
+                if self.device == "cuda":
+                    try:
+                        torch.cuda.empty_cache()
+                        logger.info("CUDA cache cleared")
+                    except Exception as e:
+                        logger.error(f"Error clearing CUDA cache: {e}")
+                
+                self._clip_model_loaded = False
+            
+            # Clear any temp files
+            temp_dir = Path(config.BASE_DIR) / "temp"
+            if temp_dir.exists():
+                import shutil
+                try:
+                    for file in temp_dir.glob("*"):
+                        if file.is_file():
+                            file.unlink()
+                        elif file.is_dir():
+                            shutil.rmtree(file)
+                    logger.info("Temporary files cleaned up")
+                except Exception as e:
+                    logger.error(f"Error cleaning up temporary files: {e}")
+            
+            # Force save any pending metadata
+            self.save_metadata()
+            
+            logger.info("Resources cleaned up successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Error cleaning up resources: {e}")
+            return False
+
     def get_image_embedding(self, image: Image.Image) -> np.ndarray:
         """
         Generate CLIP embeddings for an image.
@@ -179,14 +305,16 @@ class SearchEngine:
             Normalized embedding vector as numpy array
         """
         try:
+            # Make sure CLIP model is loaded
+            if not self._clip_model_loaded:
+                if not self._load_clip_model():
+                    logger.error("Failed to load CLIP model")
+                    return None
+                
             # Ensure the image is in RGB mode
             if image.mode != "RGB":
                 image = image.convert("RGB")
                 logger.debug("Converted image to RGB mode for CLIP processing")
-                
-            if self.clip_model is None or self.clip_processor is None:
-                logger.error("CLIP model or processor not initialized correctly")
-                return None
                 
             # Process image through CLIP
             with torch.no_grad():
@@ -212,6 +340,9 @@ class SearchEngine:
                 except RuntimeError as e:
                     if "CUDA out of memory" in str(e):
                         logger.error("CUDA out of memory error. Trying with CPU fallback.")
+                        # Clean up GPU memory
+                        torch.cuda.empty_cache()
+                        
                         # Try with CPU fallback
                         self.device = "cpu"
                         self.clip_model = self.clip_model.to("cpu")
@@ -284,22 +415,27 @@ class SearchEngine:
             file_stats = image_path.stat()
             
             # Generate embedding for similarity search - use the original image for best quality
-            logger.info(f"Generating embedding for {image_path.name}")
-            try:
-                # Use the full resolution image for embedding generation
-                original_image = Image.open(image_path).convert('RGB')
-                embedding = self.get_image_embedding(original_image)
-                
-                if embedding is None:
-                    logger.error(f"Failed to generate embedding for {image_path.name}")
-                elif not isinstance(embedding, np.ndarray):
-                    logger.error(f"Invalid embedding type for {image_path.name}: {type(embedding)}")
+            embedding = None
+            # Only generate embeddings if the CLIP model is available or can be loaded
+            if self._clip_model_loaded or self._load_clip_model():
+                logger.info(f"Generating embedding for {image_path.name}")
+                try:
+                    # Use the full resolution image for embedding generation
+                    original_image = Image.open(image_path).convert('RGB')
+                    embedding = self.get_image_embedding(original_image)
+                    
+                    if embedding is None:
+                        logger.error(f"Failed to generate embedding for {image_path.name}")
+                    elif not isinstance(embedding, np.ndarray):
+                        logger.error(f"Invalid embedding type for {image_path.name}: {type(embedding)}")
+                        embedding = None
+                    else:
+                        logger.info(f"Successfully generated embedding for {image_path.name} with shape {embedding.shape}")
+                except Exception as e:
+                    logger.error(f"Error during embedding generation for {image_path.name}: {str(e)}", exc_info=True)
                     embedding = None
-                else:
-                    logger.info(f"Successfully generated embedding for {image_path.name} with shape {embedding.shape}")
-            except Exception as e:
-                logger.error(f"Error during embedding generation for {image_path.name}: {str(e)}", exc_info=True)
-                embedding = None
+            else:
+                logger.warning(f"Skipping embedding generation for {image_path.name} due to CLIP model unavailability")
             
             metadata = {
                 'id': str(image_path.stem),
@@ -332,25 +468,6 @@ class SearchEngine:
             # Add to metadata store
             self.metadata[str(image_path)] = metadata
             self.save_metadata()
-            
-            # Index in Elasticsearch if available
-            if self.use_elasticsearch:
-                if 'embedding' not in metadata or metadata['embedding'] is None:
-                    logger.warning(f"Indexing {image_path.name} in Elasticsearch without embedding")
-                
-                result = self.es_client.index_document(metadata)
-                if result:
-                    logger.info(f"Successfully indexed {image_path.name} in Elasticsearch")
-                else:
-                    logger.error(f"Failed to index {image_path.name} in Elasticsearch")
-                    
-                    # Try to identify why indexing failed
-                    if not self.es_client.is_connected():
-                        logger.error("Elasticsearch connection lost")
-                    elif not self.es_client.index_exists():
-                        logger.error("Elasticsearch index does not exist")
-            else:
-                logger.info(f"Elasticsearch not available, skipping indexing for {image_path.name}")
             
             logger.info("Image processed successfully: %s", image_path)
             return metadata
@@ -572,7 +689,7 @@ class SearchEngine:
 
     def search(self, query: str, k: int = 10, session_id: str = None, user_id: str = None) -> List[Dict]:
         """
-        Search for images matching the query. Uses Elasticsearch if available, or falls back to in-memory search.
+        Search for images matching the query using in-memory search.
         
         Args:
             query: The search query string
@@ -598,37 +715,22 @@ class SearchEngine:
             self.log_search_query(query, len(cached_results), search_time, session_id, user_id)
             return cached_results
         
-        # Cache miss, perform search
-        if self.use_elasticsearch and self.es_client.is_connected():
-            logger.info(f"Using Elasticsearch to search for: '{query}'")
-            # Use elasticsearch search
-            results = self.es_client.search(query, limit=k)
-            
-            # Cache the results
-            self.cache.set(cache_key, results)
-            
-            # Log the search for analytics
-            search_time = int(time.time()) - search_start_time
-            self.log_search_query(query, len(results), search_time, session_id, user_id)
-            
-            return results
-        else:
-            logger.warning("Elasticsearch is not available. Falling back to in-memory search.")
-            # Fall back to in-memory search
-            results = self._in_memory_search(query, k)
-            
-            # Cache the results
-            self.cache.set(cache_key, results)
-            
-            # Log the search for analytics
-            search_time = int(time.time()) - search_start_time
-            self.log_search_query(query, len(results), search_time, session_id, user_id)
-            
-            return results
+        # Cache miss, perform in-memory search
+        logger.info(f"Using in-memory search for: '{query}'")
+        results = self._in_memory_search(query, k)
+        
+        # Cache the results
+        self.cache.set(cache_key, results)
+        
+        # Log the search for analytics
+        search_time = int(time.time()) - search_start_time
+        self.log_search_query(query, len(results), search_time, session_id, user_id)
+        
+        return results
 
     def _in_memory_search(self, query: str, k: int = 10) -> List[Dict]:
         """
-        Perform in-memory search when Elasticsearch is not available
+        Perform in-memory search for the given query
         
         Args:
             query: Search query string
@@ -649,162 +751,12 @@ class SearchEngine:
             )
             return results[:k]
         
-        # Calculate match scores for all images
-        scored_results = []
-        
-        # Lowercase the query for case-insensitive matching
-        query = query.lower()
-        
-        # Split query into terms for term matching
-        query_terms = [term.strip() for term in query.split() if term.strip()]
-        
-        for doc in self.metadata.values():
-            # Skip if missing required data
-            if not doc.get("patterns") or not doc.get("colors"):
-                continue
-            
-            # Start with a base score
-            score = 0.0
-            pattern_matches = 0
-            
-            # Extract pattern info
-            patterns = doc.get("patterns", {})
-            
-            # Check if this is a fallback analysis
-            is_fallback = doc.get("has_fallback_analysis", False) or patterns.get("is_fallback", False)
-            
-            # Get the main theme and primary pattern
-            main_theme = str(patterns.get("main_theme", "")).lower()
-            primary_pattern = str(patterns.get("primary_pattern", "")).lower()
-            
-            # Get content details and style info
-            content_details = patterns.get("content_details", [])
-            stylistic_attributes = patterns.get("stylistic_attributes", [])
-            prompt = patterns.get("prompt", {}).get("final_prompt", "").lower()
-            style_keywords = [str(kw).lower() for kw in patterns.get("style_keywords", [])]
-            
-            # Get confidence scores
-            main_theme_confidence = patterns.get("main_theme_confidence", 0.8)
-            pattern_confidence = patterns.get("pattern_confidence", 0.7)
-            
-            # Check exact matches on main theme and primary pattern
-            if query in main_theme:
-                score += 10.0 * main_theme_confidence
-                pattern_matches += 1
-            
-            if query in primary_pattern:
-                score += 8.0 * pattern_confidence
-                pattern_matches += 1
-            
-            # Check content details for matches
-            for item in content_details:
-                item_name = str(item.get("name", "")).lower()
-                item_confidence = item.get("confidence", 0.7)
-                
-                if query in item_name:
-                    score += 7.0 * item_confidence
-                    pattern_matches += 1
-                
-                # Check for partial term matches
-                for term in query_terms:
-                    if term in item_name:
-                        score += 3.0 * item_confidence
-                        pattern_matches += 1
-            
-            # Check stylistic attributes for matches
-            for item in stylistic_attributes:
-                item_name = str(item.get("name", "")).lower()
-                item_confidence = item.get("confidence", 0.7)
-                
-                if query in item_name:
-                    score += 6.0 * item_confidence
-                    pattern_matches += 1
-                
-                # Check for partial term matches
-                for term in query_terms:
-                    if term in item_name:
-                        score += 2.5 * item_confidence
-                        pattern_matches += 1
-            
-            # Check style keywords
-            for keyword in style_keywords:
-                if query in keyword:
-                    score += 5.0
-                    pattern_matches += 1
-                
-                # Check for partial term matches
-                for term in query_terms:
-                    if term in keyword:
-                        score += 2.0
-                        pattern_matches += 1
-            
-            # Check the prompt
-            if query in prompt:
-                score += 4.0
-                pattern_matches += 1
-            
-            # Check for partial term matches in prompt
-            for term in query_terms:
-                if term in prompt:
-                    score += 1.5
-                    pattern_matches += 1
-            
-            # Check dominant colors
-            colors = doc.get("colors", {})
-            color_matches = 0
-            
-            for color in colors.get("dominant_colors", []):
-                color_name = str(color.get("name", "")).lower()
-                proportion = color.get("proportion", 0.0)
-                
-                if query in color_name:
-                    score += 3.0 * proportion
-                    color_matches += 1
-                
-                # Check for partial term matches
-                for term in query_terms:
-                    if term in color_name:
-                        score += 1.0 * proportion
-                        color_matches += 1
-            
-            # Add bonus if we matched both patterns and colors
-            if pattern_matches > 0 and color_matches > 0:
-                score += 2.0
-            
-            # Apply recency boost
-            recency_boost = 1.0
-            timestamp = doc.get("timestamp", 0)
-            current_time = int(time.time())
-            days_old = (current_time - timestamp) / (24 * 60 * 60)
-            if days_old < 30:  # Less than 30 days old
-                recency_boost = 1.0 + (1.0 - days_old / 30) * 0.5  # Up to 50% boost for very recent
-            
-            # Apply penalties for fallback results
-            fallback_penalty = 0.75 if is_fallback else 1.0
-            
-            # Calculate final score
-            final_score = score * recency_boost * fallback_penalty
-            
-            # Only include results that have some relevance
-            if final_score > 0:
-                similarity = min(1.0, final_score / 20.0)  # Normalize to 0-1 range
-                
-                # Add to results with normalized score
-                result = doc.copy()
-                result["similarity"] = similarity
-                result["raw_score"] = final_score
-                scored_results.append(result)
-        
-        # Sort by score (descending)
-        scored_results.sort(key=lambda x: x.get("similarity", 0), reverse=True)
-        
-        # Return top k results
-        return scored_results[:k]
+        # Use the metadata_search method which provides more comprehensive text search
+        return self.metadata_search(query, limit=k)
 
     def delete_image(self, image_path: str) -> bool:
         """
-        Delete image metadata and remove from Elasticsearch if enabled.
-        Invalidates the cache to ensure consistency.
+        Delete image metadata from memory and invalidate the cache.
         
         Args:
             image_path: Path to the image to delete (relative to upload dir)
@@ -830,34 +782,14 @@ class SearchEngine:
             
             # Remove from in-memory metadata using the correct key
             if key and key in self.metadata:
-                metadata = self.metadata.pop(key)
+                self.metadata.pop(key)
                 self.save_metadata()
                 
-                # Remove from Elasticsearch if enabled
-                if self.use_elasticsearch:
-                    doc_id = metadata.get("id", os.path.basename(key))
-                    self.es_client.delete_document(doc_id)
-                    
                 # Invalidate cache
                 self.cache.invalidate_all()
                     
                 logger.info(f"Deleted image metadata for: {filename}")
                 return True
-            elif filename:
-                # Try to find by ID or filename in Elasticsearch
-                if self.use_elasticsearch:
-                    # Try to delete by filename as ID
-                    self.es_client.delete_document(filename)
-                    # Also try by filename without extension
-                    name_without_ext = os.path.splitext(filename)[0]
-                    self.es_client.delete_document(name_without_ext)
-                    # Invalidate cache
-                    self.cache.invalidate_all()
-                    logger.info(f"Deleted image from Elasticsearch by filename: {filename}")
-                    return True
-                
-                logger.warning(f"Image not found in metadata by filename: {filename}")
-                return False
             else:
                 logger.warning(f"Image not found in metadata: {image_path}")
                 return False
@@ -924,18 +856,7 @@ class SearchEngine:
             # Remove the entries for missing files
             for rel_path in entries_to_remove:
                 if rel_path in self.metadata:
-                    metadata = self.metadata.pop(rel_path)
-                    
-                    # Remove from Elasticsearch if enabled
-                    if self.use_elasticsearch:
-                        doc_id = metadata.get("id", rel_path) 
-                        filename = metadata.get("filename", "")
-                        # Try multiple ways to delete from Elasticsearch
-                        self.es_client.delete_document(doc_id)
-                        if filename:
-                            self.es_client.delete_document(filename)
-                            name_without_ext = os.path.splitext(filename)[0]
-                            self.es_client.delete_document(name_without_ext)
+                    self.metadata.pop(rel_path)
             
             # Save the updated metadata if any entries were removed
             if entries_to_remove or thumbnails_recreated > 0:
@@ -952,8 +873,7 @@ class SearchEngine:
 
     def update_image_metadata(self, image_path: str, new_metadata: Dict[str, Any]) -> bool:
         """
-        Update image metadata and in Elasticsearch if enabled.
-        Invalidates the cache to ensure consistency.
+        Update image metadata and invalidate the cache to ensure consistency.
         
         Args:
             image_path: Path to the image to update (relative to upload dir)
@@ -969,11 +889,6 @@ class SearchEngine:
                 self.metadata[image_path].update(new_metadata)
                 self.save_metadata()
                 
-                # Update in Elasticsearch if enabled
-                if self.use_elasticsearch:
-                    doc_id = self.metadata[image_path].get("id", image_path)
-                    self.es_client.update_document(doc_id, self.metadata[image_path])
-                    
                 # Invalidate cache
                 self.cache.invalidate_all()
                     
@@ -1158,30 +1073,9 @@ class SearchEngine:
                 logger.error("Failed to generate image embedding")
                 return []
                 
-            # Use Elasticsearch for similarity search if available
-            if self.use_elasticsearch and self.es_client.is_connected():
-                logger.info("Using Elasticsearch for similarity search")
-                
-                # Determine the exclude ID if needed
-                exclude_id = image_id if exclude_source else None
-                
-                # Perform similarity search
-                results = self.es_client.find_similar(
-                    embedding=embedding.tolist(),
-                    text_query=text_query,
-                    limit=k,
-                    min_similarity=0.1,
-                    exclude_id=exclude_id,
-                    image_weight=image_weight,
-                    text_weight=text_weight
-                )
-                
-                logger.info(f"Found {len(results)} similar images")
-                return results
-            else:
-                logger.warning("Elasticsearch is not available. Falling back to in-memory similarity search.")
-                # Implement a simple in-memory cosine similarity search
-                return self._in_memory_similarity_search(embedding, text_query, k, exclude_source, image_id)
+            # Perform in-memory similarity search
+            logger.info("Using in-memory similarity search")
+            return self._in_memory_similarity_search(embedding, text_query, k, exclude_source, image_id)
         except Exception as e:
             logger.error(f"Error finding similar images: {str(e)}", exc_info=True)
             return []
@@ -1286,25 +1180,20 @@ class SearchEngine:
         return min(1.0, score / 10.0) 
 
     def reindex_all_with_embeddings(self, force=False):
-        """
-        Regenerate embeddings for all images and reindex them in Elasticsearch.
-        
-        Args:
-            force: If True, regenerate all embeddings even if they already exist
-                  If False, only regenerate for images missing embeddings
-                  
-        Returns:
-            Dict with statistics about the reindexing process
-        """
-        if not self.use_elasticsearch:
-            logger.error("Elasticsearch is not available, cannot reindex")
-            return {"error": "Elasticsearch not available", "success": False}
+        """Regenerate embeddings for all images."""
+        # Check if CLIP model can be loaded first to avoid processing images when embeddings can't be generated
+        if not self._clip_model_loaded and not self._load_clip_model():
+            logger.error("Cannot reindex embeddings as CLIP model failed to load")
+            return {
+                "error": "CLIP model failed to load",
+                "success": False,
+                "total": 0,
+                "processed": 0,
+                "success": 0,
+                "failed": 0
+            }
             
-        if not self.metadata:
-            logger.warning("No metadata to reindex")
-            return {"error": "No metadata found", "success": False}
-            
-        logger.info(f"Starting reindexing of {len(self.metadata)} images with embeddings")
+        logger.info(f"Starting regeneration of embeddings for {len(self.metadata)} images")
         
         # Statistics to track progress
         stats = {
@@ -1317,9 +1206,6 @@ class SearchEngine:
             "invalid_path": 0
         }
         
-        # List to collect documents for bulk indexing
-        documents_to_index = []
-        
         # Process each image
         for image_path_str, metadata in self.metadata.items():
             stats["processed"] += 1
@@ -1329,8 +1215,6 @@ class SearchEngine:
                 if not force and 'embedding' in metadata and metadata['embedding'] is not None:
                     logger.info(f"Image {image_path_str} already has embedding and force=False")
                     stats["already_had_embedding"] += 1
-                    # Still add to documents to reindex
-                    documents_to_index.append(metadata)
                     continue
                 
                 # Convert string path to Path object
@@ -1363,9 +1247,6 @@ class SearchEngine:
                     # Update in-memory metadata store
                     self.metadata[image_path_str] = metadata
                     
-                    # Add to list for bulk indexing
-                    documents_to_index.append(metadata)
-                    
                     stats["success"] += 1
                     logger.info(f"Successfully regenerated embedding for {image_path.name}")
                 except Exception as e:
@@ -1374,139 +1255,137 @@ class SearchEngine:
             except Exception as e:
                 logger.error(f"Unexpected error processing {image_path_str}: {str(e)}", exc_info=True)
                 stats["failed"] += 1
+                
+            # Save metadata periodically (every 10 processed)
+            if stats["processed"] % 10 == 0:
+                self.save_metadata()
+                logger.info(f"Progress: {stats['processed']}/{stats['total']} images processed")
         
         # Save updated metadata
         self.save_metadata()
         logger.info(f"Saved updated metadata with {stats['success']} new embeddings")
         
-        # Bulk index to Elasticsearch
-        if documents_to_index:
-            logger.info(f"Bulk indexing {len(documents_to_index)} documents to Elasticsearch")
-            result = self.es_client.bulk_index(documents_to_index)
-            if result:
-                logger.info(f"Successfully bulk indexed {len(documents_to_index)} documents")
-                stats["bulk_index_success"] = True
-            else:
-                logger.error("Failed to bulk index documents")
-                stats["bulk_index_success"] = False
-        else:
-            logger.warning("No documents to index after processing")
-            stats["bulk_index_success"] = False
+        # Invalidate cache
+        self.cache.invalidate_all()
+        
+        # Clean up resources after batch processing
+        self.cleanup_resources()
         
         # Return statistics
-        stats["success_overall"] = stats["success"] > 0 and stats.get("bulk_index_success", False)
-        return stats 
+        stats["success_overall"] = stats["success"] > 0
+        return stats
 
-    def metadata_search(self, query: str, limit: int = 20, min_similarity: float = 0.1) -> List[Dict[str, Any]]:
+    def metadata_search(self, query, max_results=100, filter_criteria=None):
         """
-        Search images directly from the metadata without using Elasticsearch.
-        This is a fallback method when Elasticsearch is not available.
+        Search images directly from metadata using the inverted index.
         
         Args:
-            query: Search query string
-            limit: Maximum number of results to return
-            min_similarity: Not used in this implementation
+            query: Search text
+            max_results: Maximum number of results to return
+            filter_criteria: Dictionary of metadata fields to filter results
             
         Returns:
-            List of matching documents
+            List of matching image metadata
         """
-        logger.info(f"Performing metadata search for: '{query}'")
+        # Check for cached results first
+        cache_key = f"metadata_search:{query}:{max_results}:{json.dumps(filter_criteria) if filter_criteria else 'none'}"
+        cached_results = self.cache.get(cache_key)
+        if cached_results:
+            logger.info(f"Using cached results for query: {query}")
+            return cached_results
+            
+        # Start timing search
+        start_time = time.time()
         
-        # Clean and lowercase the query for case-insensitive matching
-        query = query.strip().lower()
-        if not query:
+        # Handle empty query or missing metadata
+        if not query or not self.metadata:
             return []
         
-        # If the metadata is not loaded, try to load it
-        if not self.metadata:
-            logger.info("Metadata not loaded, attempting to load from file...")
-            self.metadata = self.load_metadata()
+        # Handle wildcard queries
+        if query == "*" or query == "all":
+            # For wildcard, get all items (respecting filter)
+            results = self._filter_metadata(list(self.metadata.values()), filter_criteria)
+            # Sort by timestamp, newest first
+            results = sorted(results, key=lambda x: x.get('timestamp', 0), reverse=True)
+            results = results[:max_results]
+            # Cache these results
+            self.cache.set(cache_key, results)
             
-        if not self.metadata:
-            logger.warning("No metadata available for search")
-            return []
+            elapsed = time.time() - start_time
+            logger.info(f"Wildcard search returned {len(results)} results in {elapsed:.3f}s")
+            
+            return results
+            
+        # Normalize query and split into terms
+        query = query.lower()
+        query = re.sub(r'[^\w\s]', ' ', query)
+        query_terms = [term for term in query.split() if len(term) > 2]
         
-        # List of fields to search in, with their priority weights
-        search_fields = [
-            # Higher priority fields
-            ("patterns.primary_pattern", 5),
-            ("patterns.main_theme", 4),
-            ("patterns.style_keywords", 3),
-            
-            # Medium priority fields
-            ("patterns.secondary_patterns", 2),
-            ("patterns.content_details", 2),
-            ("colors.dominant_colors", 2),
-            
-            # Lower priority fields
-            ("patterns.prompt.final_prompt", 1),
-            ("filename", 1)
-        ]
+        # Create a dictionary to store relevance scores for each image
+        scores = {}
         
-        # Results with their scores
+        # First try to match the full query as is (including phrases)
+        if query in self.search_index:
+            for image_id, weight in self.search_index[query].items():
+                # Higher weighting for exact phrase matches
+                scores[image_id] = weight * 2.0
+        
+        # Then search for individual terms and their weights
+        for term in query_terms:
+            if term in self.search_index:
+                for image_id, weight in self.search_index[term].items():
+                    # Add to existing score or create new entry
+                    scores[image_id] = scores.get(image_id, 0) + weight
+        
+        # Get full metadata for matched images
         results = []
+        for image_path, item in self.metadata.items():
+            image_id = item.get('id', image_path)
+            
+            # If this image has a score, add it to results with the score
+            if image_id in scores:
+                item_copy = item.copy()  # Avoid modifying original
+                item_copy['_score'] = scores[image_id]
+                results.append(item_copy)
         
-        # Search through each image metadata
-        for image_id, metadata in self.metadata.items():
-            score = 0
-            matches = []
-            
-            # Check each field
-            for field_path, weight in search_fields:
-                # Handle nested fields using dot notation
-                value = metadata
-                for part in field_path.split('.'):
-                    if isinstance(value, dict) and part in value:
-                        value = value[part]
-                    else:
-                        value = None
-                        break
-                
-                # Skip if field doesn't exist
-                if value is None:
-                    continue
-                
-                # Check for matches based on field type
-                if isinstance(value, str):
-                    # Simple text field (case insensitive)
-                    if query in value.lower():
-                        score += weight * 10
-                        matches.append(f"Found '{query}' in {field_path}")
-                
-                elif isinstance(value, list):
-                    # List of strings or objects
-                    if all(isinstance(item, str) for item in value):
-                        # List of strings (e.g., keywords)
-                        for item in value:
-                            if query in item.lower():
-                                score += weight * 5
-                                matches.append(f"Found '{query}' in {field_path} item: {item}")
-                    
-                    elif all(isinstance(item, dict) for item in value):
-                        # List of objects (e.g., dominant_colors, secondary_patterns)
-                        for item in value:
-                            # Check 'name' field in each object
-                            if 'name' in item and isinstance(item['name'], str) and query in item['name'].lower():
-                                score += weight * 5
-                                matches.append(f"Found '{query}' in {field_path}.name: {item['name']}")
-            
-            # If we found a match, add to results
-            if score > 0:
-                # Make a copy of the metadata to avoid modifying the original
-                result = metadata.copy()
-                
-                # Add search-specific fields
-                result['similarity'] = min(100, score)  # Cap at 100
-                result['raw_score'] = score
-                result['search_matches'] = matches
-                
-                results.append(result)
+        # Apply filters if provided
+        if filter_criteria:
+            results = self._filter_metadata(results, filter_criteria)
         
         # Sort by score (highest first)
-        results.sort(key=lambda x: x.get('raw_score', 0), reverse=True)
+        results = sorted(results, key=lambda x: x.get('_score', 0), reverse=True)
         
-        # Limit the number of results
-        results = results[:limit]
+        # Limit results
+        results = results[:max_results]
         
-        logger.info(f"Metadata search found {len(results)} results for query: '{query}'")
-        return results 
+        # Cache the results
+        self.cache.set(cache_key, results)
+        
+        # Log and return
+        elapsed = time.time() - start_time
+        logger.info(f"Metadata search for '{query}' returned {len(results)} results in {elapsed:.3f}s")
+        
+        return results
+
+    def _filter_metadata(self, metadata_list, filter_criteria):
+        """Filter metadata items based on criteria."""
+        if not filter_criteria:
+            return metadata_list
+            
+        filtered = []
+        for item in metadata_list:
+            match = True
+            
+            # Apply each filter criteria
+            for field, value in filter_criteria.items():
+                field_value = self._get_nested_field(item, field)
+                
+                # Skip items that don't match
+                if field_value is None or field_value != value:
+                    match = False
+                    break
+            
+            if match:
+                filtered.append(item)
+                
+        return filtered 
