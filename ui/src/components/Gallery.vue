@@ -14,6 +14,17 @@
       </button>
       
       <button 
+        class="purge-button" 
+        @click="purgeInvalidImages"
+        title="Remove all images with invalid thumbnails"
+      >
+        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Clean Invalid Images
+      </button>
+      
+      <button 
         class="reset-button" 
         @click="confirmReset"
         title="WARNING: This will delete ALL images"
@@ -70,7 +81,8 @@
         class="gallery-item"
         :class="{
           'is-uploading': image.isUploading,
-          'is-searching': image.isSearching
+          'is-searching': image.isSearching,
+          'invalid-thumbnail': image.invalid_thumbnail || image.failed_to_load
         }"
         draggable="true"
         @dragstart="handleDragStart(image, $event)"
@@ -241,32 +253,35 @@ const showResetConfirm = ref(false)
 const isResetting = ref(false)
 
 const images = computed(() => {
-  // Get valid images currently in the store
-  const currentImages = imageStore.getValidImages() || [];
-
   // Check if a search (text or similarity) is active
   const searchIsActive = imageStore.searchQuery !== '' || imageStore.searchQueryReferenceImage !== null;
 
   if (searchIsActive) {
-    // If search is active, use the order provided by the store.
-    // The store's `images` ref should already contain relevance-sorted results.
-    return currentImages;
+    // If search is active, use searchResults instead of all images
+    // This is where the bug was - it was returning all valid images instead of filtered search results
+    console.log(`Gallery loading ${imageStore.searchResults.length} search results`);
+    return imageStore.searchResults;
   } else {
     // Default view: sort by timestamp (newest first)
-    // Create a new sorted array to avoid mutating the store's array directly
-    return [...currentImages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    // Get valid images and sort them
+    const validImages = imageStore.getValidImages() || [];
+    console.log(`Gallery loading ${validImages.length} images (default view)`);
+    return [...validImages].sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
   }
 })
 const loading = computed(() => imageStore.loading)
-const searchActive = computed(() => imageStore.searchQuery !== '')
+const searchActive = computed(() => {
+  return imageStore.searchQuery !== '' || imageStore.searchQueryReferenceImage !== null;
+})
 
 onMounted(async () => {
   try {
     // Clear any stale cache
     await imageStore.clearImageCache();
     
-    // Fetch fresh images
-    await imageStore.fetchImages(100);
+    // Fetch fresh images - use 0 to get all images
+    await imageStore.fetchImages(0);
+    console.log(`Initially loaded ${imageStore.images.length} images`);
   } catch (error) {
     // Only log errors in development
     if (isDev) {
@@ -357,26 +372,31 @@ const handleImageError = (image) => {
   const filename = getFileName(imagePath);
   
   try {
+    // Mark this image as failed
+    if (image) {
+      // Set flags on the image object to avoid re-loading
+      image.invalid_thumbnail = true;
+      image.failed_to_load = true;
+    }
+    
+    // Find the image in the main store and mark it
+    const storeImage = imageStore.images.value.find(img => {
+      const imgPath = img.thumbnail_path || img.path || img.original_path || '';
+      return getFileName(imgPath) === filename;
+    });
+    
+    if (storeImage) {
+      storeImage.invalid_thumbnail = true;
+      storeImage.failed_to_load = true;
+    }
+    
     // Clear cache for this image
     imageStore.clearImageCache(filename);
     
-    // Remove the failed image from UI
-    if (imageStore.images.value) {
-      imageStore.images.value = imageStore.images.value.filter(img => {
-        const imgPath = img.thumbnail_path || img.path || img.original_path || '';
-        return getFileName(imgPath) !== filename;
-      });
-    }
+    // Don't remove the image from UI immediately - just mark it as invalid
+    // This prevents flickering and lets the user still see metadata
     
-    // Also remove from search results if present
-    if (imageStore.searchResults.value && imageStore.searchResults.value.length > 0) {
-      imageStore.searchResults.value = imageStore.searchResults.value.filter(img => {
-        const imgPath = img.thumbnail_path || img.path || img.original_path || '';
-        return getFileName(imgPath) !== filename;
-      });
-    }
-    
-    // If this was the reference image for search, clear search
+    // Only check if this was the reference image for search
     if (imageStore.searchQueryReferenceImage) {
       const refPath = imageStore.searchQueryReferenceImage.thumbnail_path || 
                      imageStore.searchQueryReferenceImage.original_path || '';
@@ -471,6 +491,12 @@ const getPromptText = (prompt, truncate = false) => {
 const getThumbnailUrl = (image) => {
   if (!image) return '';
   
+  // Skip if we already know the thumbnail is invalid
+  if (image.invalid_thumbnail || image.failed_to_load) {
+    // Return a placeholder image instead
+    return 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgZmlsbD0iIzMzMzMzMyIvPjx0ZXh0IHg9IjUwJSIgeT0iNTAlIiBmb250LXNpemU9IjIwIiB0ZXh0LWFuY2hvcj0ibWlkZGxlIiBmaWxsPSIjOTk5OTk5IiBkeT0iLjNlbSI+SW1hZ2UgTm90IEZvdW5kPC90ZXh0Pjwvc3ZnPg==';
+  }
+  
   // If the image already has a full thumbnail URL, use it
   if (image.thumbnail_path && image.thumbnail_path.includes('http')) {
     return image.thumbnail_path;
@@ -518,28 +544,14 @@ const handleReset = async () => {
     // Clear any selected image
     selectedImage.value = null
     
-    // Call the nuclear option
-    const success = await imageStore.nukeEverything()
+    // Use our improved deleteAllImages function
+    const result = await deleteAllImages()
+    console.log(`Reset complete: ${result.deleted} images deleted, ${result.failed} failed`)
     
-    if (success) {
-      showResetConfirm.value = false
-      
-      // Force reload if there were issues with cached items
-      // This is more drastic but ensures a clean state
-      if (window.location.search.includes('search=') || window.location.search.includes('similar=')) {
-        // If there's a search in progress, reload without it
-        window.location.href = window.location.pathname
-        return
-      }
-      
-      // Fetch fresh empty state
-      await imageStore.fetchImages()
-      
-      // Ensure any in-memory refs to invalid images are cleaned up
-      imageStore.cleanGallery()
-    } else {
-      console.error("Failed to reset images")
-    }
+    showResetConfirm.value = false
+    
+    // No need to fetch images again - deleteAllImages already does this
+    
   } catch (error) {
     if (isDev) {
       console.error("Failed to reset images:", error)
@@ -547,6 +559,197 @@ const handleReset = async () => {
   } finally {
     isResetting.value = false
   }
+}
+
+// Custom function to delete all images one by one
+const deleteAllImages = async () => {
+  console.log("Deleting all images one by one...")
+  
+  // Get all valid images
+  const allImages = imageStore.getValidImages()
+  console.log(`Found ${allImages.length} images to delete`)
+  
+  // Set a counter for status tracking
+  let deletedCount = 0
+  let failedCount = 0
+  let processedCount = 0
+  
+  // First, clear any active search to ensure we have the full image set
+  imageStore.clearSearch()
+  
+  // Try to fetch fresh image data before deleting to ensure we have all records
+  try {
+    await imageStore.fetchImages(0)
+    // Use a safe access pattern to avoid TypeError when accessing images.value.length
+    const imagesCount = imageStore.images && imageStore.images.value ? imageStore.images.value.length : 0
+    console.log(`Refreshed image list, now have ${imagesCount} images`)
+  } catch (error) {
+    console.warn("Could not refresh image list:", error)
+  }
+  
+  // Get updated list
+  const refreshedImages = imageStore.getValidImages()
+  const imagesToProcess = refreshedImages.length > allImages.length ? refreshedImages : allImages
+  console.log(`Proceeding to delete ${imagesToProcess.length} images`)
+  
+  // Create a more robust path resolution function
+  const getImagePath = (image) => {
+    if (!image) return null
+    
+    // Try all possible path properties in order of preference
+    const pathOptions = [
+      image.original_path,
+      image.file_path,
+      image.image_path, 
+      image.path,
+      image.thumbnail_path
+    ]
+    
+    // Return the first non-empty path
+    for (const path of pathOptions) {
+      if (path && typeof path === 'string' && path.trim() !== '') {
+        return path
+      }
+    }
+    
+    // If we have an id or filename, try to construct a path
+    if (image.id) {
+      return `${imageStore.API_BASE_URL}/images/${image.id}`
+    }
+    
+    if (image.file) {
+      return `${imageStore.API_BASE_URL}/images/${image.file}`
+    }
+    
+    return null
+  }
+  
+  // Process images in batches to avoid overwhelming the API
+  const BATCH_SIZE = 5
+  const totalBatches = Math.ceil(imagesToProcess.length / BATCH_SIZE)
+  
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const startIdx = batchIndex * BATCH_SIZE
+    const endIdx = Math.min(startIdx + BATCH_SIZE, imagesToProcess.length)
+    const batch = imagesToProcess.slice(startIdx, endIdx)
+    
+    console.log(`Processing batch ${batchIndex + 1}/${totalBatches} (${batch.length} images)`)
+    
+    // Process each image in the batch
+    const batchPromises = batch.map(async (image) => {
+      try {
+        // Get a valid path for the image
+        const path = getImagePath(image)
+        
+        if (!path) {
+          console.warn("Skipping image with no path", image)
+          return { success: false, error: "No valid path" }
+        }
+        
+        // Delete the image
+        await imageStore.deleteImage(path)
+        return { success: true }
+      } catch (error) {
+        console.error("Failed to delete image:", error)
+        return { success: false, error: error.message }
+      }
+    })
+    
+    // Wait for all batch operations to complete
+    const results = await Promise.allSettled(batchPromises)
+    
+    // Count results
+    results.forEach(result => {
+      processedCount++
+      
+      if (result.status === 'fulfilled') {
+        if (result.value.success) {
+          deletedCount++
+        } else {
+          failedCount++
+        }
+      } else {
+        failedCount++
+        console.error("Promise rejected:", result.reason)
+      }
+    })
+    
+    // Update progress
+    console.log(`Progress: ${processedCount}/${imagesToProcess.length} (${deletedCount} deleted, ${failedCount} failed)`)
+    
+    // Small delay between batches to reduce server load
+    if (batchIndex < totalBatches - 1) {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+  }
+  
+  console.log(`Deletion complete. Deleted: ${deletedCount}, Failed: ${failedCount}`)
+  
+  // Final operations to ensure clean state
+  try {
+    // Clear browser cache
+    await imageStore.clearImageCache()
+    
+    // Clean gallery to ensure UI is updated
+    try {
+      await imageStore.cleanGallery()
+    } catch (err) {
+      // Ignore cleanGallery errors - the server might be empty
+      console.log("Gallery cleanup completed with possible warnings (this is normal after deletion)")
+    }
+    
+    // Try to fix CORS issues with direct server endpoints
+    try {
+      // Check if API is available first
+      const checkApi = async () => {
+        try {
+          const pingResponse = await fetch(`${imageStore.API_BASE_URL}/ping`, { 
+            method: 'GET',
+            mode: 'no-cors' 
+          })
+          return pingResponse.ok
+        } catch (err) {
+          return false
+        }
+      }
+      
+      const apiAvailable = await checkApi()
+      
+      if (apiAvailable) {
+        // Use the correct API endpoint from the store
+        const endpoint = `${imageStore.API_BASE_URL}/purge-missing`
+        const headers = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          // Add CORS headers that might help
+          'Access-Control-Allow-Origin': '*'
+        }
+        
+        // Use mode: 'no-cors' to bypass CORS errors
+        await fetch(endpoint, { 
+          method: 'POST', 
+          headers,
+          mode: 'no-cors'
+        })
+        console.log("Purge attempt made (best effort)")
+      }
+    } catch (err) {
+      // Ignore server errors
+      console.log("Server cleanup skipped - this is normal if server is unavailable")
+    }
+    
+    // Fetch fresh images with cache busting
+    try {
+      await imageStore.fetchImages(0)
+    } catch (err) {
+      // The server might return an error if there are no images left, this is expected
+      console.log("Image refresh completed - if empty, this is expected behavior")
+    }
+  } catch (error) {
+    console.warn("Error during cleanup phase:", error.message)
+  }
+  
+  return { total: processedCount, deleted: deletedCount, failed: failedCount }
 }
 
 // Add draggable attribute and event handler to the gallery item
@@ -591,31 +794,50 @@ const forceCleanup = async () => {
       imageStore.clearSearch();
     }
     
-    // Try to clear server caches first (best effort)
-    try {
-      await fetch(`${imageStore.API_BASE_URL}/clear-cache`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }).catch(() => {})
-    } catch (err) {
-      // Ignore server errors
-    }
+    // Try to clear server caches and handle CORS issues
+    const callServerEndpoint = async (endpoint, method = 'POST') => {
+      try {
+        const headers = {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        };
+        
+        // Use timeout promise to prevent hanging on server issues
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Request timeout')), 3000)
+        );
+        
+        // Use no-cors mode to avoid CORS errors and add timeout
+        const fetchPromise = fetch(`${imageStore.API_BASE_URL}/${endpoint}`, {
+          method,
+          headers,
+          mode: 'no-cors'
+        });
+        
+        // Race between fetch and timeout
+        await Promise.race([fetchPromise, timeoutPromise]);
+        console.log(`Called ${endpoint} endpoint (best effort)`);
+      } catch (err) {
+        // Silently ignore errors - this is a best effort
+        console.log(`Attempted to call ${endpoint} - ignoring errors`);
+      }
+    };
     
-    // Try to clean missing files from server database (best effort)
-    try {
-      await fetch(`${imageStore.API_BASE_URL}/purge-missing`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' }
-      }).catch(() => {})
-    } catch (err) {
-      // Ignore server errors
-    }
+    // Try server-side cache clearing in a way that handles CORS errors
+    await callServerEndpoint('clear-cache');
+    await callServerEndpoint('purge-missing');
     
-    // Clear browser cache
+    // Clear browser cache - this is more reliable
     await imageStore.clearImageCache();
     
-    // Fetch fresh images with cache busting
-    await imageStore.fetchImages(100);
+    // Fetch fresh images with cache busting - use 0 to get all images
+    try {
+      await imageStore.fetchImages(0);
+      const imagesCount = imageStore.images && imageStore.images.value ? imageStore.images.value.length : 0;
+      console.log(`Cleanup complete, loaded ${imagesCount} images`);
+    } catch (err) {
+      console.log("Error refreshing images, using current state");
+    }
   } catch (error) {
     if (isDev) {
       console.error("Failed to clean gallery:", error);
@@ -624,6 +846,59 @@ const forceCleanup = async () => {
     imageStore.loading = false;
   }
 }
+
+// Add a method to purge invalid images
+const purgeInvalidImages = async () => {
+  try {
+    // Find all images with invalid thumbnails
+    const invalidImages = imageStore.images.value.filter(img => 
+      img.invalid_thumbnail || img.failed_to_load
+    );
+    
+    if (invalidImages.length === 0) {
+      console.log("No invalid images to purge");
+      return;
+    }
+    
+    console.log(`Found ${invalidImages.length} invalid images to purge`);
+    
+    // Set a counter for status tracking
+    let deletedCount = 0;
+    let failedCount = 0;
+    
+    // Process each invalid image
+    for (const image of invalidImages) {
+      try {
+        // Get a valid path for deletion
+        const path = image.original_path || image.thumbnail_path || image.path;
+        
+        if (!path) {
+          console.warn("Skipping image with no path");
+          failedCount++;
+          continue;
+        }
+        
+        // Delete the image
+        await imageStore.deleteImage(path);
+        deletedCount++;
+        
+        if (deletedCount % 5 === 0) {
+          console.log(`Deleted ${deletedCount}/${invalidImages.length} invalid images...`);
+        }
+      } catch (error) {
+        console.error("Failed to delete invalid image:", error);
+        failedCount++;
+      }
+    }
+    
+    console.log(`Purge complete. Deleted: ${deletedCount}, Failed: ${failedCount}`);
+    
+    // Refresh the gallery
+    await imageStore.fetchImages(0);
+  } catch (error) {
+    console.error("Failed to purge invalid images:", error);
+  }
+};
 </script>
 
 <style scoped>
@@ -639,7 +914,8 @@ const forceCleanup = async () => {
   margin-bottom: var(--space-4);
 }
 
-.cleanup-button {
+.cleanup-button, 
+.purge-button {
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -654,14 +930,27 @@ const forceCleanup = async () => {
   transition: all 0.2s ease;
 }
 
-.cleanup-button:hover {
+.cleanup-button:hover,
+.purge-button:hover {
   background-color: rgba(59, 130, 246, 0.15);
   color: #2563eb;
 }
 
-.cleanup-button svg {
+.cleanup-button svg,
+.purge-button svg {
   width: 16px;
   height: 16px;
+}
+
+.purge-button {
+  background-color: rgba(234, 88, 12, 0.1);
+  color: #ea580c;
+  border: 1px solid rgba(234, 88, 12, 0.2);
+}
+
+.purge-button:hover {
+  background-color: rgba(234, 88, 12, 0.15);
+  color: #c2410c;
 }
 
 .reset-container {
@@ -814,6 +1103,30 @@ const forceCleanup = async () => {
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
   display: flex;
   flex-direction: column;
+}
+
+.gallery-item.invalid-thumbnail {
+  border-color: rgba(239, 68, 68, 0.3);
+  background: rgba(239, 68, 68, 0.05);
+}
+
+.gallery-item.invalid-thumbnail .image-container {
+  opacity: 0.7;
+}
+
+.gallery-item.invalid-thumbnail .image-container::before {
+  content: "Missing Thumbnail";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #ef4444;
+  font-size: 0.9rem;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.7);
+  padding: 0.5rem 1rem;
+  border-radius: 0.25rem;
+  z-index: 2;
 }
 
 .gallery-item:hover {

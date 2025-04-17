@@ -29,9 +29,9 @@
           v-model="searchQuery" 
           type="text" 
           class="search-input"
-          placeholder="Describe images or patterns..."
+          placeholder="Search for patterns or designs..."
           @keyup.enter="handleSearch"
-          title="Use commas to separate search terms for more precise results (e.g., 'paisley, red, flower')"
+          title="Enter a search term to find matching images"
         >
         <button 
           v-if="searchQuery" 
@@ -48,7 +48,7 @@
         class="search-button"
         @click="handleSearch"
         :disabled="!searchQuery"
-        title="Search the image collection using the provided terms"
+        title="Search the image collection"
       >
         <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
           <path d="M21 21L15 15M17 10C17 13.866 13.866 17 10 17C6.13401 17 3 13.866 3 10C3 6.13401 6.13401 3 10 3C13.866 3 17 6.13401 17 10Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
@@ -57,32 +57,6 @@
       </button>
     </div>
 
-    <div class="search-settings-section">
-      <h3 class="settings-title">Settings</h3>
-      <div class="settings-grid">
-        <div class="setting-item">
-          <label class="setting-label">Results</label>
-          <select v-model="resultCount" class="setting-select">
-            <option value="10">10</option>
-            <option value="20">20</option>
-            <option value="50">50</option>
-            <option value="100">100</option>
-          </select>
-        </div>
-        
-        <div class="setting-item">
-          <label class="setting-label">Min Score</label>
-          <select v-model="minSimilarity" class="setting-select">
-            <option value="0.01">Very low (0.01)</option>
-            <option value="0.1">Low (0.1)</option>
-            <option value="0.3">Medium (0.3)</option>
-            <option value="0.5">High (0.5)</option>
-            <option value="0.7">Very high (0.7)</option>
-          </select>
-        </div>
-      </div>
-    </div>
-    
     <div class="search-status-section" v-if="imageStore.searching || imageStore.hasSearchResults">
       <div class="search-status-container" v-if="imageStore.searching">
         <div class="search-spinner"></div>
@@ -97,7 +71,18 @@
               <strong>{{ imageStore.searchResults.length }}</strong>
             </div>
             <div class="results-description">
-              results for <span class="search-terms">{{ imageStore.searchQuery }}</span>
+              results for 
+              <span 
+                class="search-terms" 
+                :class="{ 'image-search': isImageSearch }"
+              >
+                <svg v-if="isImageSearch" class="image-search-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="14" cy="9" r="1" fill="currentColor"/>
+                  <path d="M5 3h14a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2z" stroke="currentColor" stroke-width="2"/>
+                </svg>
+                {{ imageStore.searchQuery }}
+              </span>
             </div>
           </div>
           
@@ -108,34 +93,13 @@
             <span>Reset Search</span>
           </button>
         </div>
-        
-        <!-- Reference image thumbnail (if available) -->
-        <div v-if="imageStore.searchQueryReferenceImage" class="reference-image-container">
-          <div class="reference-image-wrapper">
-            <img 
-              :src="getThumbnailUrl(imageStore.searchQueryReferenceImage.thumbnail_path)" 
-              alt="Reference image" 
-              class="reference-image"
-            />
-          </div>
-          <span class="reference-label">Reference Image</span>
-        </div>
       </div>
     </div>
     
-    <!-- Quick search examples -->
-    <!-- Search examples section removed as requested -->
-
-    <!-- Add an info hint about advanced search -->
+    <!-- Search hint -->
     <div class="search-hint">
       <span class="hint-icon">💡</span>
-      <span class="hint-text">Use descriptive terms like "vibrant floral with blue background"</span>
-    </div>
-    
-    <!-- Add a drag-and-drop hint -->
-    <div class="search-hint drag-hint">
-      <span class="hint-icon">🔍</span>
-      <span class="hint-text">Drag any image here to find visually similar patterns</span>
+      <span class="hint-text">Enter exact phrases like "hibiscus flower" to find matching images</span>
     </div>
   </div>
 </template>
@@ -146,14 +110,20 @@ import { useImageStore } from '../stores/imageStore'
 import aiLogo from '../assets/aitlogo.png'
 
 const imageStore = useImageStore()
-
 const searchQuery = ref('')
-const searchType = ref('all')
-const resultCount = ref(20)
-const minSimilarity = ref(0.1)
 const isDragover = ref(false)
 
-// Drag and drop handlers
+// Add a computed property to detect if this is an image search
+const isImageSearch = computed(() => {
+  return imageStore.searchQuery && 
+    (imageStore.searchQuery.startsWith('Similar to:') || 
+     imageStore.searchQuery.startsWith('Similar to image:'))
+})
+
+// Max results to fetch - set to a very high number to get all images
+const MAX_RESULTS = 1000
+
+// Drag and drop handlers (only for dropped images from within the app, not uploads)
 const handleDragEnter = (event) => {
   isDragover.value = true
 }
@@ -170,57 +140,51 @@ const handleDragLeave = (event) => {
   }
 }
 
-const handleDrop = async (event) => {
+// Handle internal app drag and drop - for searching, not uploading
+const handleDrop = (event) => {
+  event.preventDefault()
   isDragover.value = false
-  
+  console.log('Image dropped for similarity search')
+
+  const items = event.dataTransfer.items
+  if (!items || items.length === 0) {
+    console.warn('No items in drop event')
+    return
+  }
+
+  // Get the imageId from the dragged image
+  const imageId = event.dataTransfer.getData('text/plain')
+  console.log('Image ID:', imageId)
+
+  // Try to extract image data if available
+  let imageData = null
   try {
-    // Get the image ID or filename from the dataTransfer
-    const imageId = event.dataTransfer.getData('text/plain')
-    const thumbnailDataJson = event.dataTransfer.getData('application/json')
-    
-    if (!imageId) {
-      console.error('No image ID received in drop')
-      alert('Unable to identify the image. Please try selecting an image from the gallery directly.')
-      return
-    }
-    
-    console.log('Image dropped with ID:', imageId)
-    
-    // Parse the thumbnail data if available
-    let imageData = null
-    if (thumbnailDataJson) {
-      try {
-        imageData = JSON.parse(thumbnailDataJson)
-        console.log('Received image data:', imageData)
-      } catch (e) {
-        console.error('Failed to parse image data:', e)
-      }
-    }
-    
-    // Clear any previous search to ensure clean state
-    imageStore.clearSearch()
-    
-    // Call the store method for similarity search with lower threshold
-    await imageStore.searchSimilarById(imageId, {
-      limit: parseInt(resultCount.value),
-      minSimilarity: Math.min(parseFloat(minSimilarity.value), 0.05) // Use a minimum threshold to ensure some results
-    }, imageData)
-    
-    // Check if we got any results
-    if (imageStore.searchResults.length === 0) {
-      // No results found, provide feedback to the user
-      console.warn('No similar images found for the dropped image')
-      
-      // Try to get info about the reference image
-      const refImage = imageStore.searchQueryReferenceImage
-      const refPattern = refImage?.patterns?.primary_pattern || refImage?.pattern?.primary || 'unknown pattern'
-      
-      alert(`No similar images found for the ${refPattern}. Try adjusting the minimum similarity threshold or adding more images to your collection.`)
+    const jsonData = event.dataTransfer.getData('application/json')
+    if (jsonData) {
+      imageData = JSON.parse(jsonData)
+      console.log('Image data:', imageData)
     }
   } catch (error) {
-    console.error('Error handling image drop:', error)
-    alert(`Error searching for similar images: ${error.message}`)
+    console.error('Error parsing image data:', error)
   }
+
+  // Clear existing text search if any
+  searchQuery.value = ''
+  
+  // Perform image similarity search
+  imageStore.searchSimilarById(imageId, MAX_RESULTS)
+    .then(() => {
+      // Update search query for display purposes
+      if (imageData && imageData.pattern) {
+        imageStore.searchQuery = `Similar to: ${imageData.pattern}`
+      } else {
+        imageStore.searchQuery = `Similar to image: ${imageId.substring(0, 8)}...`
+      }
+      // Setting searchStatus is handled by imageStore
+    })
+    .catch(error => {
+      console.error('Error in similarity search:', error)
+    })
 }
 
 // Watch for external search reset
@@ -230,43 +194,36 @@ watch(() => imageStore.searchQuery, (newVal) => {
   }
 })
 
+// Handle text search
 const handleSearch = async () => {
   if (!searchQuery.value.trim()) return
   
-  console.log("Starting search for:", searchQuery.value);
+  console.log("Starting search for:", searchQuery.value)
   
-  // For text search - for now, just show all images or filtered by text
-  // Since there's no direct text search function in imageStore
-  await imageStore.fetchImages(parseInt(resultCount.value));
+  // Use our text search function
+  await imageStore.searchByText(searchQuery.value, MAX_RESULTS)
   
-  // Update the search query in the store to show the user what they searched for
-  imageStore.searchQuery = searchQuery.value;
-  
-  console.log("Text search completed");
-  console.log("Displayed images:", imageStore.getValidImages().length);
+  console.log("Text search completed")
+  console.log("Displayed images:", imageStore.searchResults.length)
 }
 
+// Clear the search
 const clearSearch = () => {
   searchQuery.value = ''
-  // Don't reset search results until the user explicitly clicks Search or Reset
+  imageStore.clearSearch()
 }
 
-const resetSearch = async () => {
+// Reset the search
+const resetSearch = () => {
   searchQuery.value = ''
-  await imageStore.clearSearch()
+  imageStore.clearSearch()
+  imageStore.fetchImages(MAX_RESULTS)
 }
 
-// Helper function to get the thumbnail URL from a path
+// Get thumbnail URL helper
 const getThumbnailUrl = (path) => {
-  if (!path) return '';
-  
-  // Get just the filename
-  const filename = path.includes('/') ? 
-    path.split('/').pop() : 
-    path; // Use path directly if it's already just a filename
-  
-  // Construct API URL
-  return `${imageStore.API_BASE_URL}/thumbnails/${filename}`;
+  if (!path) return ''
+  return path
 }
 </script>
 
@@ -472,55 +429,6 @@ const getThumbnailUrl = (path) => {
   color: var(--color-text);
 }
 
-/* Settings section */
-.search-settings-section {
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  padding-top: var(--space-2); /* Reduced padding */
-  margin-top: var(--space-1); /* Added small margin */
-}
-
-.settings-title {
-  font-size: 0.9rem; /* Smaller font */
-  font-weight: 600;
-  margin: 0 0 var(--space-1) 0; /* Reduced margin */
-  color: var(--color-text-light);
-}
-
-.settings-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: var(--space-2); /* Reduced gap */
-}
-
-.setting-item {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-
-.setting-label {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--color-text-light);
-  margin-left: var(--space-1);
-}
-
-.setting-select {
-  padding: var(--space-1); /* Reduced padding */
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius-md);
-  background-color: rgba(255, 255, 255, 0.05);
-  color: var(--color-text);
-  font-size: 0.8rem; /* Smaller font */
-  transition: all 0.2s ease;
-}
-
-.setting-select:focus {
-  border-color: var(--color-primary);
-  box-shadow: 0 0 0 2px rgba(58, 58, 58, 0.2);
-  outline: none;
-}
-
 /* Search status section */
 .search-status-section {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
@@ -605,6 +513,21 @@ const getThumbnailUrl = (path) => {
   font-weight: 600;
 }
 
+.search-terms.image-search {
+  display: inline-flex;
+  align-items: center;
+  background-color: rgba(79, 70, 229, 0.1);
+  color: #4F46E5;
+  border-radius: var(--radius-md);
+  padding: 0.25rem 0.5rem;
+}
+
+.image-search-icon {
+  width: 14px;
+  height: 14px;
+  margin-right: 4px;
+}
+
 .reset-search-button {
   display: flex;
   align-items: center;
@@ -633,54 +556,7 @@ const getThumbnailUrl = (path) => {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
 }
 
-.reference-image-container {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-2);
-  margin-top: var(--space-2);
-  background: rgba(58, 58, 58, 0.1);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  border: 1px solid rgba(58, 58, 58, 0.2);
-  width: 100%;
-  position: relative;
-}
-
-.reference-image-wrapper {
-  width: 100px;
-  height: 100px;
-  border-radius: var(--radius-md);
-  overflow: hidden;
-  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-}
-
-.reference-image {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform 0.3s ease;
-}
-
-.reference-image-wrapper:hover .reference-image {
-  transform: scale(1.1);
-}
-
-.reference-label {
-  font-size: 0.7rem;
-  font-weight: 500;
-  color: var(--color-text);
-  background: var(--color-primary);
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  margin-top: var(--space-2);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
-}
-
-/* Hints */
+/* Search hint */
 .search-hint {
   display: flex;
   align-items: center;
@@ -692,11 +568,6 @@ const getThumbnailUrl = (path) => {
   border-radius: var(--radius-md);
   border-left: 2px solid var(--color-primary); /* Thinner border */
   margin-top: var(--space-1); /* Reduced margin */
-}
-
-.drag-hint {
-  border-left-color: var(--color-accent);
-  margin-bottom: var(--space-1); /* Greatly reduced margin */
 }
 
 .hint-icon {
@@ -723,10 +594,6 @@ const getThumbnailUrl = (path) => {
     width: 160px;
   }
 
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-  
   .search-form {
     flex-direction: column;
   }
