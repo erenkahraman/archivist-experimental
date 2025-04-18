@@ -32,7 +32,7 @@
           <div class="modal-right">
             <div class="analysis-tabs">
               <button 
-                v-for="tab in ['Pattern', 'Colors', 'Details']" 
+                v-for="tab in ['Pattern', 'Details']" 
                 :key="tab"
                 :class="{ active: activeTab === tab }"
                 @click="activeTab = tab"
@@ -43,7 +43,6 @@
 
             <div class="tab-content">
               <PatternTab v-if="activeTab === 'Pattern'" :image="image" />
-              <ColorsTab v-if="activeTab === 'Colors'" :image="image" />
               <DetailsTab v-if="activeTab === 'Details'" :image="image" />
             </div>
           </div>
@@ -57,7 +56,6 @@
 import { ref } from 'vue'
 import { getThumbnailUrl } from '../utils/helpers.js'
 import PatternTab from './tabs/pattern-tab.vue'
-import ColorsTab from './tabs/colors-tab.vue'
 import DetailsTab from './tabs/details-tab.vue'
 
 defineProps({

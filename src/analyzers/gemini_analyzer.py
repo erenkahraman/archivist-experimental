@@ -265,17 +265,12 @@ class GeminiAnalyzer:
             
             # Enhanced color analysis
             try:
-                from src.analyzers.color_analyzer import ColorAnalyzer  # Import locally if needed
-                # Pass the API key if the analyzer needs it
-                color_analyzer_instance = ColorAnalyzer(api_key=getattr(self, '_api_key', None))
-                # Get image as numpy array for color analysis
-                image_np = np.array(image)  # Assumes 'image' is the PIL Image object
-                color_info = color_analyzer_instance.analyze_colors(image_np)
-                dominant_colors = color_info.get('dominant_colors', [])
+                # Use the internal color analysis method
+                dominant_colors = self._analyze_colors(image)
             except Exception as e:
                 logger.error(f"Fallback: Error during color analysis: {str(e)}")
-                # Fall back to basic color analysis
-                dominant_colors = self._analyze_colors(image)
+                # Fall back to empty color list
+                dominant_colors = []
             
             file_name = os.path.basename(image_path)
             base_name = os.path.splitext(file_name)[0].lower()

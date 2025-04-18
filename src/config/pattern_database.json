@@ -183,36 +183,1127 @@
       "historical_context": "Prominent in 20th century modernist movements",
       "origin": "Modern art movements including Expressionism and Abstract Expressionism",
       "applications": ["modern textiles", "contemporary art", "fashion", "interior design"]
+    },
+    "quilted": {
+      "description": "Three-dimensional pattern created by stitching layers together with padding between",
+      "keywords": ["quilted", "padded", "stitched", "dimensional", "textured", "plush"],
+      "content_elements": ["raised stitched areas", "recessed seams", "padded sections", "geometric stitching patterns"],
+      "historical_context": "Quilting techniques date back to ancient Egypt and medieval Europe for warmth and protection",
+      "origin": "Functional technique that evolved into decorative applications globally",
+      "applications": ["bedding", "fashion", "upholstery", "wall hangings", "accessories"],
+      "is_3d": true
+    },
+    "embossed": {
+      "description": "Pattern with raised designs pressed or molded into the material's surface",
+      "keywords": ["embossed", "raised", "pressed", "relief", "dimensional", "molded"],
+      "content_elements": ["raised motifs", "dimensional relief", "pressed patterns", "tactile designs"],
+      "historical_context": "Used for centuries in leather working, paper crafts, and textiles",
+      "origin": "Traditional craft technique used across many cultures",
+      "applications": ["leather goods", "paper products", "textiles", "wall coverings", "metal work"],
+      "is_3d": true
+    },
+    "matelassé": {
+      "description": "Fabric with a raised, quilted appearance without actual padding",
+      "keywords": ["matelassé", "raised", "puckered", "quilted-look", "textured", "woven"],
+      "content_elements": ["raised geometric designs", "puckered texture", "double-cloth weave", "dimensional appearance"],
+      "historical_context": "Originated in France, the term means 'cushioned' or 'quilted'",
+      "origin": "French textile tradition, traditionally used for bedspreads and home textiles",
+      "applications": ["upholstery", "bedspreads", "fashion", "home textiles"],
+      "is_3d": true
+    },
+    "seersucker": {
+      "description": "Pattern featuring alternating smooth and puckered stripes with dimensional texture",
+      "keywords": ["seersucker", "puckered", "stripe", "textured", "dimensional", "crinkled"],
+      "content_elements": ["raised and flat stripes", "puckered texture", "crinkled appearance", "alternating texture"],
+      "historical_context": "Originated in India, name derived from Persian words meaning 'milk and sugar'",
+      "origin": "India, popularized in the West particularly in southern United States",
+      "applications": ["summer clothing", "suits", "dresses", "shirts", "casual wear"],
+      "is_3d": true
+    },
+    "corduroy": {
+      "description": "Textile with parallel, vertical raised ribs or wales with distinct texture",
+      "keywords": ["corduroy", "ribbed", "waled", "ridged", "raised", "textured"],
+      "content_elements": ["vertical raised ribs", "parallel wales", "velvety texture", "linear ridges"],
+      "historical_context": "Named after 'cloth of the king' (corde du roi) though likely a misconception",
+      "origin": "Developed in Manchester, England in the 18th century as a durable textile",
+      "applications": ["clothing", "upholstery", "accessories", "winter apparel"],
+      "is_3d": true
+    },
+    "smocking": {
+      "description": "Embroidery technique gathering fabric with decorative pleats to create elasticity",
+      "keywords": ["smocking", "pleated", "gathered", "embroidered", "honeycomb", "elastic"],
+      "content_elements": ["gathered fabric", "decorative stitching", "elastic pleating", "honeycomb pattern"],
+      "historical_context": "Traditional technique used in English folk dress, revived in fashion periodically",
+      "origin": "Rural England, used for practical and decorative purposes in workwear",
+      "applications": ["children's clothing", "fashion", "sleeves", "bodices", "decorative elements"],
+      "is_3d": true
+    },
+    "bubble texture": {
+      "description": "Pattern featuring raised, bubble-like elements created through specialized techniques",
+      "keywords": ["bubble", "raised", "spherical", "puffy", "dimensional", "textured"],
+      "content_elements": ["rounded bubble-like forms", "spherical protrusions", "tactile raised elements", "dimensional surface"],
+      "historical_context": "Modern textile innovation often used in contemporary fashion and design",
+      "origin": "Contemporary textile development using heat-setting and specialized weaving",
+      "applications": ["fashion", "upholstery", "decorative textiles", "contemporary design"],
+      "is_3d": true
+    },
+    "piqué": {
+      "description": "Double-faced fabric with raised pattern effect created through double weaving",
+      "keywords": ["piqué", "waffle", "honeycomb", "textured", "dimensional", "double-weave"],
+      "content_elements": ["raised geometric patterns", "waffle-like texture", "honeycomb appearance", "dimensional weave"],
+      "historical_context": "Popular for formal wear and children's clothing since the 18th century",
+      "origin": "French textile development, name refers to 'quilted' effect",
+      "applications": ["shirts", "formal wear", "children's clothing", "sportswear", "accessories"],
+      "is_3d": true
+    },
+    "trapunto": {
+      "description": "Italian quilting technique creating raised areas by stuffing from the back",
+      "keywords": ["trapunto", "quilted", "stuffed", "raised", "dimensional", "padded"],
+      "content_elements": ["highly raised motifs", "stuffed quilting", "pronounced relief", "dimensional pattern"],
+      "historical_context": "Traditional Italian quilting technique dating to the 14th century",
+      "origin": "Sicily and central Italy, later spread throughout Europe",
+      "applications": ["quilts", "decorative panels", "high-end fashion", "fine textiles"],
+      "is_3d": true
+    },
+    "bouclé": {
+      "description": "Fabric with looped yarns creating a knobbly, three-dimensional texture",
+      "keywords": ["bouclé", "looped", "knobbly", "nubby", "textured", "dimensional"],
+      "content_elements": ["looped yarn texture", "irregular surface", "knobbly appearance", "random dimensional elements"],
+      "historical_context": "Name derived from French word for 'curled', popularized by Chanel suits",
+      "origin": "French textile development, became iconic in mid-20th century fashion",
+      "applications": ["fashion", "upholstery", "jackets", "suits", "home textiles"],
+      "is_3d": true
+    },
+    "pleated": {
+      "description": "Fabric manipulated to create regular folds with dimensional structure",
+      "keywords": ["pleated", "folded", "accordion", "dimensional", "structured", "architectural"],
+      "content_elements": ["regular folds", "pressed creases", "accordion structure", "dimensional surface"],
+      "historical_context": "Used since ancient Egypt, with techniques perfected in different cultures",
+      "origin": "Universal fabric manipulation technique with variations worldwide",
+      "applications": ["fashion", "skirts", "dresses", "decorative elements", "home furnishings"],
+      "is_3d": true
+    },
+    "cut velvet": {
+      "description": "Velvet with patterns created by varying pile height, creating textural contrast",
+      "keywords": ["cut velvet", "pile", "textured", "raised", "varied height", "dimensional"],
+      "content_elements": ["varied pile heights", "cut pattern areas", "textural contrast", "tactile design"],
+      "historical_context": "Luxury technique developed during the Renaissance for nobility",
+      "origin": "Originated in Italy and spread to other European weaving centers",
+      "applications": ["upholstery", "formal attire", "luxury furnishings", "drapery", "accessories"],
+      "is_3d": true
+    },
+    "devore": {
+      "description": "Burn-out technique creating sheer areas in contrast with raised velvet patterns",
+      "keywords": ["devore", "burnout", "etched", "sheer", "contrasting", "dimensional"],
+      "content_elements": ["velvet areas", "sheer sections", "textural contrast", "etched patterns"],
+      "historical_context": "Developed in early 20th century France as 'velvet burn-out'",
+      "origin": "French textile innovation using chemical processes to dissolve fibers",
+      "applications": ["evening wear", "scarves", "decorative textiles", "fashion accessories"],
+      "is_3d": true
+    },
+    "cloqué": {
+      "description": "Fabric with permanent puckered or blistered texture created during weaving",
+      "keywords": ["cloqué", "puckered", "blistered", "bubble", "textured", "dimensional"],
+      "content_elements": ["puckered areas", "bubble-like texture", "raised elements", "irregular surface"],
+      "historical_context": "Developed in French textile industry, name means 'blistered'",
+      "origin": "French textile innovation using multiple warp tensions",
+      "applications": ["fashion", "evening wear", "jackets", "decorative elements", "accessories"],
+      "is_3d": true
+    },
+    "waffle": {
+      "description": "Grid pattern with raised squares alternating with recessed areas",
+      "keywords": ["waffle", "grid", "recessed", "squared", "honeycomb", "dimensional"],
+      "content_elements": ["raised grid pattern", "recessed squares", "honeycomb texture", "geometric relief"],
+      "historical_context": "Traditional weaving pattern used for practical absorption properties",
+      "origin": "Practical weaving technique developed for high-absorption fabrics",
+      "applications": ["towels", "kitchen textiles", "thermal underwear", "casual clothing"],
+      "is_3d": true
+    },
+    "jacquard": {
+      "description": "Complex woven pattern with intricate designs created on specialized looms",
+      "keywords": ["jacquard", "woven", "complex", "intricate", "detailed", "loom-created"],
+      "content_elements": ["intricate woven design", "complex pattern elements", "detailed motifs", "multi-color designs"],
+      "historical_context": "Named after Joseph Marie Jacquard who invented automated pattern loom in 1804",
+      "origin": "French textile innovation that revolutionized patterned weaving",
+      "applications": ["upholstery", "fashion", "neckties", "drapery", "formal textiles"]
+    },
+    "paisley large": {
+      "description": "Oversized paisley motifs arranged in a grand scale pattern",
+      "keywords": ["paisley", "oversized", "large-scale", "bold", "statement", "grand"],
+      "content_elements": ["large teardrop shapes", "oversized boteh motifs", "dominant curved elements", "bold paisley forms"],
+      "historical_context": "Contemporary adaptation of traditional paisley in larger scale",
+      "origin": "Modern design approach to traditional Persian/Indian pattern",
+      "applications": ["home textiles", "statement fashion", "scarves", "drapery", "upholstery"]
+    },
+    "kente": {
+      "description": "Vibrant, multicolored strip-woven cloth with symbolic geometric patterns",
+      "keywords": ["kente", "african", "woven", "striped", "geometric", "symbolic", "multicolored"],
+      "content_elements": ["geometric motifs", "bold colorful strips", "woven bands", "symbolic elements"],
+      "historical_context": "Originally worn by royalty in Ghana, now a symbol of African heritage globally",
+      "origin": "Developed by the Ashanti people of Ghana in the 12th century",
+      "applications": ["ceremonial garments", "cultural dress", "accessories", "home decor", "academic stoles"]
+    },
+    "adinkra": {
+      "description": "Symbolic pattern with stamped or printed visual symbols representing concepts or aphorisms",
+      "keywords": ["adinkra", "symbolic", "african", "stamped", "visual", "conceptual", "ghanaian"],
+      "content_elements": ["symbolic motifs", "stamped elements", "conceptual symbols", "repeated icons"],
+      "historical_context": "Traditional cloth of the Ashanti people with symbols used for communication",
+      "origin": "Ghana and Côte d'Ivoire in West Africa",
+      "applications": ["ceremonial textiles", "funeral cloth", "cultural garments", "symbolic art"]
+    },
+    "ankara": {
+      "description": "Vibrant, colorful African wax print fabric with bold patterns and motifs",
+      "keywords": ["ankara", "african wax print", "dutch wax", "vibrant", "colorful", "bold", "african"],
+      "content_elements": ["bold repeated motifs", "vibrant colorful elements", "wax-resist appearance", "cultural symbols"],
+      "historical_context": "Originally inspired by Indonesian batik, evolved into distinctly African patterns",
+      "origin": "West and Central Africa, particularly popular in Nigeria",
+      "applications": ["clothing", "accessories", "home decor", "fashion design", "cultural expression"]
+    },
+    "mudcloth": {
+      "description": "Hand-painted geometric patterns on handwoven cotton using fermented mud dye",
+      "keywords": ["mudcloth", "bogolan", "mali", "geometric", "natural dye", "handcrafted", "african"],
+      "content_elements": ["geometric symbols", "contrasting dark designs", "symbolic motifs", "hand-painted elements"],
+      "historical_context": "Traditional Malian textile made by Bambara people with cultural significance",
+      "origin": "Mali, West Africa",
+      "applications": ["traditional clothing", "home textiles", "wall hangings", "accessories", "interior accents"]
+    },
+    "shweshwe": {
+      "description": "Distinctive South African cotton print with small geometric patterns in indigo blue",
+      "keywords": ["shweshwe", "south african", "indigo", "printed", "geometric", "traditional", "small-scale"],
+      "content_elements": ["tiny geometric patterns", "indigo blue background", "intricate printed motifs", "repeated small elements"],
+      "historical_context": "Originally imported from Europe in the 1800s, became integral to South African culture",
+      "origin": "South Africa, particularly associated with Xhosa and Sotho cultures",
+      "applications": ["traditional clothing", "ceremonial attire", "contemporary fashion", "quilting", "crafts"]
+    },
+    "suzani": {
+      "description": "Embroidered textile with large-scale floral designs and circular medallions",
+      "keywords": ["suzani", "central asian", "embroidered", "floral", "medallion", "uzbek", "decorative"],
+      "content_elements": ["large floral motifs", "circular medallions", "vibrant embroidery", "folk art elements"],
+      "historical_context": "Traditional Central Asian embroidery, part of bridal dowries",
+      "origin": "Uzbekistan, Tajikistan, Kazakhstan and other Central Asian countries",
+      "applications": ["wall hangings", "bed coverings", "decorative textiles", "upholstery", "throws"]
+    },
+    "ikat_uzbek": {
+      "description": "Central Asian ikat with bold, blurred patterns in vibrant colors",
+      "keywords": ["ikat", "uzbek", "abr", "central asian", "resist-dyed", "blurred", "vibrant"],
+      "content_elements": ["blurred color boundaries", "bold medallions", "rainbow patterns", "feathered edges"],
+      "historical_context": "Prestigious textile of Central Asia, indicates wealth and status",
+      "origin": "Uzbekistan, particularly cities of Bukhara, Samarkand, and Margilan",
+      "applications": ["robes", "wall hangings", "home textiles", "fashion", "accessories"]
+    },
+    "kilim": {
+      "description": "Flat-woven carpet with geometric patterns and slit weave technique",
+      "keywords": ["kilim", "flatweave", "geometric", "tribal", "slit-weave", "anatolian", "middle eastern"],
+      "content_elements": ["geometric motifs", "angular designs", "tribal symbols", "flatwoven texture"],
+      "historical_context": "Traditional weaving from Anatolia, the Balkans, and parts of Central Asia",
+      "origin": "Turkey, Iran, the Balkans, the Caucasus, and Central Asia",
+      "applications": ["floor coverings", "wall hangings", "pillows", "bags", "prayer rugs"]
+    },
+    "kasuri": {
+      "description": "Japanese ikat with precise patterns created by resist-dyeing threads before weaving",
+      "keywords": ["kasuri", "ikat", "japanese", "resist-dyed", "indigo", "precise", "traditional"],
+      "content_elements": ["resist-dyed threads", "precise patterns", "indigo blue elements", "geometric or figurative motifs"],
+      "historical_context": "Traditional Japanese textile dating back to the Heian period",
+      "origin": "Japan, especially Kurume, Iyo, and Ryukyu regions",
+      "applications": ["kimono fabric", "home textiles", "clothing", "interior accessories"]
+    },
+    "shibori": {
+      "description": "Japanese resist-dyeing technique creating patterns through binding, folding, and compression",
+      "keywords": ["shibori", "tie-dye", "japanese", "resist-dyed", "indigo", "patterned", "textural"],
+      "content_elements": ["resist-dyed areas", "organic patterns", "compressed textures", "bound and folded effects"],
+      "historical_context": "Ancient Japanese dyeing technique with various specialized methods",
+      "origin": "Japan, with earliest examples from the 8th century",
+      "applications": ["kimono", "scarves", "art textiles", "fashion", "home decor"]
+    },
+    "seigaiha": {
+      "description": "Traditional Japanese wave pattern forming overlapping concentric circles",
+      "keywords": ["seigaiha", "japanese", "wave", "concentric", "overlapping", "circles", "traditional"],
+      "content_elements": ["overlapping semi-circles", "wave-like pattern", "repeated arcs", "layered circular forms"],
+      "historical_context": "Ancient pattern symbolizing waves or water, used in court dress during Heian period",
+      "origin": "Japan, used since at least the 6th century",
+      "applications": ["kimono fabric", "paper goods", "decorative arts", "contemporary design"]
+    },
+    "asanoha": {
+      "description": "Traditional Japanese geometric pattern of connected hemp leaves forming stars",
+      "keywords": ["asanoha", "japanese", "hemp leaf", "geometric", "interconnected", "star", "traditional"],
+      "content_elements": ["interconnected triangles", "star-like formations", "repeated geometric units", "hemp leaf motifs"],
+      "historical_context": "Traditional pattern representing growth and vitality, used in children's clothing",
+      "origin": "Japan, popularized during the Edo period",
+      "applications": ["kimono", "children's clothing", "paper goods", "interior design", "contemporary fashion"]
+    },
+    "rangoli": {
+      "description": "Indian decorative pattern with concentric geometrical forms and floral motifs",
+      "keywords": ["rangoli", "indian", "decorative", "concentric", "geometric", "floral", "symbolic"],
+      "content_elements": ["concentric shapes", "floral motifs", "geometric forms", "symmetrical designs"],
+      "historical_context": "Traditional Indian decorative art created on floors for religious occasions",
+      "origin": "India, with regional variations across the subcontinent",
+      "applications": ["textiles", "clothing", "home decor", "contemporary design", "decorative arts"]
+    },
+    "bandhani": {
+      "description": "Indian tie-dye technique with small dots arranged in geometric patterns",
+      "keywords": ["bandhani", "tie-dye", "indian", "dotted", "resist-dyed", "colorful", "traditional"],
+      "content_elements": ["tiny tied dots", "concentric patterns", "jewel-toned colors", "geometric arrangements"],
+      "historical_context": "Ancient technique mentioned in historical texts as early as 6th century CE",
+      "origin": "Gujarat and Rajasthan regions of India",
+      "applications": ["sarees", "turbans", "odhani scarves", "dupattas", "contemporary fashion"]
+    },
+    "ajrak": {
+      "description": "Complex block-printed pattern with geometric and floral motifs using natural dyes",
+      "keywords": ["ajrak", "sindhi", "block-printed", "resist-dyed", "indigo", "geometric", "traditional"],
+      "content_elements": ["block printed elements", "resist-dyed patterns", "geometric motifs", "natural dye colors"],
+      "historical_context": "Ancient textile art dating back to Indus Valley Civilization",
+      "origin": "Sindh region of Pakistan and Gujarat, India",
+      "applications": ["shawls", "turbans", "ceremonial cloth", "home textiles", "contemporary fashion"]
+    },
+    "phulkari": {
+      "description": "Embroidered pattern from Punjab with colorful floral designs covering entire fabric",
+      "keywords": ["phulkari", "punjabi", "embroidered", "floral", "colorful", "geometric", "traditional"],
+      "content_elements": ["floral embroidery", "geometric stitches", "colorful thread work", "dense pattern coverage"],
+      "historical_context": "Traditional Punjabi embroidery created for wedding trousseaus and special occasions",
+      "origin": "Punjab region across India and Pakistan",
+      "applications": ["shawls", "head coverings", "ceremonial garments", "wall hangings", "home decor"]
+    },
+    "kalamkari": {
+      "description": "Hand-painted or block-printed pattern with narrative scenes and motifs using natural dyes",
+      "keywords": ["kalamkari", "indian", "hand-painted", "narrative", "detailed", "traditional", "natural-dyed"],
+      "content_elements": ["hand-painted scenes", "floral borders", "narrative elements", "intricate details"],
+      "historical_context": "Ancient art form with name derived from 'kalam' (pen) and 'kari' (craftsmanship)",
+      "origin": "Andhra Pradesh, India, with two main styles from Srikalahasti and Machilipatnam",
+      "applications": ["temple hangings", "sarees", "dress material", "wall art", "home textiles"]
+    },
+    "mehndi": {
+      "description": "Intricate pattern inspired by henna designs with detailed paisleys and floral motifs",
+      "keywords": ["mehndi", "henna", "indian", "intricate", "paisley", "floral", "ornate"],
+      "content_elements": ["intricate paisley forms", "fine detailed lines", "ornate floral elements", "delicate pattern work"],
+      "historical_context": "Based on traditional henna body art patterns used for weddings and celebrations",
+      "origin": "South Asia, particularly India, Pakistan, and Bangladesh",
+      "applications": ["textiles", "decorative fabrics", "fashion", "home decor", "accessories"]
+    },
+    "songket": {
+      "description": "Luxurious Southeast Asian brocade with intricate metallic thread patterns",
+      "keywords": ["songket", "malaysian", "brocade", "metallic", "woven", "supplementary weft", "traditional"],
+      "content_elements": ["metallic thread patterns", "geometric motifs", "floral designs", "intricate woven elements"],
+      "historical_context": "Prestigious textile traditionally worn by royalty and nobility",
+      "origin": "Malaysia, Indonesia, and Brunei",
+      "applications": ["ceremonial garments", "formal wear", "sarongs", "decorative textiles", "luxury items"]
+    },
+    "batik_javanese": {
+      "description": "Indonesian hand-drawn or stamped wax-resist pattern with intricate details",
+      "keywords": ["batik", "javanese", "indonesian", "wax-resist", "hand-drawn", "traditional", "detailed"],
+      "content_elements": ["intricate wax-resist patterns", "symbolic motifs", "detailed hand-drawn elements", "crackle effect"],
+      "historical_context": "UNESCO-recognized cultural heritage with different patterns for different social classes",
+      "origin": "Java, Indonesia, particularly in regions of Yogyakarta, Surakarta, and Pekalongan",
+      "applications": ["sarongs", "shirts", "dresses", "ceremonial clothing", "home textiles"]
+    },
+    "tapa": {
+      "description": "Polynesian bark cloth pattern with geometric designs painted or stamped",
+      "keywords": ["tapa", "polynesian", "bark cloth", "geometric", "stamped", "pacific", "natural"],
+      "content_elements": ["geometric motifs", "stamped designs", "natural brown tones", "linear elements"],
+      "historical_context": "Traditional art form made from the inner bark of paper mulberry trees",
+      "origin": "Various Pacific islands including Tonga, Samoa, Fiji, and Hawaii",
+      "applications": ["ceremonial garments", "wall hangings", "ritual items", "mats", "cultural artifacts"]
+    },
+    "aboriginal": {
+      "description": "Australian indigenous pattern with dotted stylizations of dreamtime stories and natural elements",
+      "keywords": ["aboriginal", "indigenous", "australian", "dotted", "dreamtime", "symbolic", "narrative"],
+      "content_elements": ["dotted designs", "concentric patterns", "symbolic storytelling elements", "stylized natural forms"],
+      "historical_context": "Ancient artistic tradition with patterns representing dreamtime stories and country",
+      "origin": "Indigenous Australian cultures across the continent",
+      "applications": ["art fabrics", "clothing", "ceremonial items", "contemporary design", "home textiles"]
+    },
+    "fair_isle": {
+      "description": "Traditional Scottish knitted pattern with horizontal bands of small geometric designs",
+      "keywords": ["fair isle", "scottish", "knitted", "banded", "multicolored", "traditional", "geometric"],
+      "content_elements": ["horizontal pattern bands", "small repeated motifs", "limited color changes per row", "symmetric designs"],
+      "historical_context": "Named after Fair Isle in Shetland, Scotland, dates to at least the 19th century",
+      "origin": "Fair Isle, Shetland, Scotland",
+      "applications": ["sweaters", "vests", "hats", "scarves", "mittens", "winter wear"]
+    },
+    "nordic": {
+      "description": "Scandinavian pattern with geometric snowflakes, stars and folkloric motifs",
+      "keywords": ["nordic", "scandinavian", "snowflake", "geometric", "folkloric", "symmetric", "traditional"],
+      "content_elements": ["eight-pointed stars", "snowflake motifs", "geometric borders", "symmetric repeat patterns"],
+      "historical_context": "Traditional designs from northern European knitting and textile traditions",
+      "origin": "Scandinavia, particularly Norway, Sweden, and Finland",
+      "applications": ["sweaters", "winter wear", "home textiles", "holiday decor", "contemporary fashion"]
+    },
+    "otomi": {
+      "description": "Mexican embroidered pattern featuring colorful stylized animals and botanical elements",
+      "keywords": ["otomi", "mexican", "embroidered", "folk art", "colorful", "animals", "botanical"],
+      "content_elements": ["stylized animal figures", "folk art motifs", "brightly colored embroidery", "botanical elements"],
+      "historical_context": "Traditional embroidery of the Otomi people of central Mexico",
+      "origin": "Tenango de Doria in Hidalgo, Mexico",
+      "applications": ["tablecloths", "wall hangings", "cushions", "clothing", "contemporary home decor"]
+    },
+    "talavera": {
+      "description": "Mexican pattern inspired by hand-painted ceramics with floral and geometric elements",
+      "keywords": ["talavera", "mexican", "ceramic-inspired", "floral", "cobalt blue", "traditional", "colorful"],
+      "content_elements": ["cobalt blue designs", "floral motifs", "ceramic-inspired patterns", "geometric borders"],
+      "historical_context": "Based on traditional Mexican ceramic designs influenced by Spanish and Arabic traditions",
+      "origin": "Puebla, Mexico",
+      "applications": ["textiles", "home decor", "fashion", "accessories", "decorative items"]
+    },
+    "block_print_indian": {
+      "description": "Hand block-printed pattern with detailed motifs created using carved wooden blocks",
+      "keywords": ["block print", "indian", "hand-printed", "traditional", "carved", "artisanal", "detailed"],
+      "content_elements": ["block-printed motifs", "repeated hand-stamped elements", "floral or geometric designs", "traditional motifs"],
+      "historical_context": "Ancient Indian textile art dating back at least 2000 years",
+      "origin": "India, particularly Rajasthan, Gujarat and Madhya Pradesh",
+      "applications": ["clothing", "bed linens", "table linens", "curtains", "contemporary fashion"]
+    },
+    "peruvian": {
+      "description": "Andean pattern with geometric motifs and stylized animals inspired by Incan textiles",
+      "keywords": ["peruvian", "andean", "incan", "geometric", "symbolic", "traditional", "cultural"],
+      "content_elements": ["geometric motifs", "stylized animals", "step patterns", "diamond shapes", "symbolic designs"],
+      "historical_context": "Based on ancient Andean textile traditions dating back thousands of years",
+      "origin": "Peru and other Andean countries",
+      "applications": ["woven textiles", "alpaca wool items", "clothing", "accessories", "home decor"]
+    },
+    "oxford": {
+      "description": "Basket weave pattern with contrasting warp and weft creating subtle textural grid",
+      "keywords": ["oxford", "basket weave", "shirt fabric", "textural", "grid", "classic", "traditional"],
+      "content_elements": ["basket weave structure", "contrasting warp and weft", "subtle grid appearance", "textural surface"],
+      "historical_context": "Named after Oxford University, became popular in 19th century shirting",
+      "origin": "England, originally manufactured for elite society and academic wear",
+      "applications": ["dress shirts", "casual shirts", "tailored garments", "uniforms", "classic menswear"]
+    },
+    "pinpoint_oxford": {
+      "description": "Refined variation of oxford cloth with finer yarns and tighter weave",
+      "keywords": ["pinpoint oxford", "fine basket weave", "shirt fabric", "refined", "textural", "classic", "formal"],
+      "content_elements": ["fine basket weave structure", "refined textural surface", "small-scale grid pattern", "smooth appearance"],
+      "historical_context": "Developed as a more formal variation of traditional oxford cloth",
+      "origin": "European textile innovation for formal shirting",
+      "applications": ["business shirts", "formal shirts", "tailored garments", "premium clothing"]
+    },
+    "end_on_end": {
+      "description": "Woven pattern alternating colored and white threads creating subtle textural effect",
+      "keywords": ["end-on-end", "fil-à-fil", "shirt fabric", "alternating", "textural", "subtle", "refined"],
+      "content_elements": ["alternating colored and white threads", "subtle heathered appearance", "fine textural surface", "uniform pattern"],
+      "historical_context": "Classic shirting fabric used in traditional menswear",
+      "origin": "European textile tradition, particularly from fine shirting manufacturers",
+      "applications": ["dress shirts", "business attire", "tailored clothing", "formal garments"]
+    },
+    "poplin": {
+      "description": "Tightly woven crosswise rib pattern with smooth surface and fine texture",
+      "keywords": ["poplin", "broadcloth", "shirt fabric", "ribbed", "smooth", "fine", "crisp"],
+      "content_elements": ["tightly woven structure", "fine crosswise ribs", "smooth surface", "crisp appearance"],
+      "historical_context": "Derived from 'papelino', originally a fabric with silk warp and worsted weft",
+      "origin": "France, 15th century, later adapted throughout Europe",
+      "applications": ["formal shirts", "dresses", "skirts", "blouses", "tailored garments"]
+    },
+    "twill": {
+      "description": "Diagonal weave pattern created by passing weft threads over one or more warp threads",
+      "keywords": ["twill", "diagonal", "woven", "durable", "textural", "directional", "traditional"],
+      "content_elements": ["diagonal ribbing", "directional appearance", "durable structure", "textural surface"],
+      "historical_context": "Ancient basic weave type found in textiles throughout history",
+      "origin": "Universal textile construction used across cultures for millennia",
+      "applications": ["denim", "suits", "workwear", "upholstery", "heavy-duty fabrics"]
+    },
+    "hopsack": {
+      "description": "Basketweave variation with multiple yarns creating textured checkerboard appearance",
+      "keywords": ["hopsack", "basket weave", "suit fabric", "textured", "checkerboard", "robust", "tailored"],
+      "content_elements": ["enlarged basket weave", "textured surface", "robust structure", "visual depth"],
+      "historical_context": "Derived from coarse sacking used to store hops, refined for apparel",
+      "origin": "European textile tradition, adapted for tailored clothing",
+      "applications": ["suits", "sport coats", "jackets", "sturdy apparel", "upholstery"]
+    },
+    "birdseye": {
+      "description": "Small-scale pattern with diamond shapes resembling bird's eyes",
+      "keywords": ["birdseye", "diamond", "suit fabric", "small-scale", "textural", "classic", "tailored"],
+      "content_elements": ["tiny diamond shapes", "subtle pattern", "textural interest", "small-scale repeat"],
+      "historical_context": "Classic suiting pattern dating back to traditional British tailoring",
+      "origin": "British menswear tradition",
+      "applications": ["suits", "formal wear", "business attire", "tailored clothing"]
+    },
+    "barleycorn": {
+      "description": "Woven pattern resembling barley grain with small diagonal texture",
+      "keywords": ["barleycorn", "grain", "textural", "diagonal", "suit fabric", "traditional", "menswear"],
+      "content_elements": ["small diagonal texture", "grain-like appearance", "subtle pattern", "textural interest"],
+      "historical_context": "Traditional British suiting fabric named after its resemblance to barley grain",
+      "origin": "British textile and tailoring tradition",
+      "applications": ["suits", "sport coats", "overcoats", "formal wear", "tailored garments"]
+    },
+    "sharkskin": {
+      "description": "Smooth woven pattern with subtle sheen created by contrasting threads",
+      "keywords": ["sharkskin", "pick-and-pick", "suit fabric", "subtle sheen", "iridescent", "formal", "two-tone"],
+      "content_elements": ["two-tone thread construction", "subtle sheen", "smooth surface", "slight iridescence"],
+      "historical_context": "Popular in mid-20th century men's suiting, especially during 1950s-60s",
+      "origin": "Modern textile development for formal and business wear",
+      "applications": ["suits", "formal wear", "business attire", "tailored garments"]
+    },
+    "nailhead": {
+      "description": "Small-scale pattern with tiny squares resembling nail heads",
+      "keywords": ["nailhead", "squared", "suit fabric", "subtle texture", "small-scale", "traditional", "business"],
+      "content_elements": ["tiny square motifs", "subtle texture", "small-scale pattern", "visual interest"],
+      "historical_context": "Classic menswear suiting fabric with long tradition in tailoring",
+      "origin": "European tailoring tradition",
+      "applications": ["suits", "business attire", "formal wear", "tailored garments"]
+    },
+    "piqué_textile": {
+      "description": "Woven pattern with raised parallel cords or geometric designs",
+      "keywords": ["piqué", "waffle", "textural", "raised", "geometric", "formal", "structured"],
+      "content_elements": ["raised parallel cords", "textural surface", "geometric pattern", "dimensional weave"],
+      "historical_context": "Developed in early 18th century, became popular for formal wear and waistcoats",
+      "origin": "French textile innovation, name derived from 'quilted'",
+      "applications": ["formal shirts", "waistcoats", "dresses", "sportswear", "vests"]
+    },
+    "dobby": {
+      "description": "Small geometric pattern created using specialized dobby loom attachment",
+      "keywords": ["dobby", "geometric", "woven", "small-scale", "textural", "detailed", "traditional"],
+      "content_elements": ["small geometric designs", "textural patterns", "repeated motifs", "fine detailing"],
+      "historical_context": "Named after the dobby loom attachment invented in 19th century",
+      "origin": "European textile innovation following industrial revolution",
+      "applications": ["shirts", "blouses", "dresses", "home textiles", "decorative fabrics"]
+    },
+    "seersucker_stripe": {
+      "description": "Alternating smooth and puckered stripes with distinctive texture",
+      "keywords": ["seersucker", "puckered", "striped", "textural", "dimensional", "summer", "classic"],
+      "content_elements": ["alternating smooth and puckered stripes", "textural contrast", "dimensional surface", "vertical pattern"],
+      "historical_context": "Name derived from Persian words 'shir o shakar' meaning 'milk and sugar'",
+      "origin": "India, later popularized in the United States, particularly in the South",
+      "applications": ["summer suits", "dresses", "shirts", "warm weather clothing", "classic americana"]
+    },
+    "ottoman": {
+      "description": "Ribbed textile with pronounced horizontal ribs created by thick weft threads",
+      "keywords": ["ottoman", "ribbed", "horizontal", "pronounced", "structured", "formal", "heavy"],
+      "content_elements": ["pronounced horizontal ribs", "thick weft threads", "structured surface", "substantial texture"],
+      "historical_context": "Named after the Ottoman Empire, indicating eastern textile influence",
+      "origin": "Middle Eastern textile tradition adapted in European manufacturing",
+      "applications": ["formal wear", "upholstery", "ribbons", "structured garments", "accessories"]
+    },
+    "matelassé_diamond": {
+      "description": "Double-cloth weave creating raised diamond pattern resembling quilting",
+      "keywords": ["matelassé", "diamond", "quilted", "raised", "dimensional", "formal", "textural"],
+      "content_elements": ["raised diamond pattern", "quilted appearance", "dimensional surface", "formal design"],
+      "historical_context": "Luxury textile developed in France, name means 'padded' or 'quilted'",
+      "origin": "French textile tradition, became popular in 18th-19th centuries",
+      "applications": ["formal jackets", "vests", "decorative textiles", "upholstery", "home furnishings"]
+    },
+    "fil_coupé": {
+      "description": "Pattern created with supplementary floating yarns that are cut to create texture",
+      "keywords": ["fil coupé", "cut thread", "floating yarns", "textural", "decorative", "luxury", "dimensional"],
+      "content_elements": ["cut floating threads", "dimensional surface", "textural elements", "decorative pattern"],
+      "historical_context": "Luxury fabric manufacturing technique requiring significant handwork",
+      "origin": "European luxury textile production, particularly French and Italian",
+      "applications": ["luxury apparel", "evening wear", "formal blouses", "decorative textiles", "couture"]
+    },
+    "velvet_crushed": {
+      "description": "Pile fabric with compressed pile creating multidirectional light reflection",
+      "keywords": ["crushed velvet", "compressed pile", "multidirectional", "light-reflective", "luxurious", "dimensional", "textural"],
+      "content_elements": ["compressed pile surface", "varied pile direction", "light-reflecting qualities", "rich texture"],
+      "historical_context": "Decorative technique applied to traditional velvet fabrics",
+      "origin": "European textile finishing technique for luxury fabrics",
+      "applications": ["evening wear", "decorative apparel", "home furnishings", "theatrical costumes", "luxury interiors"]
+    },
+    "velvet_panne": {
+      "description": "Pile fabric with flattened pile in one direction creating smooth, lustrous finish",
+      "keywords": ["panne velvet", "flattened pile", "directional", "light-reflective", "smooth", "lustrous", "sleek"],
+      "content_elements": ["flattened directional pile", "smooth surface", "high shine", "sleek appearance"],
+      "historical_context": "Developed as a variation of traditional velvet with distinct directional quality",
+      "origin": "European textile innovation for luxury and performance applications",
+      "applications": ["evening wear", "dance costumes", "performance apparel", "luxury fashion", "decorative textiles"]
+    },
+    "velvet_devoré": {
+      "description": "Pattern created by chemically dissolving cellulose fibers from cellulose-protein blend fabric",
+      "keywords": ["devoré", "burnout", "velvet", "sheer", "contrast", "decorative", "formal"],
+      "content_elements": ["contrasting sheer and pile areas", "pattern created by fiber removal", "dimensional contrast", "elegant design"],
+      "historical_context": "Developed in France in early 20th century, gained popularity in 1920s fashion",
+      "origin": "French textile innovation combining chemical processing with luxury fabrics",
+      "applications": ["evening wear", "formal blouses", "scarves", "decorative textiles", "luxury fashion"]
+    },
+    "moiré": {
+      "description": "Wavy watermark-like pattern created by pressing ribbed fabric with engraved rollers",
+      "keywords": ["moiré", "watermark", "wavy", "pressed", "formal", "rippled", "decorative"],
+      "content_elements": ["wavy watermark pattern", "rippled surface effect", "light-reflective qualities", "formal appearance"],
+      "historical_context": "From French 'moiré', originally a type of watered silk fabric",
+      "origin": "Textile finishing technique pioneered in France and Italy",
+      "applications": ["formal gowns", "ribbons", "decorative trims", "interior textiles", "luxury packaging"]
+    },
+    "brocade": {
+      "description": "Richly decorative shuttle-woven pattern with raised designs and often metallic threads",
+      "keywords": ["brocade", "jacquard", "raised", "ornate", "metallic", "decorative", "formal"],
+      "content_elements": ["raised decorative designs", "metallic thread accents", "ornate patterns", "dimensional surface"],
+      "historical_context": "Luxury fabric traditionally associated with nobility and formal occasions",
+      "origin": "Originated in Asia, developed extensively in Italy, particularly Venice and Florence",
+      "applications": ["formal wear", "ceremonial garments", "furniture upholstery", "liturgical vestments", "wall coverings"]
+    },
+    "damask_floral": {
+      "description": "Reversible floral pattern with contrasting matte and shiny surfaces created by weave structure",
+      "keywords": ["damask", "floral", "reversible", "contrasting texture", "formal", "traditional", "elegant"],
+      "content_elements": ["reversible pattern", "contrasting matte and shiny areas", "floral motifs", "elegant designs"],
+      "historical_context": "Luxury fabric named after Damascus, Syria, important textile center",
+      "origin": "Middle Eastern textile tradition that spread to Europe during the Crusades",
+      "applications": ["upholstery", "drapery", "formal wear", "table linens", "wall coverings"]
+    },
+    "lampas": {
+      "description": "Complex woven pattern with background and supplementary weft creating raised designs",
+      "keywords": ["lampas", "supplementary weft", "raised", "complex", "formal", "decorative", "luxury"],
+      "content_elements": ["background weave", "supplementary weft patterns", "raised designs", "complex structure"],
+      "historical_context": "Historically significant luxury fabric used for court dress and furnishings",
+      "origin": "Developed extensively in Italian and French textile centers",
+      "applications": ["formal wear", "ecclesiastical vestments", "luxury upholstery", "wall coverings", "decorative panels"]
+    },
+    "lace_chantilly": {
+      "description": "Delicate floral pattern on net ground with fine thread outline",
+      "keywords": ["chantilly lace", "floral", "delicate", "netted", "outlined", "formal", "traditional"],
+      "content_elements": ["delicate floral designs", "fine net background", "outlined motifs", "sheer structure"],
+      "historical_context": "Originated in France, named after the city of Chantilly",
+      "origin": "Chantilly, France, developed in 17th-18th centuries",
+      "applications": ["bridal wear", "formal gowns", "mantillas", "lingerie", "decorative accessories"]
+    },
+    "lace_guipure": {
+      "description": "Heavy lace pattern with raised cord-like motifs without net background",
+      "keywords": ["guipure lace", "tape lace", "bold", "raised", "structured", "cordlike", "formal"],
+      "content_elements": ["bold raised motifs", "cord-like structures", "no net ground", "substantial lace pattern"],
+      "historical_context": "From French, meaning 'cord-like', developed as sturdier decorative lace",
+      "origin": "European lace-making tradition, particularly Venice and France",
+      "applications": ["bridal wear", "formal apparel", "decorative trimming", "home textiles", "high fashion"]
+    },
+    "broderie_anglaise": {
+      "description": "White embroidered pattern with cutwork holes and satin-stitched edges",
+      "keywords": ["broderie anglaise", "whitework", "eyelet", "cutwork", "floral", "traditional", "delicate"],
+      "content_elements": ["cutwork holes", "satin-stitched edges", "floral motifs", "white-on-white pattern"],
+      "historical_context": "Name means 'English embroidery' in French, despite its European origins",
+      "origin": "Eastern Europe, later popularized in England during Victorian era",
+      "applications": ["summer dresses", "blouses", "children's wear", "undergarments", "home textiles"]
+    },
+    "crewelwork": {
+      "description": "Embroidered pattern using wool yarn in raised, textural floral and vine motifs",
+      "keywords": ["crewel", "wool embroidery", "textural", "raised", "floral", "jacobean", "decorative"],
+      "content_elements": ["wool yarn embroidery", "raised textural stitching", "floral and vine motifs", "bold designs"],
+      "historical_context": "Traditional embroidery style dating to Medieval England and Jacobean period",
+      "origin": "England, with influence from Indian and Middle Eastern designs",
+      "applications": ["upholstery", "drapery", "wall hangings", "cushions", "decorative textiles"]
+    },
+    "chinoiserie": {
+      "description": "European pattern inspired by East Asian artistic traditions with fanciful scenes",
+      "keywords": ["chinoiserie", "asian-inspired", "decorative", "exotic", "fanciful", "narrative", "detailed"],
+      "content_elements": ["pagodas", "exotic flora and fauna", "ornate asian-inspired motifs", "decorative scenes"],
+      "historical_context": "Popular in 17th-18th century Europe during period of fascination with Chinese arts",
+      "origin": "European interpretation of Chinese and East Asian artistic elements",
+      "applications": ["decorative fabrics", "wallpaper", "upholstery", "home textiles", "fashion"]
+    },
+    "art_deco": {
+      "description": "Geometric pattern with bold shapes, symmetry, and stylized motifs from 1920s-30s",
+      "keywords": ["art deco", "geometric", "bold", "symmetrical", "stylized", "modern", "jazzy"],
+      "content_elements": ["bold geometric shapes", "symmetrical designs", "stylized motifs", "stepped forms"],
+      "historical_context": "Influential design movement of the interwar period (1920s-1930s)",
+      "origin": "Originated in France, spread globally as a dominant design aesthetic",
+      "applications": ["fashion", "interior textiles", "decorative fabrics", "apparel", "accessories"]
+    },
+    "art_nouveau": {
+      "description": "Flowing pattern with sinuous lines, asymmetrical forms and stylized natural elements",
+      "keywords": ["art nouveau", "flowing", "organic", "asymmetrical", "natural", "decorative", "sinuous"],
+      "content_elements": ["flowing curved lines", "stylized flowers and plants", "whiplash curves", "natural motifs"],
+      "historical_context": "International art movement prominent from 1890s to early 1910s",
+      "origin": "European artistic movement centered in France and Belgium",
+      "applications": ["decorative textiles", "fashion", "interior fabrics", "accessories", "home furnishings"]
+    },
+    "optical": {
+      "description": "Visual pattern creating illusion of movement, depth, or vibration",
+      "keywords": ["optical", "op art", "geometric", "vibrating", "movement", "modern", "visual illusion"],
+      "content_elements": ["visual vibration effects", "geometric precision", "color contrasts", "movement illusion"],
+      "historical_context": "Based on Op Art movement of the 1960s focused on optical illusions",
+      "origin": "Modern art movement pioneered by artists like Victor Vasarely and Bridget Riley",
+      "applications": ["fashion", "home textiles", "graphic designs", "contemporary interiors", "modern decor"]
+    },
+    "mid_century": {
+      "description": "Modernist pattern with atomic and boomerang shapes popular in 1950s-60s",
+      "keywords": ["mid-century modern", "atomic", "boomerang", "geometric", "retro", "space age", "biomorphic"],
+      "content_elements": ["atomic motifs", "boomerang shapes", "organic geometric forms", "distinctive retro elements"],
+      "historical_context": "Reflects post-war optimism and space-age influence of 1950s-60s",
+      "origin": "American and European design aesthetic of the mid-20th century",
+      "applications": ["upholstery", "drapery", "fashion", "home textiles", "retro designs"]
+    },
+    "ripstop": {
+      "description": "Reinforced grid pattern with thicker threads at regular intervals to prevent tearing",
+      "keywords": ["ripstop", "grid", "reinforced", "technical", "durable", "utilitarian", "outdoor", "tear-resistant", "military-grade", "rugged", "weather-resistant", "functional", "high-tensile", "reinforcement pattern", "fail-safe textile", "gridded construction", "tactical fabric", "all-weather material", "expedition-grade", "tactical grade", "reinforced squares", "high-strength grid", "moisture-resistant", "practical textile", "technical weave", "nylon ripstop", "polyester ripstop", "cotton ripstop", "robust construction", "performance fabric"],
+      "content_elements": ["reinforcement grid", "regular square pattern", "visible reinforcement threads", "technical appearance", "precise grid layout", "strength-enhancing structure", "reinforced crosshatch", "sturdy reinforcement points", "geometrically placed filaments", "strengthening grid", "strategic reinforcement", "structural support grid", "tear-arresting pattern", "perpendicular reinforcement", "diagonal stress distribution", "visible technical pattern", "interwoven support structure", "precisely calibrated grid", "specialized reinforcement", "balanced stress distribution", "calculated thread placement", "load-bearing grid points", "structural integrity elements", "tensile reinforcement nodes", "technical grid layout"],
+      "historical_context": "Developed for military applications requiring lightweight but durable textiles, with widespread adoption following World War II for parachutes and military gear",
+      "origin": "Military textile innovation later adopted for outdoor and technical applications, pioneered in the mid-20th century",
+      "technical_specifications": {
+        "thread_spacing": "0.5-1.0 cm grid (standard)",
+        "reinforcement_ratio": "150-300% increased tear strength",
+        "common_materials": ["nylon", "polyester", "cotton blends", "recycled polymers"]
+      },
+      "production_methods": ["shuttle loom weaving", "dobby loom construction", "filament integration", "specialized tensioning"],
+      "waterproofing_options": ["DWR coating", "silicone impregnation", "PU coating", "fluorocarbon treatment"],
+      "applications": ["outdoor apparel", "luggage", "tents", "parachutes", "military gear", "technical clothing", "backpacks", "sporting equipment", "marine applications", "kites", "sails", "windbreakers", "outdoor covering", "military uniforms", "tactical vests", "emergency equipment", "outdoor shelters", "expedition gear", "ultralight equipment", "camping gear", "hunting apparel", "aviation applications", "outdoor furniture", "protective covers", "technical outerwear", "performance sportswear"]
+    },
+    "cordura": {
+      "description": "Textured technical fabric with high abrasion resistance and distinctive weave pattern",
+      "keywords": ["cordura", "technical", "durable", "textured", "abrasion-resistant", "tough", "utilitarian"],
+      "content_elements": ["dense texture", "technical appearance", "distinctive tight weave", "durable surface"],
+      "historical_context": "Developed in 1929 and refined by DuPont in 1977 for high-performance applications",
+      "origin": "American textile innovation for technical and military applications",
+      "applications": ["backpacks", "luggage", "motorcycle gear", "tactical equipment", "outdoor apparel"]
+    },
+    "gore_tex": {
+      "description": "Technical fabric with distinctive microporous surface pattern for waterproof breathability",
+      "keywords": ["gore-tex", "waterproof", "breathable", "technical", "microporous", "membrane", "outdoor"],
+      "content_elements": ["membrane structure", "microporous surface", "technical appearance", "laminated construction"],
+      "historical_context": "Revolutionary textile technology introduced in 1969 by W.L. Gore & Associates",
+      "origin": "American technical textile innovation that transformed outdoor apparel",
+      "applications": ["outdoor jackets", "hiking boots", "gloves", "technical outerwear", "extreme weather gear"]
+    },
+    "kevlar": {
+      "description": "High-strength technical fabric with distinctive tight weave pattern offering exceptional tensile strength-to-weight ratio and heat resistance",
+      "keywords": ["kevlar", "ballistic", "high-strength", "technical", "protective", "engineered", "industrial", "para-aramid", "body armor", "cut-resistant", "heat-resistant", "flame-retardant", "puncture-resistant", "high-tensile", "impact-resistant", "abrasion-resistant", "slash-proof", "bulletproof", "blast-resistant", "stab-resistant", "military-grade", "technical weave", "tactical fabric", "aerospace-grade", "high-performance fiber", "protection-grade", "specialized weave", "safety textile", "high-modulus", "anti-ballistic"],
+      "content_elements": ["tight technical weave", "distinctive yellow color", "engineered texture", "industrial appearance", "specialized fiber orientation", "multi-directional strength", "tensile-optimized structure", "ballistic-grade construction", "impact-dispersing weave", "heat-resistant properties", "specialized yarn construction", "technical filament alignment", "structural integrity elements", "energy-absorbing structure", "strategically engineered plies", "multi-layer protection system", "specialized cross-section fibers", "anti-ballistic structure", "technical fiber composition", "specialized molecular alignment", "engineered crystalline structure", "multi-axial reinforcement", "impact energy diffusion pattern", "structural load distribution", "para-aramid molecular structure"],
+      "historical_context": "Para-aramid synthetic fiber developed at DuPont in 1965 by Stephanie Kwolek for extreme applications, revolutionizing personal protection and industrial materials",
+      "origin": "American technical textile innovation for industrial and protective use, patented by DuPont and first commercialized in the early 1970s",
+      "technical_specifications": {
+        "tensile_strength": "3,620 MPa (typical)",
+        "density": "1.44 g/cm³",
+        "melting_point": "Does not melt, decomposes at ~500°C",
+        "specific_strength": "2,514 kN·m/kg"
+      },
+      "manufacturing_process": ["acid solution spinning", "high-temperature treatment", "specialized tension control", "proprietary fiber formation"],
+      "comparative_advantages": {
+        "vs_steel": "5 times stronger by weight",
+        "vs_carbon_fiber": "Higher impact and abrasion resistance",
+        "vs_regular_nylon": "Up to 10 times stronger"
+      },
+      "applications": ["body armor", "helmets", "cut-resistant gloves", "industrial protection", "aerospace components", "bulletproof vests", "ballistic panels", "motorcycle gear", "racing suits", "firefighting equipment", "extreme heat protection", "industrial cables", "reinforcement materials", "military equipment", "tactical gear", "safety gloves", "industrial composites", "high-performance boats", "mooring lines", "optical fiber reinforcement", "specialized ropes", "automotive components", "puncture-resistant materials", "specialized sporting equipment", "blast containment", "space applications", "high-temperature seals", "safety curtains"]
+    },
+    "carbon_fiber": {
+      "description": "High-tech woven pattern of carbon fiber strands with distinctive visual texture",
+      "keywords": ["carbon fiber", "technical", "woven", "high-tech", "structural", "lightweight", "engineered"],
+      "content_elements": ["woven carbon strands", "technical crosshatch pattern", "distinctive black texture", "engineered appearance"],
+      "historical_context": "Advanced composite material developed for aerospace and high-performance applications",
+      "origin": "Modern technical material innovation for lightweight structural applications",
+      "applications": ["aerospace", "automotive", "sporting goods", "high-performance components", "luxury accessories"]
+    },
+    "technical_mesh": {
+      "description": "Open structured pattern with engineered porosity for breathability and lightweight properties",
+      "keywords": ["technical mesh", "open structure", "breathable", "engineered", "lightweight", "performance", "athletic"],
+      "content_elements": ["engineered openings", "structured mesh pattern", "consistent apertures", "technical construction"],
+      "historical_context": "Developed for athletic and performance applications requiring ventilation",
+      "origin": "Modern textile innovation for performance and athletic wear",
+      "applications": ["athletic wear", "performance clothing", "shoes", "technical apparel", "ventilated gear"]
+    },
+    "spacer_mesh": {
+      "description": "Three-dimensional knit with distinct surface texture and cushioning properties created by separate front and back layers connected by monofilament spacer yarns",
+      "keywords": ["spacer mesh", "3D knit", "dimensional", "textural", "technical", "cushioned", "engineered", "comfort textile", "performance mesh", "warp-knitted spacer", "technical sandwich fabric", "breathable 3D structure", "distance fabric", "double-surface textile", "air management fabric", "cushioning textile", "pressure distribution fabric", "warp-knit technical", "ventilated structure", "moisture-wicking 3D", "temperature-regulating", "compression-resistant", "resilient textile", "multi-functional mesh", "structural fabric", "recovery material", "pressure-point relief", "anti-compression", "thermoregulating mesh", "anatomical support fabric"],
+      "content_elements": ["3D structure", "cushioned construction", "engineered air channels", "technical appearance", "monofilament spacer yarns", "dual-surface construction", "uniform spacing elements", "controlled compression resistance", "structural spacer filaments", "calibrated resilience", "engineered recovery properties", "consistent compression distribution", "technical knit surfaces", "dimensionally stable structure", "air circulation pathways", "moisture management channels", "thermal regulation zones", "specialized filament connectors", "cushioning columns", "multi-directional flexibility", "anatomical adaptability", "engineered compressibility", "uniform resilience pattern", "specific distance control", "technical spacing architecture"],
+      "historical_context": "Modern technical textile developed for comfort and performance applications, with significant advancements in the 1990s through specialized warp knitting technology",
+      "origin": "Technical textile innovation for comfort and performance properties, developed through advances in warp knitting and technical textile engineering",
+      "technical_specifications": {
+        "typical_thickness": "2-15mm",
+        "recovery_rate": "95-98% after compression",
+        "breathability": "High air permeability (400-800 l/m²/s)",
+        "weight_range": "200-800 g/m²"
+      },
+      "manufacturing_methods": ["double-needle bar warp knitting", "specialized spacer warp knitting", "monofilament insertion", "multi-axial warp knitting machines"],
+      "performance_characteristics": {
+        "cushioning": "Excellent impact absorption",
+        "breathability": "Superior air and moisture management",
+        "durability": "High resistance to repeated compression",
+        "thermoregulation": "Enhanced heat and moisture regulation"
+      },
+      "applications": ["shoe uppers", "backpack padding", "mattress covers", "performance apparel", "technical gear", "automotive seating", "medical cushioning", "orthopedic supports", "helmet padding", "body armor comfort layers", "sports padding", "wheelchair cushions", "acoustic panels", "filtration materials", "compression garments", "athletic insoles", "bra construction", "technical upholstery", "pressure distribution pads", "comfort interfaces", "protective equipment", "medical wound care", "moisture management layers", "ventilation systems", "specialized packaging", "ergonomic supports", "footwear components", "technical healthcare textiles", "military load bearing equipment"],
+      "is_3d": true
+    },
+    "power_mesh": {
+      "description": "Fine elastic net pattern with controlled stretch and recovery properties",
+      "keywords": ["power mesh", "elastic", "sheer", "technical", "stretchy", "supportive", "engineered"],
+      "content_elements": ["fine net structure", "controlled elasticity", "technical appearance", "semi-transparent construction"],
+      "historical_context": "Technical textile developed for compression and support applications",
+      "origin": "Modern textile engineering for athletic and shapewear applications",
+      "applications": ["athletic wear", "dancewear", "shapewear", "supportive garments", "technical apparel"]
+    },
+    "neoprene": {
+      "description": "Synthetic rubber textile with distinctive surface pattern and foam core",
+      "keywords": ["neoprene", "foam", "technical", "insulating", "waterproof", "cushioned", "engineered"],
+      "content_elements": ["foam structure", "distinctive surface texture", "technical appearance", "insulating construction"],
+      "historical_context": "Synthetic rubber invented by DuPont in 1930 for industrial applications",
+      "origin": "American technical material originally developed for industrial use",
+      "applications": ["wetsuits", "laptop sleeves", "protective cases", "technical accessories", "water sports gear"],
+      "is_3d": true
+    },
+    "reflective": {
+      "description": "Technical pattern with embedded retroreflective elements for visibility",
+      "keywords": ["reflective", "retroreflective", "visibility", "safety", "technical", "engineered", "functional"],
+      "content_elements": ["retroreflective elements", "geometric arrangement", "technical construction", "functional design"],
+      "historical_context": "Modern safety innovation for visibility in low-light conditions",
+      "origin": "Technical textile development for safety and visibility applications",
+      "applications": ["safety apparel", "athletic wear", "outerwear", "accessories", "technical gear"]
+    },
+    "holographic": {
+      "description": "Reflective pattern creating rainbow-like color shifts and dimensional visual effects",
+      "keywords": ["holographic", "iridescent", "rainbow", "reflective", "dimensional", "shifting", "modern"],
+      "content_elements": ["rainbow color shifts", "reflective surface", "dimensional visual effect", "metallic appearance"],
+      "historical_context": "Modern textile finish developed for decorative and fashion applications",
+      "origin": "Contemporary technical finish for decorative and fashion textiles",
+      "applications": ["fashion accessories", "footwear", "packaging", "decorative elements", "modern design"]
+    },
+    "selenite": {
+      "description": "Textile with crystalline or fractured appearance mimicking selenite crystal formation",
+      "keywords": ["selenite", "crystalline", "fractured", "geometric", "modern", "angular", "translucent"],
+      "content_elements": ["crystalline structure", "angular fractures", "geometric formation", "translucent qualities"],
+      "historical_context": "Modern textile aesthetic inspired by natural crystal formations",
+      "origin": "Contemporary textile design based on natural mineral structures",
+      "applications": ["fashion", "decorative textiles", "modern interiors", "accessories", "contemporary design"]
+    },
+    "metallic_foil": {
+      "description": "Lustrous pattern created by metal foil application to textile surface",
+      "keywords": ["metallic foil", "lustrous", "reflective", "decorative", "modern", "shiny", "applied"],
+      "content_elements": ["metal foil surface", "reflective quality", "decorative finish", "smooth sheen"],
+      "historical_context": "Decorative textile treatment that became popular in modern fashion",
+      "origin": "Textile finishing technique adapted for fashion and decorative applications",
+      "applications": ["fashion", "accessories", "decorative textiles", "special occasion wear", "modern design"]
+    },
+    "laser_cut": {
+      "description": "Precision-cut pattern created by laser technology with clean edges",
+      "keywords": ["laser-cut", "precision", "geometric", "modern", "technical", "engineered", "architectural"],
+      "content_elements": ["precision-cut openings", "clean edges", "engineered pattern", "technical precision"],
+      "historical_context": "Modern textile processing technique enabled by laser technology",
+      "origin": "Contemporary technical process for precision textile manipulation",
+      "applications": ["fashion", "accessories", "technical textiles", "decorative elements", "modern design"]
+    },
+    "3d_printed": {
+      "description": "Additive manufactured pattern with precise three-dimensional structures",
+      "keywords": ["3D printed", "additive manufactured", "technical", "precise", "engineered", "modern", "structural"],
+      "content_elements": ["layered construction", "precise geometry", "engineered structure", "technical precision"],
+      "historical_context": "Cutting-edge textile technology enabling customized structural elements",
+      "origin": "Modern digital fabrication technique applied to textiles and fashion",
+      "applications": ["avant-garde fashion", "technical components", "customized elements", "experimental textiles"],
+      "is_3d": true
+    },
+    "biomimetic": {
+      "description": "Pattern inspired by natural biological structures optimized for performance",
+      "keywords": ["biomimetic", "nature-inspired", "organic", "technical", "engineered", "functional", "optimized"],
+      "content_elements": ["nature-inspired structures", "optimized patterns", "functional design", "organic geometry"],
+      "historical_context": "Modern approach to textile design mimicking evolved natural structures",
+      "origin": "Contemporary technical design philosophy emulating natural systems",
+      "applications": ["technical textiles", "performance gear", "advanced materials", "engineered fabrics"]
+    },
+    "thermochromic": {
+      "description": "Temperature-responsive pattern that changes appearance with heat",
+      "keywords": ["thermochromic", "color-changing", "responsive", "technical", "interactive", "dynamic", "modern"],
+      "content_elements": ["temperature-responsive elements", "color-changing properties", "interactive design", "dynamic appearance"],
+      "historical_context": "Smart textile technology developed for interactive and dynamic textiles",
+      "origin": "Advanced technical textile innovation for responsive applications",
+      "applications": ["interactive fashion", "temperature indicators", "smart textiles", "modern design", "functional items"]
+    },
+    "photochromic": {
+      "description": "Light-responsive pattern that changes appearance with UV exposure",
+      "keywords": ["photochromic", "light-sensitive", "color-changing", "responsive", "technical", "dynamic", "smart"],
+      "content_elements": ["UV-responsive elements", "color-changing properties", "dynamic appearance", "technical innovation"],
+      "historical_context": "Smart textile technology incorporating responsive materials",
+      "origin": "Advanced technical textile innovation adapting optical technologies",
+      "applications": ["interactive fashion", "UV indicators", "smart textiles", "outdoor gear", "innovative design"]
+    },
+    "electrochromic": {
+      "description": "Electronically-activated pattern that changes appearance with electrical current",
+      "keywords": ["electrochromic", "electronic", "color-changing", "technical", "smart", "interactive", "future-forward"],
+      "content_elements": ["electronically-activated elements", "switchable appearance", "circuit integration", "technical construction"],
+      "historical_context": "Advanced e-textile technology at the intersection of electronics and textiles",
+      "origin": "Cutting-edge smart textile innovation combining multiple technologies",
+      "applications": ["wearable technology", "interactive fashion", "smart textiles", "future-forward design"]
+    },
+    "conductive": {
+      "description": "Technical pattern incorporating electrically conductive elements for functionality, enabling electronic capabilities within textile structures",
+      "keywords": ["conductive", "electronic", "technical", "functional", "smart", "engineered", "e-textile", "electrically active", "circuit-integrated", "signal-transmitting", "current-carrying", "electronically enhanced", "circuit-enabled", "sensor-ready", "data-transmitting", "digitally integrated", "electronically responsive", "current-conducting", "signal-enabled", "resistive", "capacitive sensing", "electrical pathway", "IoT-ready", "interactive surface", "voltage-sensing", "current-measuring", "electronically functional", "circuit-integrated", "signaling fabric", "power-distributing"],
+      "content_elements": ["conductive pathways", "engineered connections", "technical integration", "functional design", "circuit traces", "electronic junctions", "signal paths", "technical connection points", "integrated circuit elements", "digital connection infrastructure", "sensing zones", "electrode areas", "electronic interconnects", "component mounting points", "signal transmission lines", "power distribution network", "capacitive sensing regions", "resistive elements", "electronic sensing grid", "touch-responsive areas", "technical connection nodes", "electronic contact points", "shielded signal paths", "data transmission routes", "heat-generating elements"],
+      "historical_context": "Modern e-textile development enabling electronic integration, emerging in the late 20th century and accelerating with wearable technology innovations in the 2000s",
+      "origin": "Technical textile innovation bridging textiles and electronics, developed through interdisciplinary research in material science, electronics, and textile engineering",
+      "technical_specifications": {
+        "conductivity_range": "0.01-100 ohms/square (typical)",
+        "materials": ["silver-coated fibers", "stainless steel filaments", "carbon-infused polymers", "copper-based conductors", "conductive polymers", "graphene coatings"],
+        "connection_types": ["sewn connections", "anisotropic connections", "welded junctions", "conductive adhesives"]
+      },
+      "manufacturing_methods": ["conductive ink printing", "vacuum metallization", "electroplating", "conductive yarn integration", "laser-based metallization", "electronic embroidery"],
+      "electronic_capabilities": {
+        "sensing": ["pressure", "stretch", "temperature", "humidity", "proximity"],
+        "actuation": ["heating", "lighting", "vibration", "shape change"],
+        "communication": ["Bluetooth", "NFC", "RFID", "Wi-Fi"]
+      },
+      "applications": ["wearable technology", "smart textiles", "electronic interfaces", "interactive garments", "health monitoring systems", "performance tracking apparel", "military communications", "heated clothing", "interactive fashion", "medical monitoring garments", "EMI shielding", "static dissipation", "sensing garments", "rehabilitation textiles", "occupational monitoring", "biometric clothing", "smart home textiles", "gesture recognition interfaces", "illuminated textiles", "interactive art installations", "automotive interfaces", "aerospace controls", "safety monitoring systems", "patient care textiles", "interactive educational materials", "augmented reality interfaces", "musical textiles", "sports performance analysis", "programmable fashion", "electronic protective clothing"]
+    },
+    "memory_fabric": {
+      "description": "Technical pattern with shape memory properties that return to programmed form",
+      "keywords": ["memory fabric", "shape memory", "technical", "responsive", "engineered", "smart", "transformative"],
+      "content_elements": ["programmed structure", "recovery properties", "technical construction", "responsive behavior"],
+      "historical_context": "Advanced material science application in textiles for responsive properties",
+      "origin": "Technical textile innovation incorporating shape memory technologies",
+      "applications": ["technical apparel", "responsive garments", "smart textiles", "transformative designs"]
+    },
+    "compression_knit": {
+      "description": "Engineered knit pattern with graduated compression properties",
+      "keywords": ["compression", "graduated", "technical", "supportive", "performance", "engineered", "functional"],
+      "content_elements": ["engineered compression zones", "graduated tension pattern", "technical construction", "functional design"],
+      "historical_context": "Technical textile development for performance and medical applications",
+      "origin": "Advanced knitting technology for functional and supportive applications",
+      "applications": ["athletic wear", "recovery garments", "medical textiles", "performance apparel"]
+    },
+    "seamless_knit": {
+      "description": "Three-dimensional knit pattern created in complete garment form without seams",
+      "keywords": ["seamless knit", "whole garment", "3D knit", "technical", "engineered", "modern", "performance"],
+      "content_elements": ["seamless construction", "engineered transitions", "three-dimensional structure", "technical precision"],
+      "historical_context": "Advanced knitting technology enabling complete garment production",
+      "origin": "Modern technical innovation in computerized knitting systems",
+      "applications": ["performance apparel", "undergarments", "technical clothing", "athletic wear"],
+      "is_3d": true
+    },
+    "phase_change": {
+      "description": "Technical pattern incorporating materials that absorb or release heat energy",
+      "keywords": ["phase change", "thermal regulation", "technical", "responsive", "functional", "engineered", "smart"],
+      "content_elements": ["microencapsulated materials", "thermal regulation structure", "functional elements", "technical construction"],
+      "historical_context": "Advanced thermal regulation technology developed for space applications",
+      "origin": "NASA-originated technology adapted for consumer textiles",
+      "applications": ["performance outerwear", "bedding", "athletic wear", "temperature-regulating apparel"]
+    },
+    "plain_weave": {
+      "description": "Simple cloth construction with weft threads passing over and under warp threads in alternation",
+      "keywords": ["plain weave", "tabby", "basic weave", "balanced", "taffeta", "simple weave", "foundational weave", "flat weave", "warp and weft", "homespun", "uniform surface", "muslin", "canvas", "cloth weave", "broadcloth", "sheeting", "balanced weave", "light weight", "regular surface", "uniform appearance", "versatile fabric", "even texture", "durable construction", "classic weave"],
+      "content_elements": ["balanced structure", "uniform grid", "even surface", "consistent interlacement", "regular pattern", "uncomplicated construction", "compact weave", "regular grid", "warp dominant", "weft dominant", "balanced density", "simple intersections", "functional structure", "versatile foundation", "adaptable base", "regular textile grid", "straightforward construction", "stable foundation", "undirectional structure", "plainly visible threads"],
+      "historical_context": "One of the most ancient and fundamental weaving techniques dating back to early civilizations, forming the basis for textile development worldwide",
+      "origin": "Developed independently across multiple ancient civilizations as one of the first weaving techniques",
+      "applications": ["shirting", "bottom weight", "household textiles", "quilting cotton", "sheeting", "canvas", "broadcloth", "printable base", "fashion fabrics", "interior textiles", "utility fabrics", "everyday garments", "bedding", "craft projects", "basis for prints", "functional garments", "foundation fabrics", "home decor", "industrial applications", "art canvas", "bandages", "medical textiles"]
     }
   },
-  "preferred_model": "gemini-1.5-flash",
-  "colors": {
-    "red": ["crimson", "scarlet", "cherry", "ruby", "garnet"],
-    "blue": ["navy", "azure", "cobalt", "cerulean", "indigo"],
-    "green": ["emerald", "mint", "sage", "olive", "lime"]
-  },
-  "density_types": {
-    "sparse": {
-      "description": "Elements are widely spaced with significant background showing",
-      "confidence": 0.85
+  "pattern_attributes": {
+    "weave_complexity": ["simple", "medium", "complex", "ultra-complex", "experimental"],
+    "historical_periods": ["ancient", "medieval", "renaissance", "industrial revolution", "art deco", "mid-century", "contemporary", "futuristic"],
+    "geographical_origins": ["european", "middle eastern", "african", "asian", "americas", "oceanic", "global", "interplanetary"],
+    "cultural_significance": ["religious", "ceremonial", "royal", "everyday", "military", "maritime", "industrial", "technical", "futuristic"],
+    "textile_characteristics": {
+      "structure": ["flat", "dimensional", "layered", "composite", "multi-layered", "emergent", "adaptive", "reactive", "responsive"],
+      "texture": ["smooth", "rough", "nubby", "slub", "brushed", "raised", "embossed", "technical", "variable", "transformative"],
+      "performance": ["standard", "enhanced", "high-performance", "technical", "responsive", "adaptive", "smart", "augmented", "intelligent"]
     },
-    "medium": {
-      "description": "Balanced distribution of elements and background",
-      "confidence": 0.85
+    "manufacturing_processes": ["handwoven", "shuttle loom", "rapier loom", "air jet", "water jet", "jacquard", "dobby", "circular knit", "warp knit", "technical knit", "specialized machinery", "programmed loom", "digital weaving", "3D weaving", "molecular assembly"],
+    "sustainability_metrics": {
+      "resource_usage": ["standard", "reduced", "minimal", "regenerative", "closed-loop"],
+      "biodegradability": ["non-biodegradable", "partially biodegradable", "biodegradable", "compostable", "bio-regenerative"],
+      "circularity": ["linear", "partially circular", "circular", "regenerative", "positive impact"]
     },
-    "dense": {
-      "description": "Elements are closely packed with minimal background showing",
-      "confidence": 0.85
+    "technical_specifications": {
+      "tensile_strength": ["low", "medium", "high", "ultra-high", "engineered"],
+      "abrasion_resistance": ["minimal", "standard", "enhanced", "high", "technical", "specialized"],
+      "thermal_properties": ["insulating", "heat-conducting", "temperature-regulating", "phase-changing", "responsive"],
+      "moisture_management": ["non-wicking", "basic wicking", "enhanced wicking", "technical moisture transport", "responsive moisture control"]
+    },
+    "digital_properties": {
+      "interactivity": ["none", "basic", "enhanced", "smart", "adaptive", "learning"],
+      "connectivity": ["none", "local", "networked", "intelligent", "autonomous"],
+      "data_capabilities": ["none", "sensing", "recording", "processing", "communicating", "analyzing", "responding"]
     }
   },
-  "layout_types": {
-    "balanced": {
-      "description": "Elements are evenly distributed across the design",
-      "confidence": 0.85
+  "construction_techniques": {
+    "weaving": {
+      "definition": "Interlacing two sets of yarns (warp and weft) at right angles to create fabric",
+      "variables": {
+        "shedding_mechanisms": ["treadle", "dobby", "jacquard", "digital", "programmed", "AI-driven"],
+        "insertion_methods": ["shuttle", "rapier", "projectile", "air jet", "water jet", "magnetic propulsion"],
+        "beating_up": ["reed", "automated", "tension-controlled", "precision-guided"]
+      },
+      "categories": ["plain", "twill", "satin", "jacquard", "tapestry", "double cloth", "pile", "gauze", "leno", "multi-layer", "3D woven", "programmed weave"]
     },
-    "asymmetrical": {
-      "description": "Intentional imbalance in element distribution",
-      "confidence": 0.8
+    "knitting": {
+      "definition": "Creating fabric by forming loops of yarn in a continuous row",
+      "variables": {
+        "needle_types": ["latch", "bearded", "compound", "specialty", "programmable"],
+        "machine_configurations": ["circular", "flat", "warp", "fully fashioned", "whole garment", "3D knitting"],
+        "stitch_formations": ["jersey", "rib", "interlock", "purl", "tuck", "miss", "transfer", "specialized", "programmable"]
+      },
+      "categories": ["weft knitting", "warp knitting", "flat knitting", "circular knitting", "fully fashioned", "whole garment", "3D knitting", "technical knitting", "programmed knitting"]
+    },
+    "non-woven": {
+      "definition": "Creating fabric directly from fibers without yarn formation or interlacing",
+      "variables": {
+        "web_formation": ["carded", "air-laid", "wet-laid", "spunbond", "meltblown", "electrospun"],
+        "bonding_methods": ["thermal", "chemical", "mechanical", "hydroentanglement", "needlepunching", "ultrasonic"]
+      },
+      "categories": ["spunbond", "meltblown", "needlepunched", "hydroentangled", "wet-laid", "air-laid", "electrospun", "composite", "specialized", "technical", "engineered non-wovens"]
+    },
+    "3d_textile_construction": {
+      "definition": "Creating textiles with significant thickness or complex three-dimensional structures",
+      "variables": {
+        "dimensionality": ["2.5D", "3D", "4D (transformable)", "multi-dimensional"],
+        "construction_methods": ["specialized weaving", "technical knitting", "spacer fabrics", "additive manufacturing", "specialized braiding", "compression molding"]
+      },
+      "categories": ["spacer fabrics", "3D woven", "3D knitted", "molded textiles", "additive manufactured", "composite structures", "programmable structures", "responsive textiles", "adaptive textiles"]
+    },
+    "smart_textile_integration": {
+      "definition": "Incorporating technical functions or responsive elements into textile structures",
+      "variables": {
+        "functionality": ["sensing", "actuating", "energy harvesting", "data processing", "communicating", "responding"],
+        "integration_methods": ["conductive yarns", "printed electronics", "laminated electronics", "component attachment", "specialized finishes"]
+      },
+      "categories": ["passive smart", "active smart", "ultra-smart", "responsive", "interactive", "communicative", "self-regulating", "context-aware", "learning textiles"]
+    }
+  },
+  "material_composition": {
+    "natural_fibers": {
+      "categories": {
+        "protein": ["wool", "silk", "mohair", "angora", "cashmere", "alpaca", "vicuna", "camel hair", "yak", "qiviut"],
+        "cellulosic": ["cotton", "linen", "hemp", "jute", "ramie", "sisal", "abaca", "coir", "kapok", "nettle"]
+      },
+      "properties": {
+        "biodegradability": "High",
+        "moisture_absorption": "Good to excellent",
+        "thermal_comfort": "Natural regulation",
+        "sustainability": "Variable depending on production methods"
+      }
+    },
+    "manufactured_fibers": {
+      "categories": {
+        "regenerated": ["viscose", "modal", "lyocell", "cupro", "acetate", "triacetate", "bamboo viscose", "seacell", "orange fiber", "pineapple fiber"],
+        "synthetic": ["polyester", "nylon", "acrylic", "polyolefin", "elastane", "spandex", "modacrylic", "vinyon", "aramid", "polyurethane"]
+      },
+      "properties": {
+        "performance_consistency": "High",
+        "durability": "Good to excellent",
+        "special_functionality": "Engineerable",
+        "resource_intensity": "Variable to high"
+      }
+    },
+    "technical_fibers": {
+      "categories": {
+        "high_performance": ["carbon fiber", "glass fiber", "ceramic fiber", "basalt fiber", "metallic fiber", "boron fiber", "silicon carbide", "quartz fiber"],
+        "functional": ["phase change", "conductive", "antimicrobial", "UV-protective", "flame-retardant", "superhydrophobic", "self-healing"]
+      },
+      "properties": {
+        "specialized_functionality": "Extremely high",
+        "application_specificity": "Targeted",
+        "processing_complexity": "High",
+        "performance_metrics": "Engineered to specification"
+      }
+    },
+    "innovative_materials": {
+      "categories": {
+        "bio_based": ["polylactic acid (PLA)", "bio-polyamide", "bio-polyester", "mycelium", "alginate", "chitosan", "bacterial cellulose", "protein-based"],
+        "recycled": ["recycled polyester", "recycled nylon", "regenerated cotton", "recycled wool", "upcycled textiles", "ocean plastic", "agricultural waste"]
+      },
+      "properties": {
+        "environmental_impact": "Reduced compared to conventional",
+        "circularity_potential": "Medium to high",
+        "performance_tradeoffs": "Variable, improving",
+        "market_readiness": "Emerging to established"
+      }
+    }
+  },
+  "finishing_treatments": {
+    "aesthetic_finishes": {
+      "surface_textures": ["brushed", "peached", "emerized", "sueded", "napped", "raised", "sheared", "polished", "glazed", "calendered"],
+      "visual_effects": ["printed", "dyed", "bleached", "stonewashed", "acid-washed", "enzyme-washed", "laser-etched", "flocked", "metallized", "iridescent"],
+      "dimensional_effects": ["embossed", "pleated", "creped", "seersucker", "puckered", "shrunk", "molded", "3D-structured", "crushed"]
+    },
+    "performance_finishes": {
+      "protective": ["water-repellent", "waterproof", "flame-retardant", "antimicrobial", "UV-protective", "anti-static", "EMI-shielding", "insect-repellent", "abrasion-resistant"],
+      "comfort": ["moisture-wicking", "quick-dry", "thermoregulating", "cooling", "warming", "anti-pilling", "softening", "soil-release", "anti-odor"],
+      "technical": ["anti-bacterial", "anti-viral", "phase-change", "conductive", "fluorescent", "photoluminescent", "thermochromic", "photochromic", "electrochromic"]
+    },
+    "sustainability_focused": {
+      "resource_reduction": ["low-water", "low-energy", "chemical-free", "mechanical finishing", "ultrasonic processing", "laser processing", "plasma treatment", "ozone treatment"],
+      "circularity_enabling": ["biodegradable finishes", "compostable treatments", "detachable components", "mono-material compatibility", "recyclable treatments"],
+      "health_protective": ["PFAS-free", "formaldehyde-free", "azo-free", "heavy-metal-free", "VOC-free", "REACH-compliant", "bio-based", "non-toxic"]
+    }
+  },
+  "cultural_context": {
+    "historical_evolution": {
+      "prehistoric": "Early human civilizations developing rudimentary weaving and non-woven techniques for protection and utility",
+      "ancient": "Advancement of sophisticated textile traditions in early civilizations (Egyptian, Chinese, Indian, Mesopotamian)",
+      "medieval": "Guild systems and specialized textile crafts developing in Europe and Asia",
+      "industrial_revolution": "Mechanization transforming textile production from craft to industry",
+      "modern": "Mass production, synthetic fibers, and global textile trade networks",
+      "digital_age": "Integration of electronics, computational design, and advanced manufacturing",
+      "future_directions": "Biodesigned textiles, self-assembling structures, and intelligent responsive systems"
+    },
+    "regional_traditions": {
+      "east_asian": ["Japanese shibori", "Chinese silk brocade", "Korean ramie weaving", "Ikat traditions", "Hmong batik"],
+      "south_asian": ["Indian block printing", "Kashmiri embroidery", "Bengali jamdani", "Bhutanese weaving", "Sri Lankan dumbara"],
+      "middle_eastern": ["Persian carpet weaving", "Turkish kilim", "Egyptian tent fabrics", "Moroccan embroidery", "Bedouin weaving"],
+      "african": ["Kente cloth", "Adinkra printing", "Bogolan mud cloth", "Moroccan rug making", "Ethiopian netela"],
+      "european": ["Irish linen", "Scottish tartan", "Italian velvet", "Scandinavian wool techniques", "Eastern European embroidery"],
+      "americas": ["Navajo weaving", "Andean textiles", "Guatemalan backstrap weaving", "Inuit skin sewing", "Quebec arrow sash"]
+    },
+    "cross_cultural_exchange": {
+      "silk_road": "Historic trade routes connecting East Asian silk production with Middle Eastern and European markets",
+      "colonial_period": "Forced transfer and appropriation of textile techniques across imperial networks",
+      "industrial_globalization": "Mass production and global supply chains transforming local traditions",
+      "contemporary_fusion": "Design collaborations bridging traditional crafts with modern technology",
+      "digital_preservation": "Documentation and revival of endangered textile techniques through technology"
+    }
+  },
+  "sustainability_metrics": {
+    "environmental_impact": {
+      "resource_consumption": {
+        "water_usage": ["water-intensive", "moderate water use", "low water use", "closed-loop water system", "water-free process"],
+        "energy_requirements": ["high energy", "moderate energy", "energy efficient", "renewable-powered", "energy-positive"],
+        "raw_material_sourcing": ["virgin extraction", "partially recycled", "fully recycled", "renewable", "regenerative"]
+      },
+      "pollution_metrics": {
+        "chemical_impact": ["high chemical use", "controlled chemicals", "reduced chemistry", "green chemistry", "chemical-free"],
+        "emissions": ["high carbon footprint", "moderate emissions", "carbon neutral", "climate beneficial", "carbon sequestering"],
+        "waste_generation": ["high waste", "waste reduction", "zero waste", "waste valorization", "circular system"]
+      },
+      "end_of_life": {
+        "biodegradability": ["non-biodegradable", "slowly degradable", "biodegradable", "compostable", "soil-enhancing"],
+        "recyclability": ["non-recyclable", "downcyclable", "recyclable", "infinitely recyclable", "upcyclable"],
+        "disposal_impact": ["landfill", "controlled disposal", "neutral impact", "beneficial reuse", "regenerative"]
+      }
+    },
+    "social_considerations": {
+      "labor_practices": {
+        "working_conditions": ["exploitative", "minimum standards", "fair conditions", "worker-supportive", "worker-owned"],
+        "compensation": ["below subsistence", "minimum wage", "living wage", "prosperity wage", "community-enriching"],
+        "health_and_safety": ["hazardous", "basic protection", "comprehensive protection", "health-promoting", "holistic wellbeing"]
+      },
+      "community_impact": {
+        "local_economy": ["extractive", "neutral", "supportive", "regenerative", "community-building"],
+        "cultural_heritage": ["destructive", "non-supportive", "preserving", "celebrating", "advancing"],
+        "skills_development": ["deskilling", "status quo", "training", "traditional knowledge", "intergenerational transmission"]
+      }
+    }
+  },
+  "technical_performance": {
+    "physical_properties": {
+      "strength_metrics": {
+        "tensile_strength": ["very low (<10 N/mm²)", "low (10-20 N/mm²)", "medium (20-50 N/mm²)", "high (50-100 N/mm²)", "very high (>100 N/mm²)"],
+        "tear_strength": ["minimal", "low", "moderate", "high", "exceptional"],
+        "burst_strength": ["fragile", "standard", "reinforced", "high-pressure resistant", "extreme pressure resistant"]
+      },
+      "durability_factors": {
+        "abrasion_resistance": ["very low (<10K cycles)", "low (10K-20K cycles)", "medium (20K-50K cycles)", "high (50K-100K cycles)", "very high (>100K cycles)"],
+        "pilling_resistance": ["severe pilling", "moderate pilling", "slight pilling", "minimal pilling", "pill-free"],
+        "colorfastness": ["poor", "acceptable", "good", "excellent", "permanent"]
+      },
+      "dimensional_stability": {
+        "shrinkage_control": ["significant shrinkage (>5%)", "moderate shrinkage (2-5%)", "minimal shrinkage (1-2%)", "negligible shrinkage (<1%)", "zero shrinkage"],
+        "shape_retention": ["poor", "fair", "good", "excellent", "permanent"]
+      }
+    },
+    "comfort_characteristics": {
+      "thermal_properties": {
+        "insulation": ["poor insulation", "light insulation", "moderate insulation", "high insulation", "extreme insulation"],
+        "breathability": ["non-breathable", "slightly breathable", "moderately breathable", "highly breathable", "extremely breathable"],
+        "thermal_regulation": ["none", "passive", "responsive", "active", "intelligent"]
+      },
+      "moisture_management": {
+        "wicking_ability": ["non-wicking", "slow wicking", "moderate wicking", "high wicking", "superior wicking"],
+        "drying_rate": ["very slow", "slow", "moderate", "quick", "ultra-fast"],
+        "water_vapor_transmission": ["extremely low", "low", "moderate", "high", "extremely high"]
+      },
+      "tactile_qualities": {
+        "hand_feel": ["rough", "firm", "moderate", "soft", "luxurious"],
+        "drape": ["stiff", "structured", "moderate", "flowing", "fluid"],
+        "texture": ["smooth", "subtle texture", "moderate texture", "highly textured", "complex texture"]
+      }
+    },
+    "functional_capabilities": {
+      "protective_properties": {
+        "uv_protection": ["none (UPF <15)", "minimal (UPF 15-24)", "good (UPF 25-39)", "excellent (UPF 40-50)", "maximum (UPF 50+)"],
+        "antimicrobial": ["none", "minimal", "moderate", "high", "complete"],
+        "water_resistance": ["none", "water-repellent", "water-resistant", "waterproof", "hydrophobic"]
+      },
+      "specialized_functions": {
+        "stretch_and_recovery": ["non-stretch", "slight stretch", "moderate stretch", "high stretch", "perfect recovery"],
+        "compression": ["none", "light", "moderate", "firm", "medical-grade"],
+        "noise_reduction": ["none", "minimal", "moderate", "high", "acoustic-grade"]
+      }
     }
   }
 } 

@@ -12,7 +12,6 @@ from datetime import datetime
 import re
 
 # Relative imports from the same package
-from .analyzers.color_analyzer import ColorAnalyzer
 from .analyzers.gemini_analyzer import GeminiAnalyzer
 from .utils.cache import SearchCache
 import config
@@ -40,7 +39,6 @@ class SearchEngine:
             
             # Initialize analyzers without storing the key in this class
             self.gemini_analyzer = GeminiAnalyzer(api_key=gemini_api_key)
-            self.color_analyzer = ColorAnalyzer(max_clusters=config.N_CLUSTERS, api_key=gemini_api_key)
             
             # Don't load CLIP model immediately, defer until needed
             self.clip_model = None
@@ -219,7 +217,6 @@ class SearchEngine:
             
             # Update in analyzers without storing the key in this class
             self.gemini_analyzer.set_api_key(api_key)
-            self.color_analyzer.set_api_key(api_key)
             logger.info("Gemini API key updated in SearchEngine")
         else:
             logger.warning("Attempted to set empty API key")
@@ -501,15 +498,12 @@ class SearchEngine:
 
     def analyze_colors(self, image_array: np.ndarray) -> Dict:
         """Analyze colors in an image."""
-        try:
-            return self.color_analyzer.analyze_colors(image_array)
-        except Exception as e:
-            logger.error(f"Error analyzing colors: {e}")
-            return {
-                "dominant_colors": [],
-                "color_palette": [],
-                "color_distribution": {}
-            }
+        # Return default empty color analysis structure
+        return {
+            "dominant_colors": [],
+            "color_palette": [],
+            "color_distribution": {}
+        }
 
     def _load_search_logs(self) -> Dict:
         """Load search logs from file."""

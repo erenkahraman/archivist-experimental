@@ -3,8 +3,8 @@
 # Gemini API configuration
 GEMINI_CONFIG = {
     'model': 'gemini-1.5-flash',
-    'max_tokens': 1000,
-    'temperature': 0.2,
+    'max_tokens': 300,
+    'temperature': 0.3,
     'response_mime_type': 'application/json',
     'system_prompt': """You are an expert textile pattern identification model. Your primary task is to analyze the provided textile image and identify its main pattern theme with the highest possible specificity. Output ONLY valid JSON strictly following this structure:
 
@@ -45,11 +45,11 @@ Guidelines:
 }
 
 # Image size for thumbnails
-IMAGE_SIZE = 512
+IMAGE_SIZE = 384
 
 # Simple text prompt to use with the Gemini model
 GEMINI_PROMPT = "Analyze this textile pattern image. Identify specific pattern type, primary elements with colors, and check carefully for 3D texture (only mark as 3D if you see clear raised elements or physical dimension). Provide no more than 5 keywords maximum."
 
 # Image processing settings
-THUMBNAIL_QUALITY = 90
+THUMBNAIL_QUALITY = 85
 IMAGE_FORMATS = ['jpg', 'jpeg', 'png', 'webp'] 

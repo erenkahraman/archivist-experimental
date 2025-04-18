@@ -95,76 +95,6 @@
               </div>
             </div>
           </div>
-          
-          <!-- Colors Tab -->
-          <div v-if="activeTab === 'colors'" class="tab-pane">
-            <!-- Colors debug info -->
-            <div v-if="isDev" class="debug-info">
-              <pre>{{ JSON.stringify(props.selectedImage.colors, null, 2) }}</pre>
-            </div>
-
-            <!-- Dominant Color -->
-            <div class="color-section" v-if="getDominantColor()">
-              <h3 class="section-title">Primary Color</h3>
-              <div class="color-display">
-                <div 
-                  class="color-preview" 
-                  :style="{ backgroundColor: extractHexColor(getDominantColor()) }"
-                ></div>
-                <div class="color-info">
-                  <span class="color-value">{{ extractHexColor(getDominantColor()) }}</span>
-                  <span class="color-name" v-if="extractColorName(getDominantColor())">{{ extractColorName(getDominantColor()) }}</span>
-                  <span class="color-proportion" v-if="extractProportion(getDominantColor())">{{ formatProportion(extractProportion(getDominantColor())) }}</span>
-                </div>
-              </div>
-            </div>
-            
-            <!-- Color Palette -->
-            <div class="color-section" v-if="getColorPalette().length > 0">
-              <h3 class="section-title">Color Palette</h3>
-              <div class="color-palette-grid">
-                <div 
-                  v-for="(color, idx) in getColorPalette()" 
-                  :key="idx"
-                  class="palette-item"
-                >
-                  <div class="color-preview" :style="{ backgroundColor: extractHexColor(color) }"></div>
-                  <div class="color-info">
-                    <span class="color-value">{{ extractHexColor(color) }}</span>
-                    <span class="color-name" v-if="extractColorName(color)">{{ extractColorName(color) }}</span>
-                    <span class="color-proportion" v-if="extractProportion(color)">{{ formatProportion(extractProportion(color)) }}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-          
-          <!-- Details Tab -->
-          <div v-if="activeTab === 'details'" class="tab-pane">
-            <div class="details-section">
-              <h3 class="section-title">File Information</h3>
-              <table class="details-table">
-                <tbody>
-                  <tr>
-                    <td class="details-label">Filename:</td>
-                    <td>{{ getImageName(props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.id) }}</td>
-                  </tr>
-                  <tr v-if="props.selectedImage.metadata?.width && props.selectedImage.metadata?.height">
-                    <td class="details-label">Dimensions:</td>
-                    <td>{{ props.selectedImage.metadata.width }} × {{ props.selectedImage.metadata.height }} px</td>
-                  </tr>
-                  <tr v-if="props.selectedImage.created_at">
-                    <td class="details-label">Added:</td>
-                    <td>{{ formatDate(props.selectedImage.created_at) }}</td>
-                  </tr>
-                  <tr>
-                    <td class="details-label">Path:</td>
-                    <td class="file-path">{{ props.selectedImage.file_path || props.selectedImage.image_path || props.selectedImage.thumbnail_path }}</td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       </div>
     </div>
@@ -197,9 +127,7 @@ const errorMessage = ref('')
 
 // Tab management
 const tabs = [
-  { id: 'patterns', label: 'Patterns' },
-  { id: 'colors', label: 'Colors' },
-  { id: 'details', label: 'Details' }
+  { id: 'patterns', label: 'Patterns' }
 ]
 const activeTab = ref('patterns')
 
@@ -424,19 +352,17 @@ const getSecondaryPatterns = () => {
 }
 
 const getStyleKeywords = () => {
-  if (!props.selectedImage) return [];
-  
-  // Check different possible locations for style keywords
-  if (props.selectedImage.style_keywords) {
-    return Array.isArray(props.selectedImage.style_keywords) 
-      ? props.selectedImage.style_keywords 
-      : [props.selectedImage.style_keywords];
+  // Try various possible locations for style keywords
+  if (props.selectedImage.patterns?.style_keywords) {
+    return props.selectedImage.patterns.style_keywords;
   }
   
-  if (props.selectedImage.patterns?.style_keywords) {
-    return Array.isArray(props.selectedImage.patterns.style_keywords) 
-      ? props.selectedImage.patterns.style_keywords 
-      : [props.selectedImage.patterns.style_keywords];
+  if (props.selectedImage.pattern?.keywords) {
+    return props.selectedImage.pattern.keywords;
+  }
+  
+  if (props.selectedImage.keywords) {
+    return props.selectedImage.keywords;
   }
   
   if (props.selectedImage.metadata?.style_keywords) {
@@ -447,180 +373,6 @@ const getStyleKeywords = () => {
   
   return [];
 };
-
-// Color handling
-const getDominantColor = () => {
-  // Check for direct colors array in the search results
-  if (props.selectedImage.colors && Array.isArray(props.selectedImage.colors)) {
-    // If colors is an array (common in search results), use the first one
-    if (props.selectedImage.colors.length > 0) {
-      return props.selectedImage.colors[0];
-    }
-  }
-  
-  // Try various possible locations for color data
-  if (props.selectedImage.colors?.dominant_colors && 
-      Array.isArray(props.selectedImage.colors.dominant_colors)) {
-    return props.selectedImage.colors.dominant_colors[0];
-  }
-  
-  if (props.selectedImage.colors?.dominant_color) {
-    return props.selectedImage.colors.dominant_color;
-  }
-  
-  // For search results, it might be in metadata or different structures
-  if (props.selectedImage.metadata?.colors?.dominant_color) {
-    return props.selectedImage.metadata.colors.dominant_color;
-  }
-  
-  // Try palette as fallback
-  if (props.selectedImage.colors?.palette && props.selectedImage.colors.palette.length > 0) {
-    return props.selectedImage.colors.palette[0];
-  }
-  
-  if (props.selectedImage.patterns?.colors?.palette && 
-      props.selectedImage.patterns.colors.palette.length > 0) {
-    return props.selectedImage.patterns.colors.palette[0];
-  }
-  
-  if (props.selectedImage.metadata?.colors?.palette && 
-      props.selectedImage.metadata.colors.palette.length > 0) {
-    return props.selectedImage.metadata.colors.palette[0];
-  }
-  
-  return null;
-};
-
-const getColorPalette = () => {
-  // Check for direct colors array in the search results
-  if (props.selectedImage.colors && Array.isArray(props.selectedImage.colors)) {
-    return props.selectedImage.colors;
-  }
-  
-  // Try various possible locations for palette data
-  if (props.selectedImage.colors?.dominant_colors && 
-      Array.isArray(props.selectedImage.colors.dominant_colors)) {
-    return props.selectedImage.colors.dominant_colors;
-  }
-  
-  if (props.selectedImage.colors?.palette && props.selectedImage.colors.palette.length > 0) {
-    return props.selectedImage.colors.palette;
-  }
-  
-  if (props.selectedImage.patterns?.colors?.palette && 
-      props.selectedImage.patterns.colors.palette.length > 0) {
-    return props.selectedImage.patterns.colors.palette;
-  }
-  
-  if (props.selectedImage.metadata?.colors?.palette && 
-      props.selectedImage.metadata.colors.palette.length > 0) {
-    return props.selectedImage.metadata.colors.palette;
-  }
-  
-  return [];
-};
-
-const extractHexColor = (color) => {
-  if (!color) return '#cccccc'; // Default gray
-  
-  // If it's a simple string, return it directly
-  if (typeof color === 'string') return color;
-  
-  // If it's an object, try to find the hex code
-  if (typeof color === 'object') {
-    // Direct hex property
-    if (color.hex) return color.hex;
-    if (color.color) return color.color;
-    
-    // Try to find RGB values
-    if (color.rgb && Array.isArray(color.rgb) && color.rgb.length >= 3) {
-      return `rgb(${color.rgb.join(', ')})`;
-    }
-  }
-  
-  // Last resort - try to extract from a stringified representation
-  try {
-    const colorStr = JSON.stringify(color);
-    
-    // Look for hex code pattern first
-    const hexPattern = /#[0-9a-f]{6}/i;
-    const foundHex = colorStr.match(hexPattern);
-    if (foundHex) {
-      return foundHex[0];
-    }
-    
-    const hexMatch = colorStr.match(/"hex":"(#[0-9a-f]+)"/i);
-    if (hexMatch && hexMatch[1]) {
-      return hexMatch[1];
-    }
-    
-    const colorMatch = colorStr.match(/"color":"(#[0-9a-f]+)"/i);
-    if (colorMatch && colorMatch[1]) {
-      return colorMatch[1];
-    }
-  } catch (e) {}
-  
-  return '#cccccc'; // Default gray
-}
-
-const extractColorName = (color) => {
-  if (!color) return null;
-  
-  if (typeof color === 'object' && color.name) {
-    return color.name;
-  }
-  
-  try {
-    const colorStr = JSON.stringify(color);
-    const nameMatch = colorStr.match(/"name":"([^"]+)"/i);
-    if (nameMatch && nameMatch[1]) {
-      return nameMatch[1];
-    }
-  } catch (e) {}
-  
-  return null;
-}
-
-const extractRGB = (color) => {
-  if (!color) return null;
-  
-  if (typeof color === 'object' && Array.isArray(color.rgb)) {
-    return color.rgb.join(', ');
-  }
-  
-  try {
-    const colorStr = JSON.stringify(color);
-    const rgbMatch = colorStr.match(/"rgb":\s*\[\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\]/i);
-    if (rgbMatch && rgbMatch.length >= 4) {
-      return `${rgbMatch[1]}, ${rgbMatch[2]}, ${rgbMatch[3]}`;
-    }
-  } catch (e) {}
-  
-  return null;
-}
-
-const extractProportion = (color) => {
-  if (!color) return null;
-  
-  if (typeof color === 'object' && typeof color.proportion === 'number') {
-    return color.proportion;
-  }
-  
-  try {
-    const colorStr = JSON.stringify(color);
-    const proportionMatch = colorStr.match(/"proportion":([0-9.]+)/i);
-    if (proportionMatch && proportionMatch[1]) {
-      return parseFloat(proportionMatch[1]);
-    }
-  } catch (e) {}
-  
-  return null;
-}
-
-const formatProportion = (proportion) => {
-  if (proportion === null || proportion === undefined) return '';
-  return `${Math.round(proportion * 100)}%`;
-}
 
 // Utility functions
 const formatDate = (dateString) => {

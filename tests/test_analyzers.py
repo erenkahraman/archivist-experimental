@@ -3,34 +3,34 @@ Tests for image analyzers functionality.
 """
 import unittest
 from unittest.mock import patch, MagicMock
-import numpy as np
-from PIL import Image
+import os
+from pathlib import Path
 
-from src.analyzers.color_analyzer import ColorAnalyzer
+from src.analyzers.gemini_analyzer import GeminiAnalyzer
 
 
-class TestColorAnalyzer(unittest.TestCase):
-    """Test cases for the ColorAnalyzer."""
+class TestGeminiAnalyzer(unittest.TestCase):
+    """Test cases for the GeminiAnalyzer."""
 
     def setUp(self):
         """Set up the test environment."""
-        self.analyzer = ColorAnalyzer()
+        self.analyzer = GeminiAnalyzer()
         
-        # Create a simple test image
-        self.test_image = Image.new('RGB', (100, 100), color='red')
+    @patch('src.analyzers.gemini_analyzer.GeminiAnalyzer._get_from_cache')
+    def test_cache_check(self, mock_get_from_cache):
+        """Test that the analyzer checks the cache first."""
+        # Setup mock
+        mock_result = {"main_theme": "Test Pattern"}
+        mock_get_from_cache.return_value = mock_result
         
-    def test_extract_colors(self):
-        """Test color extraction from an image."""
-        colors = self.analyzer.extract_colors(self.test_image)
+        # Call the analyze method
+        result = self.analyzer.analyze_image("test_path.jpg")
         
-        # Should extract at least one color
-        self.assertGreaterEqual(len(colors), 1)
+        # Verify cache was checked
+        mock_get_from_cache.assert_called_once_with("test_path.jpg")
         
-        # First color should be red (or close to it)
-        first_color = colors[0]
-        self.assertGreaterEqual(first_color[0], 200)  # R value
-        self.assertLessEqual(first_color[1], 50)      # G value
-        self.assertLessEqual(first_color[2], 50)      # B value
+        # Verify result matches mock
+        self.assertEqual(result, mock_result)
 
 
 if __name__ == '__main__':
