@@ -15,5 +15,12 @@ DEBUG = os.environ.get('DEBUG', 'False').lower() in ('true', '1', 't', 'yes')
 app = create_app()
 
 if __name__ == '__main__':
-    # Start the development server
-    app.run(debug=DEBUG, host='0.0.0.0', port=8000) 
+    try:
+        # Use threaded mode for better concurrency
+        app.run(debug=DEBUG, host='0.0.0.0', port=8000, threaded=True)
+    except OSError as e:
+        if 'Address already in use' in str(e):
+            print('Port 8000 in use; starting on port 8001')
+            app.run(debug=DEBUG, host='0.0.0.0', port=8001, threaded=True)
+        else:
+            raise 

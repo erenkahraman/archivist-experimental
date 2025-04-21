@@ -8,11 +8,7 @@ from pathlib import Path
 # Add the project root to the path for imports to work
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import dotenv
 from src.config.config import UPLOAD_DIR, THUMBNAIL_DIR, METADATA_DIR
-
-# Load environment variables from .env file if it exists
-dotenv.load_dotenv()
 
 # Configure logging
 logging.basicConfig(
@@ -49,15 +45,15 @@ def create_app():
     def home():
         return 'Archivist server is running'
     
-    # Import API blueprint
-    from src.api import api
-    
-    # Register API routes with prefix
-    app.register_blueprint(api, url_prefix='/api')
-    
-    # Ensure required directories exist
+    # Ensure directories exist early
     ensure_directories()
     
+    # Import and register API blueprint (needs to happen during app setup)
+    from src.api import api_blueprint_factory
+    # Create API blueprint with lazy init flag
+    api = api_blueprint_factory(lazy_init=True)
+    app.register_blueprint(api, url_prefix='/api')
+
     return app
 
 def ensure_directories():
